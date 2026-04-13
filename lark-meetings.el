@@ -134,7 +134,7 @@ Each meeting is displayed as a multi-line section.")
 (defun lark-meetings--insert-field (label value)
   "Insert LABEL: VALUE if VALUE is non-empty."
   (when (and value (not (string-empty-p value)))
-    (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face)
+    (insert (propertize (format "  %-18s" (concat label ":")) 'face 'font-lock-keyword-face)
             value "\n")))
 
 (defun lark-meetings--insert-meeting (meeting)
@@ -362,6 +362,53 @@ QUERY is an optional keyword.  START and END default to last week through tomorr
    ((eq value :false) "false")
    (t (format "%s" value))))
 
+(defun lark-meetings--insert-download-link (minute-token)
+  "Insert an org-mode style download link for MINUTE-TOKEN.
+Uses the nf-fa-download icon ()."
+  (let ((beg (point)))
+    (insert "  "
+            (propertize (format "[[ download:%s][ Download Recording]]" minute-token)
+                        'face 'link
+                        'mouse-face 'highlight
+                        'lark-minute-token minute-token
+                        'keymap lark-meetings--download-keymap)
+            "\n")))
+
+(defvar lark-meetings--download-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'lark-meetings--download-at-point)
+    (define-key map [mouse-1]   #'lark-meetings--download-at-point)
+    map)
+  "Keymap for download links in recording buffers.")
+
+(defun lark-meetings--download-at-point ()
+  "Download the recording at point."
+  (interactive)
+  (let ((token (get-text-property (point) 'lark-minute-token)))
+    (unless token (user-error "No download link at point"))
+    (lark-meetings-download-recording token)))
+
+(defun lark-meetings-download-recording (minute-token &optional output-dir)
+  "Download recording for MINUTE-TOKEN.
+Optional OUTPUT-DIR specifies where to save; prompts if interactive."
+  (interactive
+   (list (read-string "Minute token: ")
+         (read-directory-name "Save to: ")))
+  (when (string-empty-p minute-token)
+    (user-error "Minute token is required"))
+  (message "Lark: downloading recording...")
+  (let ((args (list "minutes" "+download" "--minute-tokens" minute-token)))
+    (when (and output-dir (not (string-empty-p output-dir)))
+      (setq args (append args (list "--output" (expand-file-name output-dir)))))
+    (lark--run-command
+     args
+     (lambda (data)
+       (let ((path (or (alist-get 'path data)
+                       (alist-get 'output data)
+                       (lark--get-nested data 'data 'path))))
+         (message "Lark: recording downloaded%s"
+                  (if path (format " → %s" path) "")))))))
+
 (defun lark-meetings--insert-recording (recording)
   "Insert a structured section for a single RECORDING alist."
   (let ((known-keys '(meeting_id minute_token url recording_url
@@ -383,17 +430,22 @@ QUERY is an optional keyword.  START and END default to last week through tomorr
           (cond
            ((and (listp val) (consp (car val)))
             ;; Nested alist — render as indented sub-fields
-            (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face) "\n")
+            (insert (propertize (format "  %-18s" (concat label ":")) 'face 'font-lock-keyword-face) "\n")
             (dolist (sub-pair val)
               (let ((sub-label (capitalize (replace-regexp-in-string "_" " " (symbol-name (car sub-pair)))))
                     (sub-val (lark-meetings--format-value (cdr sub-pair))))
                 (unless (string-empty-p sub-val)
-                  (insert (propertize (format "    %-12s" (concat sub-label ":")) 'face 'font-lock-comment-face)
+                  (insert (propertize (format "    %-16s" (concat sub-label ":")) 'face 'font-lock-comment-face)
                           sub-val "\n")))))
            (t
             (let ((str (lark-meetings--format-value val)))
               (unless (string-empty-p str)
-                (lark-meetings--insert-field label str))))))))))
+                (lark-meetings--insert-field label str))))))))
+    ;; Download link when minute_token is available
+    (let ((mt (lark-meetings--format-value (alist-get 'minute_token recording))))
+      (when (and mt (not (string-empty-p mt)))
+        (insert "\n")
+        (lark-meetings--insert-download-link mt)))))
 
 ;;;###autoload
 (defun lark-meetings-recording (meeting-id)
