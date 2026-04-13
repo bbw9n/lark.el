@@ -14,7 +14,7 @@ browsing, org-table spreadsheets, and async execution throughout.
 ** Installing lark-cli
 
 #+begin_src shell
-npm install -g @anthropic-ai/lark-cli
+npm install -g @larksuite/lark-cli
 #+end_src
 
 Verify it works:
