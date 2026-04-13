@@ -75,12 +75,16 @@ Either \"user\" or \"bot\"."
 
 (autoload 'lark-calendar-agenda "lark-calendar" nil t)
 (autoload 'lark-tasks-list "lark-tasks" nil t)
+(autoload 'lark-im-dispatch "lark-im" nil t)
+(autoload 'lark-mail-inbox "lark-mail" nil t)
 
 (defvar lark-prefix-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "l") #'lark-dispatch)
     (define-key map (kbd "a") #'lark-calendar-agenda)
+    (define-key map (kbd "m") #'lark-im-dispatch)
     (define-key map (kbd "t") #'lark-tasks-list)
+    (define-key map (kbd "e") #'lark-mail-inbox)
     (define-key map (kbd "s") #'lark-auth-status)
     map)
   "Keymap for Lark commands, intended to be bound under a prefix like C-c l.")

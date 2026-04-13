@@ -15,6 +15,8 @@
 ;; Autoloads for domain modules
 (autoload 'lark-calendar-dispatch "lark-calendar" nil t)
 (autoload 'lark-tasks-dispatch "lark-tasks" nil t)
+(autoload 'lark-im-dispatch "lark-im" nil t)
+(autoload 'lark-mail-dispatch "lark-mail" nil t)
 
 ;;;; Top-level dispatch
 
@@ -78,12 +80,10 @@
        [,(format "%s (coming soon)" domain)
         ("q" "Quit" transient-quit-all)])))
 
-(lark--define-stub-dispatch lark-im-dispatch "Messenger")
 (lark--define-stub-dispatch lark-docs-dispatch "Docs")
 (lark--define-stub-dispatch lark-drive-dispatch "Drive")
 (lark--define-stub-dispatch lark-base-dispatch "Base")
 (lark--define-stub-dispatch lark-sheets-dispatch "Sheets")
-(lark--define-stub-dispatch lark-mail-dispatch "Mail")
 (lark--define-stub-dispatch lark-wiki-dispatch "Wiki")
 (lark--define-stub-dispatch lark-contacts-dispatch "Contacts")
 (lark--define-stub-dispatch lark-meetings-dispatch "Meetings")

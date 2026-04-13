@@ -23,7 +23,7 @@ jobs:
         run: |
           emacs --batch -L . \
             --eval "(setq byte-compile-error-on-warn t)" \
-            -f batch-byte-compile lark-core.el lark-auth.el lark-calendar.el lark-tasks.el lark-transient.el lark.el
+            -f batch-byte-compile lark-core.el lark-auth.el lark-calendar.el lark-tasks.el lark-im.el lark-mail.el lark-transient.el lark.el
 
       - name: Run tests
         run: |
@@ -31,4 +31,6 @@ jobs:
             -l lark-core-test \
             -l lark-calendar-test \
             -l lark-tasks-test \
+            -l lark-im-test \
+            -l lark-mail-test \
             -f ert-run-tests-batch-and-exit
