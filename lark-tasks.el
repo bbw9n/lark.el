@@ -7,10 +7,20 @@
 ;; Provides Task domain commands for lark.el: task listing, detail
 ;; view, create/update/complete tasks, subtask management, and task
 ;; list (tasklist) management.
+;;
+;; CLI command mapping:
+;;   My tasks:     task +get-my-tasks [--query X] [--complete]
+;;   Create:       task +create --summary X [--description X] [--due X] [--assignee X]
+;;   Update:       task +update --task-id X [--summary X] [--description X] [--due X]
+;;   Complete:     task +complete --task-id X
+;;   Get detail:   task tasks get --params '{"task_id":"X"}'
+;;   Delete:       task tasks delete --params '{"task_id":"X"}'
+;;   Tasklists:    task tasklists list
 
 ;;; Code:
 
 (require 'lark-core)
+(require 'json)
 (require 'transient)
 
 ;;;; Customization
@@ -141,24 +151,23 @@
   (tabulated-list-init-header))
 
 ;;;; Task listing
+;; CLI: task +get-my-tasks [--query X] [--complete]
+;; Supports: --format, --as, --page-all
 
 ;;;###autoload
-(defun lark-tasks-list (&optional tasklist-id)
-  "List Lark tasks, optionally filtered by TASKLIST-ID."
+(defun lark-tasks-list ()
+  "List Lark tasks assigned to me."
   (interactive)
   (message "Lark: fetching tasks...")
-  (let ((cmd (if tasklist-id
-                 (list "task" "+get-my-tasks" "--tasklist-id" tasklist-id)
-               '("task" "+get-my-tasks"))))
-    (lark--run-command
-     cmd
-     (lambda (data)
-       (lark-tasks--display-list data tasklist-id)))))
+  (lark--run-command
+   '("task" "+get-my-tasks")
+   (lambda (data)
+     (lark-tasks--display-list data nil))))
 
 (defun lark-tasks-refresh ()
   "Refresh the current task list buffer."
   (interactive)
-  (lark-tasks-list lark-tasks--tasklist-id))
+  (lark-tasks-list))
 
 (defun lark-tasks--display-list (data &optional tasklist-id)
   "Display task list DATA for TASKLIST-ID."
@@ -177,6 +186,8 @@
     (pop-to-buffer buf)))
 
 ;;;; Task detail
+;; CLI: task tasks get --params '{"task_id":"X"}'
+;; Supports: --format, --as
 
 (defun lark-tasks-open ()
   "Open the task at point in a detail view."
@@ -184,10 +195,11 @@
   (let ((id (tabulated-list-get-id)))
     (unless id (user-error "No task at point"))
     (message "Lark: fetching task details...")
-    (lark--run-command
-     (list "task" "get" "--task-id" id)
-     (lambda (data)
-       (lark-tasks--display-detail data id)))))
+    (let ((params (json-encode `((task_id . ,id)))))
+      (lark--run-command
+       (list "task" "tasks" "get" "--params" params)
+       (lambda (data)
+         (lark-tasks--display-detail data id))))))
 
 (defun lark-tasks--display-detail (data task-id)
   "Display task detail DATA for TASK-ID."
@@ -247,16 +259,19 @@
     (pop-to-buffer buf)))
 
 ;;;; Task creation
+;; CLI: task +create --summary X [--description X] [--due X] [--assignee X]
+;;                   [--tasklist-id X]
+;; Supports: --format, --as
 
 ;;;###autoload (autoload 'lark-tasks-create "lark-tasks" nil t)
 (transient-define-prefix lark-tasks-create ()
   "Create a new Lark task."
   ["Task Details"
-   ("t" "Title"       "--title=" :prompt "Task title: ")
-   ("d" "Due date"    "--due=" :prompt "Due (YYYY-MM-DD): ")
-   ("n" "Notes"       "--notes=" :prompt "Notes/description: ")]
+   ("t" "Title"       "--summary=" :prompt "Task title: ")
+   ("d" "Due date"    "--due=" :prompt "Due (YYYY-MM-DD or ISO 8601): ")
+   ("n" "Description" "--description=" :prompt "Description: ")]
   ["Assignment"
-   ("a" "Assignees"   "--assignees=" :prompt "Assignees (comma-separated): ")
+   ("a" "Assignee"    "--assignee=" :prompt "Assignee open_id (ou_): ")
    ("l" "Tasklist"    "--tasklist-id=" :prompt "Tasklist ID: ")]
   ["Actions"
    ("RET" "Create"    lark-tasks--do-create)
@@ -265,23 +280,22 @@
 (defun lark-tasks--do-create (&rest _args)
   "Execute task creation with transient arguments."
   (interactive)
-  (let* ((args (transient-args 'lark-tasks-create))
-         (cmd-args '("task" "create")))
+  (let ((args (transient-args 'lark-tasks-create)))
     (unless args
       (user-error "No task details provided"))
     (message "Lark: creating task...")
     (lark--run-command
-     (append cmd-args args)
+     (append '("task" "+create") args)
      (lambda (data)
        (let ((id (or (lark--get-nested data 'data 'task_id)
                      (alist-get 'task_id data)
                      (alist-get 'id data))))
          (message "Lark: task created%s"
-                  (if id (format " (ID: %s)" id) ""))))
-     nil
-     :format "json")))
+                  (if id (format " (ID: %s)" id) "")))))))
 
 ;;;; Task update
+;; CLI: task +update --task-id X [--summary X] [--description X] [--due X]
+;; Supports: --format, --as
 
 (defun lark-tasks-edit ()
   "Edit the task at point (update title)."
@@ -293,12 +307,14 @@
         (user-error "Title cannot be empty"))
       (message "Lark: updating task...")
       (lark--run-command
-       (list "task" "update" "--task-id" id "--title" new-title)
+       (list "task" "+update" "--task-id" id "--summary" new-title)
        (lambda (_data)
          (message "Lark: task updated")
          (lark-tasks-refresh))))))
 
 ;;;; Task completion
+;; CLI: task +complete --task-id X
+;; Supports: --format, --as
 
 (defun lark-tasks-complete ()
   "Mark the task at point as complete."
@@ -307,12 +323,14 @@
     (unless id (user-error "No task at point"))
     (message "Lark: completing task...")
     (lark--run-command
-     (list "task" "complete" "--task-id" id)
+     (list "task" "+complete" "--task-id" id)
      (lambda (_data)
        (message "Lark: task completed")
        (lark-tasks-refresh)))))
 
 ;;;; Task deletion
+;; CLI: task tasks delete --params '{"task_id":"X"}'
+;; Supports: --format, --as
 
 (defun lark-tasks-delete ()
   "Delete the task at point."
@@ -321,11 +339,12 @@
     (unless id (user-error "No task at point"))
     (when (yes-or-no-p (format "Delete task %s? " id))
       (message "Lark: deleting task...")
-      (lark--run-command
-       (list "task" "delete" "--task-id" id)
-       (lambda (_data)
-         (message "Lark: task deleted")
-         (lark-tasks-refresh))))))
+      (let ((params (json-encode `((task_id . ,id)))))
+        (lark--run-command
+         (list "task" "tasks" "delete" "--params" params)
+         (lambda (_data)
+           (message "Lark: task deleted")
+           (lark-tasks-refresh)))))))
 
 ;;;; Copy task ID
 
@@ -338,6 +357,8 @@
     (message "Copied: %s" id)))
 
 ;;;; Subtask creation
+;; Subtasks are created via the raw API:
+;; task subtasks create --params '{"task_id":"PARENT"}' --data '{"summary":"X"}'
 
 (defun lark-tasks-subtask-create ()
   "Create a subtask under the task at point."
@@ -348,15 +369,20 @@
       (when (string-empty-p title)
         (user-error "Title cannot be empty"))
       (message "Lark: creating subtask...")
-      (lark--run-command
-       (list "task" "create" "--title" title "--parent-task-id" parent-id)
-       (lambda (data)
-         (let ((id (or (lark--get-nested data 'data 'task_id)
-                       (alist-get 'task_id data))))
-           (message "Lark: subtask created%s"
-                    (if id (format " (ID: %s)" id) ""))))))))
+      (let ((params (json-encode `((task_id . ,parent-id))))
+            (body (json-encode `((summary . ,title)))))
+        (lark--run-command
+         (list "task" "subtasks" "create"
+               "--params" params "--data" body)
+         (lambda (data)
+           (let ((id (or (lark--get-nested data 'data 'task_id)
+                         (alist-get 'task_id data))))
+             (message "Lark: subtask created%s"
+                      (if id (format " (ID: %s)" id) "")))))))))
 
 ;;;; Tasklist management
+;; CLI: task tasklists list
+;; Supports: --format, --as
 
 ;;;###autoload
 (defun lark-tasks-tasklists ()
@@ -364,7 +390,7 @@
   (interactive)
   (message "Lark: fetching task lists...")
   (lark--run-command
-   '("task" "tasklist" "list")
+   '("task" "tasklists" "list")
    #'lark-tasks--display-tasklists))
 
 (defun lark-tasks--display-tasklists (data)
@@ -384,13 +410,8 @@
           (dolist (tl lists)
             (let ((id (or (alist-get 'tasklist_id tl) (alist-get 'id tl)))
                   (name (or (alist-get 'name tl) (alist-get 'title tl) "")))
-              (insert-text-button
-               name
-               'action (lambda (btn)
-                         (lark-tasks-list (button-get btn 'tasklist-id)))
-               'tasklist-id id
-               'face 'link)
-              (insert (format "  (ID: %s)\n" (or id "")))))))
+              (insert (propertize name 'face 'bold)
+                      (format "  (ID: %s)\n" (or id "")))))))
       (special-mode)
       (goto-char (point-min)))
     (pop-to-buffer buf)))

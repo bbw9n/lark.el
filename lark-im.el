@@ -7,10 +7,20 @@
 ;; Provides Messenger domain commands for lark.el: chat listing,
 ;; message history, send/reply messages, reactions, group chat
 ;; management, and real-time event subscription.
+;;
+;; CLI command mapping:
+;;   Chat search:     im +chat-search [--query X]
+;;   Chat messages:   im +chat-messages-list --chat-id X
+;;   Send message:    im +messages-send --chat-id X --text X  (NO --format)
+;;   Reply:           im +messages-reply --message-id X --text X  (NO --format)
+;;   Search messages: im +messages-search --query X
+;;   Create group:    im +chat-create --name X [--users X]
+;;   Reactions:       im reactions create --params JSON --data JSON
 
 ;;; Code:
 
 (require 'lark-core)
+(require 'json)
 (require 'transient)
 
 ;;;; Customization
@@ -20,9 +30,9 @@
   :group 'lark
   :prefix "lark-im-")
 
-(defcustom lark-im-message-limit 50
+(defcustom lark-im-message-limit "50"
   "Default number of messages to fetch in history."
-  :type 'integer
+  :type 'string
   :group 'lark-im)
 
 ;;;; Buffer-local variables
@@ -203,15 +213,18 @@
   "Major mode for viewing a Lark chat thread.")
 
 ;;;; Chat listing
+;; CLI: im +chat-search [--query X]
+;; Supports: --format, --as
 
 ;;;###autoload
-(defun lark-im-chats ()
-  "List Lark chats."
+(defun lark-im-chats (&optional query)
+  "List Lark chats. With QUERY, search by keyword."
   (interactive)
   (message "Lark: fetching chats...")
-  (lark--run-command
-   '("im" "+chats")
-   #'lark-im--display-chats))
+  (let ((args (list "im" "+chat-search")))
+    (when (and query (not (string-empty-p query)))
+      (setq args (append args (list "--query" query))))
+    (lark--run-command args #'lark-im--display-chats)))
 
 (defun lark-im-chats-refresh ()
   "Refresh the chat list buffer."
@@ -232,6 +245,8 @@
     (pop-to-buffer buf)))
 
 ;;;; Chat messages
+;; CLI: im +chat-messages-list --chat-id X [--page-size N] [--sort asc|desc]
+;; Supports: --format, --as
 
 (defun lark-im-chat-open ()
   "Open the chat at point and show message history."
@@ -247,10 +262,12 @@
   (interactive "sChat ID: ")
   (message "Lark: fetching messages...")
   (lark--run-command
-   (list "im" "messages" "list" "--chat-id" chat-id)
+   (list "im" "+chat-messages-list"
+         "--chat-id" chat-id
+         "--page-size" lark-im-message-limit
+         "--sort" "asc")
    (lambda (data)
-     (lark-im--display-messages data chat-id (or chat-name chat-id)))
-   (list :page-size lark-im-message-limit)))
+     (lark-im--display-messages data chat-id (or chat-name chat-id)))))
 
 (defun lark-im-chat-refresh ()
   "Refresh the current chat message buffer."
@@ -273,8 +290,7 @@
                 (make-string (min 60 (max 20 (length chat-name))) ?─) "\n\n")
         (if (null messages)
             (insert "(no messages)\n")
-          ;; Display in chronological order (reverse if newest-first)
-          (dolist (msg (reverse messages))
+          (dolist (msg messages)
             (lark-im--insert-message msg)))
         (goto-char (point-max)))
       (setq header-line-format
@@ -302,6 +318,9 @@
     (insert "\n")))
 
 ;;;; Send message
+;; CLI: im +messages-send --chat-id X --text X
+;; Does NOT support: --format
+;; Supports: --as
 
 ;;;###autoload
 (defun lark-im-send (&optional chat-id)
@@ -320,7 +339,9 @@
        (lambda (_data)
          (message "Lark: message sent")
          (when lark-im--chat-id
-           (lark-im-chat-refresh)))))))
+           (lark-im-chat-refresh)))
+       nil
+       :literal t))))
 
 (defun lark-im-send-to-chat ()
   "Send a message to the chat at point."
@@ -330,6 +351,9 @@
     (lark-im-send id)))
 
 ;;;; Reply
+;; CLI: im +messages-reply --message-id X --text X
+;; Does NOT support: --format
+;; Supports: --as
 
 (defun lark-im-reply ()
   "Reply to a message in the current chat.
@@ -344,13 +368,16 @@ Prompts for message ID if not determinable from point."
       (user-error "Empty reply"))
     (message "Lark: sending reply...")
     (lark--run-command
-     (list "im" "messages" "reply"
-           "--message-id" msg-id "--text" text)
+     (list "im" "+messages-reply" "--message-id" msg-id "--text" text)
      (lambda (_data)
        (message "Lark: reply sent")
-       (lark-im-chat-refresh)))))
+       (lark-im-chat-refresh))
+     nil
+     :literal t)))
 
 ;;;; Reactions
+;; CLI: im reactions create --params '{"message_id":"X"}' --data '{"reaction_type":{"emoji_type":"X"}}'
+;; Supports: --format, --as
 
 (defun lark-im-react ()
   "Add a reaction to a message in the current chat."
@@ -362,11 +389,12 @@ Prompts for message ID if not determinable from point."
          (emoji (read-string "Emoji type (e.g., THUMBSUP): ")))
     (when (string-empty-p emoji)
       (user-error "No emoji specified"))
-    (lark--run-command
-     (list "im" "messages" "reactions" "create"
-           "--message-id" msg-id "--emoji-type" emoji)
-     (lambda (_data)
-       (message "Lark: reaction added")))))
+    (let ((params (json-encode `((message_id . ,msg-id))))
+          (body (json-encode `((reaction_type . ((emoji_type . ,emoji)))))))
+      (lark--run-command
+       (list "im" "reactions" "create" "--params" params "--data" body)
+       (lambda (_data)
+         (message "Lark: reaction added"))))))
 
 ;;;; Chat copy ID
 
@@ -379,6 +407,8 @@ Prompts for message ID if not determinable from point."
     (message "Copied: %s" id)))
 
 ;;;; Group chat management
+;; CLI: im +chat-create --name X [--description X] [--users X] [--type private|public]
+;; Supports: --format, --as
 
 ;;;###autoload (autoload 'lark-im-group-create "lark-im" nil t)
 (transient-define-prefix lark-im-group-create ()
@@ -387,7 +417,7 @@ Prompts for message ID if not determinable from point."
    ("n" "Name"        "--name=" :prompt "Group name: ")
    ("d" "Description" "--description=" :prompt "Description: ")]
   ["Members"
-   ("m" "Members"     "--user-ids=" :prompt "User IDs (comma-separated): ")]
+   ("m" "Users"       "--users=" :prompt "User open_ids (comma-separated ou_): ")]
   ["Actions"
    ("RET" "Create"    lark-im--do-group-create)
    ("q"   "Cancel"    transient-quit-all)])
@@ -399,7 +429,7 @@ Prompts for message ID if not determinable from point."
     (unless args (user-error "No group details provided"))
     (message "Lark: creating group chat...")
     (lark--run-command
-     (append '("im" "chats" "create") args)
+     (append '("im" "+chat-create") args)
      (lambda (data)
        (let ((id (or (lark--get-nested data 'data 'chat_id)
                      (alist-get 'chat_id data))))
@@ -407,6 +437,8 @@ Prompts for message ID if not determinable from point."
                   (if id (format " (ID: %s)" id) "")))))))
 
 ;;;; Search messages
+;; CLI: im +messages-search --query X
+;; Supports: --format, --as
 
 ;;;###autoload
 (defun lark-im-search (query)
@@ -414,7 +446,7 @@ Prompts for message ID if not determinable from point."
   (interactive "sSearch messages: ")
   (message "Lark: searching messages...")
   (lark--run-command
-   (list "im" "messages" "search" "--query" query)
+   (list "im" "+messages-search" "--query" query)
    (lambda (data)
      (let* ((messages (lark-im--extract-messages data))
             (buf (get-buffer-create (format "*Lark Search: %s*" query))))
@@ -485,7 +517,6 @@ Dispatches to appropriate handler based on event type."
          (chat-id (or (alist-get 'chat_id msg)
                       (lark--get-nested msg 'message 'chat_id))))
     (when chat-id
-      ;; Refresh any open chat buffer for this chat
       (dolist (buf (buffer-list))
         (with-current-buffer buf
           (when (and (eq major-mode 'lark-im-chat-mode)

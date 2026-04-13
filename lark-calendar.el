@@ -8,10 +8,21 @@
 ;; listing, event detail, event creation, free/busy checks, and time
 ;; suggestions.  All data is fetched from lark-cli asynchronously and
 ;; displayed in tabulated-list buffers.
+;;
+;; CLI command mapping:
+;;   Agenda:       calendar +agenda [--calendar-id X] [--start X] [--end X]
+;;   Create event: calendar +create --summary X --start X --end X [--attendee-ids X]
+;;   Free/busy:    calendar +freebusy [--user-id X]
+;;   RSVP:         calendar +rsvp --event-id X --rsvp-status accept|decline|tentative
+;;   Suggestions:  calendar +suggestion --attendee-ids X
+;;   List cals:    calendar calendars list
+;;   Get event:    calendar events get --params '{"calendar_id":X,"event_id":X}'
+;;   Delete event: calendar events delete --params '{"calendar_id":X,"event_id":X}'
 
 ;;; Code:
 
 (require 'lark-core)
+(require 'json)
 (require 'transient)
 
 ;;;; Customization
@@ -149,22 +160,26 @@
   (tabulated-list-init-header))
 
 ;;;; Agenda
+;; CLI: calendar +agenda [--calendar-id X] [--start X] [--end X]
+;; Supports: --format, --as, --dry-run
 
 ;;;###autoload
-(defun lark-calendar-agenda ()
-  "Show today's Lark calendar agenda."
+(defun lark-calendar-agenda (&optional calendar-id)
+  "Show today's Lark calendar agenda.
+Optional CALENDAR-ID to show a specific calendar (default: primary)."
   (interactive)
   (message "Lark: fetching agenda...")
-  (lark--run-command
-   '("calendar" "+agenda")
-   #'lark-calendar--display-agenda))
+  (let ((args (list "calendar" "+agenda")))
+    (when calendar-id
+      (setq args (append args (list "--calendar-id" calendar-id))))
+    (lark--run-command
+     args
+     #'lark-calendar--display-agenda)))
 
 (defun lark-calendar-agenda-refresh ()
   "Refresh the current agenda buffer."
   (interactive)
-  (if lark-calendar--calendar-id
-      (lark-calendar-events lark-calendar--calendar-id)
-    (lark-calendar-agenda)))
+  (lark-calendar-agenda lark-calendar--calendar-id))
 
 (defun lark-calendar--display-agenda (data)
   "Display agenda DATA in a tabulated list buffer."
@@ -180,16 +195,21 @@
             (format " Lark Agenda — %d event(s)" (length events))))
     (pop-to-buffer buf)))
 
-;;;; Event listing
+;;;; Event listing (uses +agenda with date range)
+;; There is no "events list" command; use +agenda with --start/--end.
 
 ;;;###autoload
 (defun lark-calendar-events (&optional calendar-id)
-  "List events for CALENDAR-ID (or primary calendar)."
+  "List events for CALENDAR-ID (or primary calendar).
+Shows events for the next 7 days."
   (interactive)
   (message "Lark: fetching events...")
-  (let ((args (if calendar-id
-                  (list "calendar" "events" "list" "--calendar-id" calendar-id)
-                '("calendar" "events" "list"))))
+  (let ((args (list "calendar" "+agenda"
+                    "--start" (format-time-string "%Y-%m-%dT00:00:00%z")
+                    "--end" (format-time-string "%Y-%m-%dT23:59:59%z"
+                                                (time-add nil (* 7 86400))))))
+    (when calendar-id
+      (setq args (append args (list "--calendar-id" calendar-id))))
     (lark--run-command
      args
      (lambda (data)
@@ -212,6 +232,8 @@
     (pop-to-buffer buf)))
 
 ;;;; Calendar listing
+;; CLI: calendar calendars list [--params JSON]
+;; Supports: --format, --as
 
 ;;;###autoload
 (defun lark-calendar-list ()
@@ -219,7 +241,7 @@
   (interactive)
   (message "Lark: fetching calendars...")
   (lark--run-command
-   '("calendar" "list")
+   '("calendar" "calendars" "list")
    #'lark-calendar--display-calendars))
 
 (defun lark-calendar--display-calendars (data)
@@ -250,6 +272,8 @@
     (pop-to-buffer buf)))
 
 ;;;; Event detail
+;; CLI: calendar events get --params '{"calendar_id":"primary","event_id":"X"}'
+;; Supports: --format, --as
 
 (defun lark-calendar-event-open ()
   "Open the event at point in a detail view."
@@ -257,10 +281,12 @@
   (let ((id (tabulated-list-get-id)))
     (unless id (user-error "No event at point"))
     (message "Lark: fetching event details...")
-    (lark--run-command
-     (list "calendar" "events" "get" "--event-id" id)
-     (lambda (data)
-       (lark-calendar--display-event-detail data id)))))
+    (let ((params (json-encode `((calendar_id . "primary")
+                                 (event_id . ,id)))))
+      (lark--run-command
+       (list "calendar" "events" "get" "--params" params)
+       (lambda (data)
+         (lark-calendar--display-event-detail data id))))))
 
 (defun lark-calendar--display-event-detail (data event-id)
   "Display event detail DATA for EVENT-ID."
@@ -317,18 +343,20 @@
     (pop-to-buffer buf)))
 
 ;;;; Event creation
+;; CLI: calendar +create --summary X --start X --end X [--description X]
+;;                       [--attendee-ids X] [--calendar-id X]
+;; Supports: --format (but we use :literal to control flags precisely)
 
 ;;;###autoload (autoload 'lark-calendar-create-event "lark-calendar" nil t)
 (transient-define-prefix lark-calendar-create-event ()
   "Create a new Lark calendar event."
   ["Event Details"
-   ("t" "Title"       "--title=" :prompt "Event title: ")
-   ("s" "Start time"  "--start-time=" :prompt "Start (YYYY-MM-DD HH:MM): ")
-   ("e" "End time"    "--end-time=" :prompt "End (YYYY-MM-DD HH:MM): ")
-   ("l" "Location"    "--location=" :prompt "Location: ")
+   ("t" "Title"       "--summary=" :prompt "Event title: ")
+   ("s" "Start time"  "--start=" :prompt "Start (ISO 8601, e.g. 2026-04-11T10:00:00+08:00): ")
+   ("e" "End time"    "--end=" :prompt "End (ISO 8601): ")
    ("d" "Description" "--description=" :prompt "Description: ")]
   ["Attendees"
-   ("a" "Attendees"   "--attendees=" :prompt "Attendees (comma-separated): ")]
+   ("a" "Attendees"   "--attendee-ids=" :prompt "Attendee IDs (comma-separated ou_/oc_): ")]
   ["Actions"
    ("RET" "Create"    lark-calendar--do-create-event)
    ("q"   "Cancel"    transient-quit-all)])
@@ -336,23 +364,22 @@
 (defun lark-calendar--do-create-event (&rest _args)
   "Execute event creation with transient arguments."
   (interactive)
-  (let* ((args (transient-args 'lark-calendar-create-event))
-         (cmd-args '("calendar" "+create")))
+  (let ((args (transient-args 'lark-calendar-create-event)))
     (unless args
       (user-error "No event details provided"))
     (message "Lark: creating event...")
     (lark--run-command
-     (append cmd-args args)
+     (append '("calendar" "+create") args)
      (lambda (data)
        (let ((id (or (lark--get-nested data 'data 'event_id)
                      (alist-get 'event_id data)
                      (alist-get 'id data))))
          (message "Lark: event created%s"
-                  (if id (format " (ID: %s)" id) ""))))
-     nil
-     :format "json")))
+                  (if id (format " (ID: %s)" id) "")))))))
 
 ;;;; Event deletion
+;; CLI: calendar events delete --params '{"calendar_id":"primary","event_id":"X"}'
+;; Supports: --format, --as
 
 (defun lark-calendar-event-delete ()
   "Delete the event at point."
@@ -361,11 +388,13 @@
     (unless id (user-error "No event at point"))
     (when (yes-or-no-p (format "Delete event %s? " id))
       (message "Lark: deleting event...")
-      (lark--run-command
-       (list "calendar" "events" "delete" "--event-id" id)
-       (lambda (_data)
-         (message "Lark: event deleted")
-         (lark-calendar-agenda-refresh))))))
+      (let ((params (json-encode `((calendar_id . "primary")
+                                   (event_id . ,id)))))
+        (lark--run-command
+         (list "calendar" "events" "delete" "--params" params)
+         (lambda (_data)
+           (message "Lark: event deleted")
+           (lark-calendar-agenda-refresh)))))))
 
 ;;;; Copy event ID
 
@@ -378,15 +407,20 @@
     (message "Copied: %s" id)))
 
 ;;;; Free/busy
+;; CLI: calendar +freebusy [--user-id X] [--start X] [--end X]
+;; Supports: --format, --as
 
 ;;;###autoload
-(defun lark-calendar-freebusy (user-id)
-  "Check free/busy status for USER-ID."
-  (interactive "sUser ID (or email): ")
+(defun lark-calendar-freebusy (&optional user-id)
+  "Check free/busy status for USER-ID (default: current user)."
+  (interactive
+   (list (let ((input (read-string "User ID (ou_ prefix, empty for self): ")))
+           (if (string-empty-p input) nil input))))
   (message "Lark: checking free/busy...")
-  (lark--run-command
-   (list "calendar" "+freebusy" "--user-id" user-id)
-   #'lark-calendar--display-freebusy))
+  (let ((args (list "calendar" "+freebusy")))
+    (when user-id
+      (setq args (append args (list "--user-id" user-id))))
+    (lark--run-command args #'lark-calendar--display-freebusy)))
 
 (defun lark-calendar--display-freebusy (data)
   "Display free/busy DATA."
@@ -402,14 +436,19 @@
     (pop-to-buffer buf)))
 
 ;;;; Time suggestion
+;; CLI: calendar +suggestion --attendee-ids X [--start X] [--end X]
+;;                           [--duration-minutes N]
+;; Supports: --format, --as
 
 ;;;###autoload
-(defun lark-calendar-suggest-time ()
-  "Get time suggestions for a meeting."
-  (interactive)
+(defun lark-calendar-suggest-time (attendee-ids)
+  "Get time suggestions for a meeting with ATTENDEE-IDS."
+  (interactive "sAttendee IDs (comma-separated ou_/oc_): ")
+  (when (string-empty-p attendee-ids)
+    (user-error "Attendee IDs required"))
   (message "Lark: fetching time suggestions...")
   (lark--run-command
-   '("calendar" "+suggestion")
+   (list "calendar" "+suggestion" "--attendee-ids" attendee-ids)
    (lambda (data)
      (let ((buf (get-buffer-create "*Lark Time Suggestions*")))
        (with-current-buffer buf
@@ -435,6 +474,9 @@
        (pop-to-buffer buf)))))
 
 ;;;; RSVP
+;; CLI: calendar +rsvp --event-id X --rsvp-status accept|decline|tentative
+;; Does NOT support: --format
+;; Supports: --as
 
 ;;;###autoload
 (defun lark-calendar-rsvp (event-id status)
@@ -444,9 +486,11 @@
              (read-string "Event ID: "))
          (completing-read "RSVP: " '("accept" "decline" "tentative") nil t)))
   (lark--run-command
-   (list "calendar" "+rsvp" "--event-id" event-id "--status" status)
+   (list "calendar" "+rsvp" "--event-id" event-id "--rsvp-status" status)
    (lambda (_data)
-     (message "Lark: RSVP'd %s to event %s" status event-id))))
+     (message "Lark: RSVP'd %s to event %s" status event-id))
+   nil
+   :literal t))
 
 ;;;; Transient dispatch
 
