@@ -164,7 +164,7 @@
 
 ;;;; Inbox
 ;; CLI: mail +triage [--query X] [--max N] [--format json]
-;; Supports: --format (with json|table|data), --as
+
 
 ;;;###autoload
 (defun lark-mail-inbox ()
@@ -173,11 +173,10 @@
   (message "Lark: fetching inbox...")
   (lark--run-command
    (list "mail" "+triage"
-         "--max" (number-to-string lark-mail-page-size)
-         "--format" "json")
+         "--max" (number-to-string lark-mail-page-size))
    (lambda (data) (lark-mail--display-list data "Inbox"))
    nil
-   :literal t))
+   :format "json"))
 
 (defun lark-mail-refresh ()
   "Refresh the current mail list buffer."
@@ -200,7 +199,7 @@
 
 ;;;; Read mail
 ;; CLI: mail +message --message-id X
-;; Supports: --format, --as
+
 
 (defun lark-mail-read ()
   "Read the mail at point."
@@ -280,8 +279,7 @@
 
 ;;;; Compose / Send
 ;; CLI: mail +send --to X --subject X --body X [--cc X] [--confirm-send]
-;; Does NOT support: --format
-;; Supports: --as
+
 
 ;;;###autoload (autoload 'lark-mail-compose "lark-mail" nil t)
 (transient-define-prefix lark-mail-compose ()
@@ -307,9 +305,7 @@
       (lark--run-command
        (append '("mail" "+send" "--confirm-send") args)
        (lambda (_data)
-         (message "Lark: mail sent"))
-       nil
-       :literal t))))
+         (message "Lark: mail sent"))))))
 
 (defun lark-mail--do-save-draft (&rest _args)
   "Save mail as draft with transient arguments."
@@ -324,7 +320,6 @@
 
 ;;;; Reply
 ;; CLI: mail +reply --message-id X --body X [--confirm-send]
-;; Does NOT support: --format
 
 (defun lark-mail-reply ()
   "Reply to the mail at point or in the current detail buffer."
@@ -340,13 +335,10 @@
          (list "mail" "+reply" "--message-id" id
                "--body" body "--confirm-send")
          (lambda (_data)
-           (message "Lark: reply sent"))
-         nil
-         :literal t)))))
+           (message "Lark: reply sent")))))))
 
 ;;;; Forward
 ;; CLI: mail +forward --message-id X --to X [--body X] [--confirm-send]
-;; Does NOT support: --format
 
 (defun lark-mail-forward ()
   "Forward the mail at point."
@@ -362,13 +354,11 @@
          (list "mail" "+forward" "--message-id" id
                "--to" to "--confirm-send")
          (lambda (_data)
-           (message "Lark: mail forwarded"))
-         nil
-         :literal t)))))
+           (message "Lark: mail forwarded")))))))
 
 ;;;; Delete
 ;; CLI: mail user_mailbox.messages delete --params '{"user_mailbox_id":"me","message_id":"X"}'
-;; Supports: --format, --as
+
 
 (defun lark-mail-delete ()
   "Delete the mail at point."
@@ -387,7 +377,7 @@
 
 ;;;; Search
 ;; CLI: mail +triage --query X [--max N] [--format json]
-;; Supports: --format, --as
+
 
 ;;;###autoload
 (defun lark-mail-search (query)
@@ -396,12 +386,11 @@
   (message "Lark: searching mail...")
   (lark--run-command
    (list "mail" "+triage" "--query" query
-         "--max" (number-to-string lark-mail-page-size)
-         "--format" "json")
+         "--max" (number-to-string lark-mail-page-size))
    (lambda (data)
      (lark-mail--display-list data (format "Search: %s" query)))
    nil
-   :literal t))
+   :format "json"))
 
 ;;;; Copy mail ID
 
@@ -415,7 +404,7 @@
 
 ;;;; Drafts
 ;; CLI: mail user_mailbox.drafts list
-;; Supports: --format, --as
+
 
 ;;;###autoload
 (defun lark-mail-drafts ()

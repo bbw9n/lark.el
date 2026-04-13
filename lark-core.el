@@ -75,14 +75,12 @@ Example:
   "Build the full argument list for a lark-cli invocation.
 CMD-ARGS is a list of positional arguments (e.g., (\"calendar\" \"+agenda\")).
 EXTRA-ARGS is a plist of keyword arguments (converted via `lark--format-args').
-FORMAT overrides `lark-default-format'."
-  (let ((fmt (or format lark-default-format "json"))
-        (identity lark-default-identity)
-        (dry-run lark-dry-run))
+FORMAT, when non-nil, adds --format FLAG.  Not added by default since
+lark-cli already defaults to json and not all subcommands support it."
+  (let ((dry-run lark-dry-run))
     (append cmd-args
             (lark--format-args extra-args)
-            (list "--format" fmt)
-            (when identity (list "--as" identity))
+            (when format (list "--format" format))
             (when dry-run (list "--dry-run")))))
 
 ;;;; Logging

@@ -214,7 +214,7 @@
 
 ;;;; Chat listing
 ;; CLI: im +chat-search [--query X]
-;; Supports: --format, --as
+
 
 ;;;###autoload
 (defun lark-im-chats (&optional query)
@@ -246,7 +246,7 @@
 
 ;;;; Chat messages
 ;; CLI: im +chat-messages-list --chat-id X [--page-size N] [--sort asc|desc]
-;; Supports: --format, --as
+
 
 (defun lark-im-chat-open ()
   "Open the chat at point and show message history."
@@ -319,8 +319,7 @@
 
 ;;;; Send message
 ;; CLI: im +messages-send --chat-id X --text X
-;; Does NOT support: --format
-;; Supports: --as
+
 
 ;;;###autoload
 (defun lark-im-send (&optional chat-id)
@@ -339,9 +338,7 @@
        (lambda (_data)
          (message "Lark: message sent")
          (when lark-im--chat-id
-           (lark-im-chat-refresh)))
-       nil
-       :literal t))))
+           (lark-im-chat-refresh)))))))
 
 (defun lark-im-send-to-chat ()
   "Send a message to the chat at point."
@@ -352,8 +349,6 @@
 
 ;;;; Reply
 ;; CLI: im +messages-reply --message-id X --text X
-;; Does NOT support: --format
-;; Supports: --as
 
 (defun lark-im-reply ()
   "Reply to a message in the current chat.
@@ -371,13 +366,11 @@ Prompts for message ID if not determinable from point."
      (list "im" "+messages-reply" "--message-id" msg-id "--text" text)
      (lambda (_data)
        (message "Lark: reply sent")
-       (lark-im-chat-refresh))
-     nil
-     :literal t)))
+       (lark-im-chat-refresh)))))
 
 ;;;; Reactions
 ;; CLI: im reactions create --params '{"message_id":"X"}' --data '{"reaction_type":{"emoji_type":"X"}}'
-;; Supports: --format, --as
+
 
 (defun lark-im-react ()
   "Add a reaction to a message in the current chat."
@@ -408,7 +401,7 @@ Prompts for message ID if not determinable from point."
 
 ;;;; Group chat management
 ;; CLI: im +chat-create --name X [--description X] [--users X] [--type private|public]
-;; Supports: --format, --as
+
 
 ;;;###autoload (autoload 'lark-im-group-create "lark-im" nil t)
 (transient-define-prefix lark-im-group-create ()
@@ -438,7 +431,7 @@ Prompts for message ID if not determinable from point."
 
 ;;;; Search messages
 ;; CLI: im +messages-search --query X
-;; Supports: --format, --as
+
 
 ;;;###autoload
 (defun lark-im-search (query)

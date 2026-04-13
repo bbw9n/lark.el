@@ -166,7 +166,7 @@ Handles the two response shapes from lark-cli:
 
 ;;;; Agenda
 ;; CLI: calendar +agenda [--calendar-id X] [--start X] [--end X]
-;; Supports: --format, --as, --dry-run
+
 
 ;;;###autoload
 (defun lark-calendar-agenda (&optional calendar-id)
@@ -238,7 +238,6 @@ Shows events for the next 7 days."
 
 ;;;; Calendar listing
 ;; CLI: calendar calendars list [--params JSON]
-;; Supports: --format, --as
 
 ;;;###autoload
 (defun lark-calendar-list ()
@@ -276,7 +275,6 @@ Shows events for the next 7 days."
 
 ;;;; Event detail
 ;; CLI: calendar events get --params '{"calendar_id":"primary","event_id":"X"}'
-;; Supports: --format, --as
 
 (defun lark-calendar-event-open ()
   "Open the event at point in a detail view."
@@ -348,7 +346,6 @@ Shows events for the next 7 days."
 ;;;; Event creation
 ;; CLI: calendar +create --summary X --start X --end X [--description X]
 ;;                       [--attendee-ids X] [--calendar-id X]
-;; Supports: --format (but we use :literal to control flags precisely)
 
 ;;;###autoload (autoload 'lark-calendar-create-event "lark-calendar" nil t)
 (transient-define-prefix lark-calendar-create-event ()
@@ -382,7 +379,6 @@ Shows events for the next 7 days."
 
 ;;;; Event deletion
 ;; CLI: calendar events delete --params '{"calendar_id":"primary","event_id":"X"}'
-;; Supports: --format, --as
 
 (defun lark-calendar-event-delete ()
   "Delete the event at point."
@@ -411,7 +407,6 @@ Shows events for the next 7 days."
 
 ;;;; Free/busy
 ;; CLI: calendar +freebusy [--user-id X] [--start X] [--end X]
-;; Supports: --format, --as
 
 ;;;###autoload
 (defun lark-calendar-freebusy (&optional user-id)
@@ -441,7 +436,6 @@ Shows events for the next 7 days."
 ;;;; Time suggestion
 ;; CLI: calendar +suggestion --attendee-ids X [--start X] [--end X]
 ;;                           [--duration-minutes N]
-;; Supports: --format, --as
 
 ;;;###autoload
 (defun lark-calendar-suggest-time (attendee-ids)
@@ -478,8 +472,6 @@ Shows events for the next 7 days."
 
 ;;;; RSVP
 ;; CLI: calendar +rsvp --event-id X --rsvp-status accept|decline|tentative
-;; Does NOT support: --format
-;; Supports: --as
 
 ;;;###autoload
 (defun lark-calendar-rsvp (event-id status)
@@ -491,9 +483,7 @@ Shows events for the next 7 days."
   (lark--run-command
    (list "calendar" "+rsvp" "--event-id" event-id "--rsvp-status" status)
    (lambda (_data)
-     (message "Lark: RSVP'd %s to event %s" status event-id))
-   nil
-   :literal t))
+     (message "Lark: RSVP'd %s to event %s" status event-id))))
 
 ;;;; Transient dispatch
 

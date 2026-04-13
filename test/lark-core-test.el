@@ -140,34 +140,32 @@
 ;;;; lark--build-command tests
 
 (ert-deftest lark-test-build-command-basic ()
-  "Basic command building."
-  (let ((lark-default-format "json")
-        (lark-default-identity "user")
-        (lark-dry-run nil))
+  "Basic command building — no --format or --as added by default."
+  (let ((lark-dry-run nil))
     (let ((result (lark--build-command '("calendar" "+agenda") nil)))
-      (should (member "--format" result))
-      (should (member "json" result))
-      (should (member "--as" result))
-      (should (member "user" result))
       (should (equal (car result) "calendar"))
-      (should (equal (cadr result) "+agenda")))))
+      (should (equal (cadr result) "+agenda"))
+      (should-not (member "--format" result))
+      (should-not (member "--as" result)))))
 
 (ert-deftest lark-test-build-command-with-dry-run ()
   "Dry run flag is included when enabled."
-  (let ((lark-default-format "json")
-        (lark-default-identity nil)
-        (lark-dry-run t))
+  (let ((lark-dry-run t))
     (let ((result (lark--build-command '("tasks" "create") nil)))
       (should (member "--dry-run" result)))))
 
 (ert-deftest lark-test-build-command-format-override ()
-  "Format can be overridden."
-  (let ((lark-default-format "json")
-        (lark-default-identity nil)
-        (lark-dry-run nil))
-    (let ((result (lark--build-command '("calendar" "list") nil "pretty")))
-      (should (member "pretty" result))
-      (should-not (member "json" result)))))
+  "Explicit format adds --format flag."
+  (let ((lark-dry-run nil))
+    (let ((result (lark--build-command '("mail" "+triage") nil "json")))
+      (should (member "--format" result))
+      (should (member "json" result)))))
+
+(ert-deftest lark-test-build-command-no-format-without-override ()
+  "No format arg means no --format flag."
+  (let ((lark-dry-run nil))
+    (let ((result (lark--build-command '("calendar" "+create") nil)))
+      (should-not (member "--format" result)))))
 
 (provide 'lark-core-test)
 ;;; lark-core-test.el ends here

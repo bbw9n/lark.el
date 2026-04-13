@@ -152,7 +152,7 @@
 
 ;;;; Task listing
 ;; CLI: task +get-my-tasks [--query X] [--complete]
-;; Supports: --format, --as, --page-all
+
 
 ;;;###autoload
 (defun lark-tasks-list ()
@@ -187,7 +187,7 @@
 
 ;;;; Task detail
 ;; CLI: task tasks get --params '{"task_id":"X"}'
-;; Supports: --format, --as
+
 
 (defun lark-tasks-open ()
   "Open the task at point in a detail view."
@@ -261,7 +261,7 @@
 ;;;; Task creation
 ;; CLI: task +create --summary X [--description X] [--due X] [--assignee X]
 ;;                   [--tasklist-id X]
-;; Supports: --format, --as
+
 
 ;;;###autoload (autoload 'lark-tasks-create "lark-tasks" nil t)
 (transient-define-prefix lark-tasks-create ()
@@ -295,7 +295,7 @@
 
 ;;;; Task update
 ;; CLI: task +update --task-id X [--summary X] [--description X] [--due X]
-;; Supports: --format, --as
+
 
 (defun lark-tasks-edit ()
   "Edit the task at point (update title)."
@@ -314,7 +314,7 @@
 
 ;;;; Task completion
 ;; CLI: task +complete --task-id X
-;; Supports: --format, --as
+
 
 (defun lark-tasks-complete ()
   "Mark the task at point as complete."
@@ -330,7 +330,7 @@
 
 ;;;; Task deletion
 ;; CLI: task tasks delete --params '{"task_id":"X"}'
-;; Supports: --format, --as
+
 
 (defun lark-tasks-delete ()
   "Delete the task at point."
@@ -382,7 +382,7 @@
 
 ;;;; Tasklist management
 ;; CLI: task tasklists list
-;; Supports: --format, --as
+
 
 ;;;###autoload
 (defun lark-tasks-tasklists ()
