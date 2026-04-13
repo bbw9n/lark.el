@@ -334,25 +334,68 @@ Folders descend into them; files show metadata."
 
 ;;;; File detail view
 
+(defvar-local lark-drive--detail-file nil
+  "The file alist displayed in this detail buffer.")
+
+(defvar lark-drive-detail-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'lark-drive-detail-view-content)
+    (define-key map (kbd "?")   #'lark-drive-dispatch)
+    map)
+  "Keymap for `lark-drive-detail-mode'.")
+
+(define-derived-mode lark-drive-detail-mode special-mode
+  "Lark Drive Detail"
+  "Major mode for viewing Lark Drive file detail.
+Press RET to view document content (doc/docx/sheet).
+
+\\{lark-drive-detail-mode-map}")
+
+(defun lark-drive-detail-view-content ()
+  "View the content of the file shown in this detail buffer."
+  (interactive)
+  (unless lark-drive--detail-file
+    (user-error "No file in this buffer"))
+  (let ((type (lark-drive--file-type lark-drive--detail-file))
+        (url (lark-drive--file-url lark-drive--detail-file))
+        (token (lark-drive--file-token lark-drive--detail-file)))
+    (let ((ref (if (and url (not (string-empty-p url))) url token)))
+      (when (string-empty-p ref)
+        (user-error "No URL or token available for this file"))
+      (pcase type
+        ((or "doc" "docx")
+         (require 'lark-docs)
+         (lark-docs-fetch ref))
+        ("sheet"
+         (require 'lark-sheets)
+         (lark-sheets-info ref))
+        (_
+         (user-error "Viewing content is not supported for type \"%s\"" type))))))
+
 (defun lark-drive--show-detail (file)
   "Display detail for FILE in a buffer."
   (let* ((name (lark-drive--file-name file))
+         (type (lark-drive--file-type file))
          (owner-id (lark-drive--file-owner-id file))
          (owner-name (if (string-empty-p owner-id) ""
                        (lark-contact-resolve-name owner-id "open_id")))
+         (viewable (member type '("doc" "docx" "sheet")))
          (buf (get-buffer-create (format "*Lark Drive: %s*" name))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize name 'face 'bold) "\n"
                 (make-string (min 60 (max 20 (length name))) ?─) "\n\n")
-        (lark-drive--detail-field "Type" (lark-drive--file-type file))
+        (lark-drive--detail-field "Type" type)
         (lark-drive--detail-field "Token" (lark-drive--file-token file))
         (lark-drive--detail-field "Modified" (lark-drive--file-modified-time file))
         (lark-drive--detail-field "Created" (lark-drive--file-created-time file))
         (lark-drive--detail-field "Owner" owner-name)
-        (lark-drive--detail-field "URL" (lark-drive--file-url file)))
-      (special-mode)
+        (lark-drive--detail-field "URL" (lark-drive--file-url file))
+        (when viewable
+          (insert "\n" (propertize "Press RET to view content" 'face 'font-lock-comment-face) "\n")))
+      (lark-drive-detail-mode)
+      (setq lark-drive--detail-file file)
       (goto-char (point-min)))
     (pop-to-buffer buf)))
 
