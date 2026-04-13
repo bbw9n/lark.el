@@ -113,6 +113,49 @@ Point must be inside an org table."
 ;;;; Info
 ;; CLI: sheets +info --spreadsheet-token X | --url X
 
+(defvar lark-sheets-info-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'lark-sheets-read-at-point)
+    (define-key map (kbd "?")   #'lark-sheets-dispatch)
+    map)
+  "Keymap for `lark-sheets-info-mode'.")
+
+(define-derived-mode lark-sheets-info-mode special-mode
+  "Lark Sheet Info"
+  "Major mode for viewing Lark spreadsheet info.
+Press RET on a sheet line to read its data as an org table.
+
+\\{lark-sheets-info-mode-map}")
+
+(defun lark-sheets--column-letter (n)
+  "Convert 1-based column number N to a spreadsheet column letter.
+E.g. 1->A, 26->Z, 27->AA."
+  (let ((result ""))
+    (while (> n 0)
+      (setq n (1- n))
+      (setq result (concat (string (+ ?A (% n 26))) result))
+      (setq n (/ n 26)))
+    result))
+
+(defun lark-sheets--sheet-at-point ()
+  "Return the sheet alist at point, or nil."
+  (get-text-property (point) 'lark-sheets-sheet))
+
+(defun lark-sheets-read-at-point ()
+  "Read the sheet at point as an org table.
+Fetches the first 100 rows from the sheet under the cursor."
+  (interactive)
+  (let ((sheet (lark-sheets--sheet-at-point)))
+    (unless sheet (user-error "No sheet at point"))
+    (unless lark-sheets--token
+      (user-error "No spreadsheet token in this buffer"))
+    (let* ((sid (or (alist-get 'sheet_id sheet) ""))
+           (grid (alist-get 'grid_properties sheet))
+           (col-count (or (and grid (alist-get 'column_count grid)) 26))
+           (col-letter (lark-sheets--column-letter (min col-count 26)))
+           (range (format "%s!A1:%s100" sid col-letter)))
+      (lark-sheets-read (or lark-sheets--url lark-sheets--token) range))))
+
 ;;;###autoload
 (defun lark-sheets-info (ref)
   "Show info for spreadsheet REF (token or URL)."
@@ -150,7 +193,8 @@ Point must be inside an org table."
           (dolist (s sheets)
             (let ((sid (alist-get 'sheet_id s))
                   (stitle (or (alist-get 'title s) ""))
-                  (grid (alist-get 'grid_properties s)))
+                  (grid (alist-get 'grid_properties s))
+                  (beg (point)))
               (insert "  " (propertize stitle 'face 'bold)
                       (format "  (ID: %s" (or sid ""))
                       (if grid
@@ -158,9 +202,14 @@ Point must be inside an org table."
                                   (or (alist-get 'row_count grid) 0)
                                   (or (alist-get 'column_count grid) 0))
                         ")")
-                      "\n")))))
-      (special-mode)
-      (goto-char (point-min)))
+                      "\n")
+              (put-text-property beg (point) 'lark-sheets-sheet s)))))
+      (lark-sheets-info-mode)
+      (setq lark-sheets--token token
+            lark-sheets--url (when (string-match-p "^https?://" ref) ref))
+      (goto-char (point-min))
+      (setq header-line-format
+            (format " Lark Sheet: %s — RET to read sheet data" title)))
     (pop-to-buffer buf)))
 
 (defun lark-sheets--insert-field (label value)
