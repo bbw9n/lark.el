@@ -20,6 +20,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-contact)
 (require 'json)
 (require 'transient)
 
@@ -83,6 +84,15 @@
                    (alist-get 'user_count chat))))
     (if count (format "%s" count) "")))
 
+(defun lark-im--chat-owner-name (chat)
+  "Resolve the owner display name from CHAT.
+Uses owner_id and owner_id_type via `lark-contact-resolve-name'."
+  (let ((owner-id (alist-get 'owner_id chat))
+        (id-type (or (alist-get 'owner_id_type chat) "open_id")))
+    (if (and owner-id (not (string-empty-p owner-id)))
+        (lark-contact-resolve-name owner-id id-type)
+      "")))
+
 (defun lark-im--extract-chats (data)
   "Extract chat list from lark-cli response DATA."
   (cond
@@ -108,8 +118,9 @@
      (let ((id (lark-im--chat-id-of chat))
            (name (lark-im--chat-name-of chat))
            (type (lark-im--chat-type chat))
+           (owner (lark-im--chat-owner-name chat))
            (members (lark-im--chat-member-count chat)))
-       (list id (vector name type members))))
+       (list id (vector name type owner members))))
    chats))
 
 ;;;; Message parsing
@@ -192,8 +203,9 @@
   "Lark Chats"
   "Major mode for browsing Lark chats."
   (setq tabulated-list-format
-        [("Name" 40 t)
-         ("Type" 12 t)
+        [("Name" 36 t)
+         ("Type" 10 t)
+         ("Owner" 20 t)
          ("Members" 8 t)])
   (setq tabulated-list-padding 2)
   (tabulated-list-init-header))

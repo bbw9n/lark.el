@@ -91,7 +91,8 @@
 ;;;; Make entries
 
 (ert-deftest lark-im-test-make-chat-entries ()
-  (let* ((chats '(((chat_id . "c1")
+  (let* ((lark-contact--user-cache (make-hash-table :test 'equal))
+         (chats '(((chat_id . "c1")
                     (name . "Dev Team")
                     (chat_type . "group")
                     (member_count . 10))))
@@ -101,7 +102,9 @@
     (let ((vec (cadr (car entries))))
       (should (equal (aref vec 0) "Dev Team"))
       (should (equal (aref vec 1) "group"))
-      (should (equal (aref vec 2) "10")))))
+      ;; vec[2] is owner (empty when no owner_id)
+      (should (equal (aref vec 2) ""))
+      (should (equal (aref vec 3) "10")))))
 
 (provide 'lark-im-test)
 ;;; lark-im-test.el ends here
