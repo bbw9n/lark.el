@@ -503,4 +503,4 @@ with =json-parse-string=. CLI debug lines (=[cmd +sub]= prefixes and
 
 * License
 
-GPL-3.0-or-later
+[[./LICENSE][GNU GPLv3]]
