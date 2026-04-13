@@ -1,0 +1,365 @@
+#+TITLE: lark.el — Emacs Interface to Lark/Feishu
+#+AUTHOR: lark.el contributors
+#+OPTIONS: toc:3
+
+An Emacs package that wraps [[https://github.com/larksuite/cli][lark-cli]] to bring Lark/Feishu into Emacs.
+Transient menus for command dispatch, tabulated-list buffers for data,
+async execution to keep Emacs responsive.
+
+* Prerequisites
+
+- Emacs 28.1+ (for built-in =transient=)
+- [[https://github.com/larksuite/cli][lark-cli]] installed and on your =PATH=
+
+** Installing lark-cli
+
+#+begin_src shell
+npm install -g @anthropic-ai/lark-cli
+#+end_src
+
+Verify it works:
+
+#+begin_src shell
+lark-cli --help
+#+end_src
+
+* Installation
+
+** From source (straight.el)
+
+#+begin_src emacs-lisp
+(straight-use-package
+ '(lark :type git :host github :repo "bbw9n/lark.el"))
+#+end_src
+
+** From source (manual)
+
+Clone this repo and add it to your =load-path=:
+
+#+begin_src emacs-lisp
+(add-to-list 'load-path "/path/to/lark.el")
+(require 'lark)
+(lark-setup-prefix-key) ;; binds C-c l
+#+end_src
+
+** use-package
+
+#+begin_src emacs-lisp
+(use-package lark
+  :load-path "/path/to/lark.el"
+  :config
+  (lark-setup-prefix-key))
+#+end_src
+
+* Quick Start: First-Time Setup
+
+This section walks you through initial configuration, authentication,
+and pulling up your calendar — all from within Emacs.
+
+** Step 1: Configure lark-cli (one-time)
+
+Before lark.el can talk to Lark, you need to register an app.
+Run this in your terminal (or use =M-x shell=):
+
+#+begin_src shell
+lark-cli config init
+#+end_src
+
+This is an interactive prompt that asks for:
+
+1. *Brand*: choose =feishu= (China) or =lark= (international)
+2. *App ID & App Secret*: from the [[https://open.feishu.cn/app][Feishu Open Platform]] (or [[https://open.larksuite.com/app][Lark Developer Console]])
+   - Go to the console, create an app (or use an existing one)
+   - Copy the App ID and App Secret
+3. The CLI stores credentials locally in =~/.config/lark-cli/=
+
+If you prefer non-interactive setup:
+
+#+begin_src shell
+echo "YOUR_APP_SECRET" | lark-cli config init \
+  --app-id cli_xxxxxxxxxxxx \
+  --app-secret-stdin \
+  --brand feishu
+#+end_src
+
+Verify:
+
+#+begin_src shell
+lark-cli config show
+#+end_src
+
+** Step 2: Authenticate (OAuth login)
+
+Now authenticate your Lark user account. You can do this either from the
+terminal or from Emacs:
+
+*** Option A: From Emacs
+
+#+begin_src
+M-x lark-auth-login
+#+end_src
+
+Or use the keybinding: =C-c l l= then press =L= (Login).
+
+This will:
+1. Call =lark-cli auth login --no-wait= in the background
+2. Open your browser to the Lark authorization page
+3. Poll automatically until you approve in the browser
+4. Show "Lark: login successful!" in the echo area
+
+*** Option B: From terminal first
+
+#+begin_src shell
+lark-cli auth login --domain calendar
+#+end_src
+
+The =--domain= flag requests scopes for a specific domain. Available
+domains: =calendar=, =task=, =im=, =mail=, =contact=, =docs=, =drive=,
+=base=, =sheets=, =wiki=, =vc=, =approval=, =event=, =minutes=, or =all=.
+
+You can request multiple domains:
+
+#+begin_src shell
+lark-cli auth login --domain calendar,task,im
+#+end_src
+
+Or request everything:
+
+#+begin_src shell
+lark-cli auth login --domain all
+#+end_src
+
+*** Verify authentication
+
+From Emacs:
+
+#+begin_src
+M-x lark-auth-status
+#+end_src
+
+Or: =C-c l s=
+
+This shows your login status in the echo area. You should see something
+like "Lark: authenticated as Your Name (your-tenant)".
+
+From terminal:
+
+#+begin_src shell
+lark-cli auth status
+#+end_src
+
+** Step 3: View your calendar
+
+Now the fun part:
+
+#+begin_src
+C-c l a
+#+end_src
+
+Or: =M-x lark-calendar-agenda=
+
+This fetches today's agenda and displays it in a =*Lark Agenda*= buffer:
+
+#+begin_example
+  Time                     Title                                    Location             Status
+  2026-04-11 09:00 - 09:30 Daily Standup                            Meeting Room A       accepted
+  2026-04-11 10:00 - 11:00 Sprint Planning                         Room 301             accepted
+  2026-04-11 14:00 - 15:00 1:1 with Manager                                             tentative
+#+end_example
+
+*** Keybindings in the agenda buffer
+
+| Key   | Action                          |
+|-------+---------------------------------|
+| =RET= | Open event detail               |
+| =g=   | Refresh (re-fetch from Lark)    |
+| =c=   | Create a new event              |
+| =d=   | Delete event at point           |
+| =y=   | Copy event ID to kill ring      |
+| =?=   | Open Calendar transient menu    |
+| =q=   | Quit buffer                     |
+
+*** Open the full Calendar menu
+
+#+begin_src
+C-c l l   (opens main dispatch)
+c         (opens Calendar submenu)
+#+end_src
+
+Or directly: =M-x lark-calendar-dispatch=
+
+The Calendar transient menu:
+
+#+begin_example
+-- Lark Calendar commands --
+
+Quick Actions
+ a  Agenda (today)
+ n  New event
+ f  Free/busy
+ s  Suggest time
+ r  RSVP
+
+Browse
+ l  List calendars
+ e  List events
+#+end_example
+
+* Usage Reference
+
+** Global Keybindings (prefix =C-c l=)
+
+| Key       | Command                  | Description           |
+|-----------+--------------------------+-----------------------|
+| =C-c l l= | =lark-dispatch=          | Main transient menu   |
+| =C-c l a= | =lark-calendar-agenda=   | Today's agenda        |
+| =C-c l t= | =lark-tasks-list=        | My tasks              |
+| =C-c l m= | =lark-im-dispatch=       | Messenger menu        |
+| =C-c l e= | =lark-mail-inbox=        | Mail inbox            |
+| =C-c l s= | =lark-auth-status=       | Auth status           |
+
+** Main Dispatch (=C-c l l=)
+
+The main transient menu provides access to all 11 Lark domains:
+
+| Key | Domain     | Key | Domain    |
+|-----+------------+-----+-----------|
+| =c= | Calendar   | =s= | Sheets    |
+| =m= | Messenger  | =e= | Mail      |
+| =d= | Docs       | =w= | Wiki      |
+| =f= | Drive      | =k= | Contacts  |
+| =b= | Base       | =v= | Meetings  |
+| =t= | Tasks      |     |           |
+
+Plus auth commands (=a= status, =L= login, =O= logout, =I= identity switch)
+and =S= for schema lookup.
+
+** Calendar
+
+| Command                          | Description                       |
+|----------------------------------+-----------------------------------|
+| =lark-calendar-agenda=           | Show today's agenda               |
+| =lark-calendar-events=           | List events (optional calendar ID) |
+| =lark-calendar-list=             | List all calendars                |
+| =lark-calendar-create-event=     | Create event (transient form)     |
+| =lark-calendar-freebusy=         | Check free/busy for a user        |
+| =lark-calendar-suggest-time=     | Get meeting time suggestions      |
+| =lark-calendar-rsvp=             | RSVP to an event                  |
+
+** Tasks
+
+| Command                    | Description                    |
+|----------------------------+--------------------------------|
+| =lark-tasks-list=          | List my tasks                  |
+| =lark-tasks-create=        | Create task (transient form)   |
+| =lark-tasks-open=          | Open task detail (at point)    |
+| =lark-tasks-complete=      | Mark task complete (at point)  |
+| =lark-tasks-edit=          | Edit task title (at point)     |
+| =lark-tasks-delete=        | Delete task (at point)         |
+| =lark-tasks-subtask-create= | Add subtask (at point)        |
+| =lark-tasks-tasklists=     | List task lists                |
+
+** Messenger
+
+| Command                  | Description                        |
+|--------------------------+------------------------------------|
+| =lark-im-chats=          | List chats                         |
+| =lark-im-messages=       | Show message history for a chat    |
+| =lark-im-send=           | Send a message                     |
+| =lark-im-reply=          | Reply to a message                 |
+| =lark-im-react=          | Add reaction to a message          |
+| =lark-im-search=         | Search messages                    |
+| =lark-im-group-create=   | Create group chat (transient form) |
+| =lark-im-subscribe=      | Start real-time event subscription |
+| =lark-im-unsubscribe=    | Stop event subscription            |
+
+** Mail
+
+| Command                | Description                      |
+|------------------------+----------------------------------|
+| =lark-mail-inbox=      | Show inbox                       |
+| =lark-mail-read=       | Read mail (at point)             |
+| =lark-mail-compose=    | Compose new mail (transient form)|
+| =lark-mail-reply=      | Reply to mail                    |
+| =lark-mail-forward=    | Forward mail                     |
+| =lark-mail-delete=     | Delete mail (at point)           |
+| =lark-mail-search=     | Search mail                      |
+| =lark-mail-drafts=     | List drafts                      |
+
+* Customization
+
+All options are under =M-x customize-group RET lark=.
+
+| Variable                    | Default      | Description                           |
+|-----------------------------+--------------+---------------------------------------|
+| =lark-cli-executable=      | ="lark-cli"= | Path to the lark-cli binary           |
+| =lark-default-format=      | ="json"=     | Output format (json/table/csv/pretty) |
+| =lark-default-identity=    | ="user"=     | Identity type (user/bot)              |
+| =lark-dry-run=             | =nil=        | Pass --dry-run to destructive commands |
+| =lark-im-message-limit=    | =50=         | Messages to fetch in chat history     |
+| =lark-mail-page-size=      | =20=         | Emails per page                       |
+| =lark-calendar-default-days= | =1=        | Days in agenda view                   |
+
+* Troubleshooting
+
+** "Cannot find lark-cli executable"
+
+lark-cli is not on your =PATH=. Either:
+
+- Install it: =npm install -g @anthropic-ai/lark-cli=
+- Set the full path: =(setq lark-cli-executable "/path/to/lark-cli")=
+
+** "Lark: not authenticated"
+
+Run =M-x lark-auth-login= or authenticate from terminal:
+
+#+begin_src shell
+lark-cli auth login --domain all
+#+end_src
+
+** Empty agenda / "no events found"
+
+1. Check you have calendar scopes: =lark-cli auth check --scope calendar:readonly=
+2. Try from terminal first: =lark-cli calendar +agenda=
+3. If the terminal works but Emacs doesn't, enable debug logging:
+   =(setq lark--debug t)= and check the =*lark-log*= buffer
+
+** Permission errors
+
+Some operations require specific scopes. Re-login with the needed domain:
+
+#+begin_src shell
+lark-cli auth login --domain calendar,task
+#+end_src
+
+** Debugging
+
+Enable debug logging to see all CLI invocations:
+
+#+begin_src emacs-lisp
+(setq lark--debug t)
+#+end_src
+
+Then check =*lark-log*= buffer (=C-x b *lark-log*=) to see every command
+that lark.el runs, including arguments and exit codes.
+
+* Architecture
+
+#+begin_example
+lark.el                  Entry point, defgroup, prefix keymap
+lark-core.el             Process management, JSON parsing, error handling
+lark-auth.el             OAuth device-code login, status, identity switching
+lark-transient.el        Top-level transient dispatch menu
+lark-calendar.el         Calendar: agenda, events, create, free/busy, RSVP
+lark-tasks.el            Tasks: list, create, complete, subtasks, tasklists
+lark-im.el               Messenger: chats, messages, send, reply, events
+lark-mail.el             Mail: inbox, read, compose, reply, forward, search
+#+end_example
+
+All CLI calls funnel through =lark--run-command= (async) or
+=lark--run-command-sync=. Output is always =--format json=, parsed with
+=json-parse-string=.
+
+* License
+
+GPL-3.0-or-later
