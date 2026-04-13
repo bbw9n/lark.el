@@ -9,13 +9,12 @@
 ;; modules (IM, Calendar, Tasks, etc.).
 ;;
 ;; CLI command mapping:
-;;   Get user:    contact user get --params '{"user_id":"X","user_id_type":"Y"}'
-;;   Search user: contact +search --query X
+;;   Get user:    contact +get-user [--user-id X] [--user-id-type Y]
+;;   Search user: contact +search-user --query X
 
 ;;; Code:
 
 (require 'lark-core)
-(require 'json)
 (require 'transient)
 
 ;;;; Customization
@@ -65,11 +64,11 @@ Populated lazily by `lark-contact-get-user' and
 (defun lark-contact-get-user-sync (user-id &optional id-type)
   "Fetch user info for USER-ID synchronously, return the user alist.
 ID-TYPE defaults to \"open_id\".  Also accepts \"user_id\", \"union_id\"."
-  (let* ((id-type (or id-type "open_id"))
-         (params (json-encode `((user_id . ,user-id)
-                                (user_id_type . ,id-type)))))
+  (let ((id-type (or id-type "open_id")))
     (lark--run-command-sync
-     (list "contact" "user" "get" "--params" params))))
+     (list "contact" "+get-user"
+           "--user-id" user-id
+           "--user-id-type" id-type))))
 
 (defun lark-contact-resolve-name (user-id &optional id-type)
   "Return the display name for USER-ID (sync, cached).
@@ -98,11 +97,11 @@ When called interactively, displays the result in a detail buffer."
    (list (read-string "User ID: ")
          (completing-read "ID type: "
                           '("open_id" "user_id" "union_id") nil t nil nil "open_id")))
-  (let* ((id-type (or id-type "open_id"))
-         (params (json-encode `((user_id . ,user-id)
-                                (user_id_type . ,id-type)))))
+  (let ((id-type (or id-type "open_id")))
     (lark--run-command
-     (list "contact" "user" "get" "--params" params)
+     (list "contact" "+get-user"
+           "--user-id" user-id
+           "--user-id-type" id-type)
      (lambda (data)
        (let* ((user (lark-contact--extract-user data))
               (name (lark-contact--user-display-name user)))
@@ -122,7 +121,7 @@ When called interactively, displays the result in a detail buffer."
     (user-error "Search query is required"))
   (message "Lark: searching contacts...")
   (lark--run-command
-   (list "contact" "+search" "--query" query)
+   (list "contact" "+search-user" "--query" query)
    #'lark-contact--display-search-results))
 
 ;;;; Display: user detail
