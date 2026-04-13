@@ -612,16 +612,16 @@ Shows incomplete tasks sorted by due date."
   (let* ((tasks (lark-tasks--extract-tasks data))
          (today (format-time-string "%Y-%m-%d"))
          ;; Partition into overdue, today, upcoming (has due), and no-due
-         (with-due (seq-filter (lambda (t) (not (string-empty-p (lark-tasks--task-due-raw t)))) tasks))
-         (no-due (seq-filter (lambda (t) (string-empty-p (lark-tasks--task-due-raw t))) tasks))
+         (with-due (seq-filter (lambda (tk) (not (string-empty-p (lark-tasks--task-due-raw tk)))) tasks))
+         (no-due (seq-filter (lambda (tk) (string-empty-p (lark-tasks--task-due-raw tk))) tasks))
          ;; Sort by due date
          (sorted (sort with-due
                        (lambda (a b)
                          (string< (lark-tasks--task-due-raw a)
                                   (lark-tasks--task-due-raw b)))))
-         (overdue (seq-filter (lambda (t) (string< (lark-tasks--format-date (lark-tasks--task-due-raw t)) today)) sorted))
-         (due-today (seq-filter (lambda (t) (equal (lark-tasks--format-date (lark-tasks--task-due-raw t)) today)) sorted))
-         (upcoming (seq-filter (lambda (t) (string> (lark-tasks--format-date (lark-tasks--task-due-raw t)) today)) sorted))
+         (overdue (seq-filter (lambda (tk) (string< (lark-tasks--format-date (lark-tasks--task-due-raw tk)) today)) sorted))
+         (due-today (seq-filter (lambda (tk) (equal (lark-tasks--format-date (lark-tasks--task-due-raw tk)) today)) sorted))
+         (upcoming (seq-filter (lambda (tk) (string> (lark-tasks--format-date (lark-tasks--task-due-raw tk)) today)) sorted))
          (buf (get-buffer-create "*Lark Task Agenda*")))
     (with-current-buffer buf
       (lark-tasks-agenda-mode)
