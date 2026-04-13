@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Free Software Foundation, Inc.
 
 ;; Author: lark.el contributors
-;; URL: https://github.com/user/lark.el
+;; URL: https://github.com/bbw9n/lark.el
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: comm, tools
@@ -53,17 +53,17 @@
   "Default output format for lark-cli commands.
 One of \"json\", \"table\", \"csv\", \"ndjson\", or \"pretty\"."
   :type '(choice (const "json")
-                 (const "table")
-                 (const "csv")
-                 (const "ndjson")
-                 (const "pretty"))
+          (const "table")
+          (const "csv")
+          (const "ndjson")
+          (const "pretty"))
   :group 'lark)
 
 (defcustom lark-default-identity "user"
   "Default identity for lark-cli commands.
 Either \"user\" or \"bot\"."
   :type '(choice (const "user")
-                 (const "bot"))
+          (const "bot"))
   :group 'lark)
 
 (defcustom lark-dry-run nil
@@ -73,9 +73,14 @@ Either \"user\" or \"bot\"."
 
 ;;;; Prefix keymap
 
+(autoload 'lark-calendar-agenda "lark-calendar" nil t)
+(autoload 'lark-tasks-list "lark-tasks" nil t)
+
 (defvar lark-prefix-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "l") #'lark-dispatch)
+    (define-key map (kbd "a") #'lark-calendar-agenda)
+    (define-key map (kbd "t") #'lark-tasks-list)
     (define-key map (kbd "s") #'lark-auth-status)
     map)
   "Keymap for Lark commands, intended to be bound under a prefix like C-c l.")
