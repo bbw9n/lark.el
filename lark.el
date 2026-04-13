@@ -78,6 +78,8 @@ Either \"user\" or \"bot\"."
 (autoload 'lark-im-dispatch "lark-im" nil t)
 (autoload 'lark-mail-inbox "lark-mail" nil t)
 (autoload 'lark-contacts-dispatch "lark-contact" nil t)
+(autoload 'lark-docs-dispatch "lark-docs" nil t)
+(autoload 'lark-docs-search "lark-docs" nil t)
 
 (defvar lark-prefix-map
   (let ((map (make-sparse-keymap)))
@@ -86,6 +88,7 @@ Either \"user\" or \"bot\"."
     (define-key map (kbd "m") #'lark-im-dispatch)
     (define-key map (kbd "t") #'lark-tasks-list)
     (define-key map (kbd "e") #'lark-mail-inbox)
+    (define-key map (kbd "d") #'lark-docs-dispatch)
     (define-key map (kbd "k") #'lark-contacts-dispatch)
     (define-key map (kbd "s") #'lark-auth-status)
     map)
