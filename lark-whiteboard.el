@@ -51,20 +51,25 @@ OUTPUT-DIR is the directory to save image output."
                       "--whiteboard-token" token
                       "--output_as" output-as)))
       (when (and output-dir (not (string-empty-p output-dir)))
-        (setq args (append args (list "--output" (expand-file-name output-dir)
-                                      "--overwrite"))))
+        (setq args (append args (list "--output" "." "--overwrite"))))
       (if (equal output-as "image")
-          (lark--run-command
-           args
-           (lambda (data)
-             (let ((path (or (alist-get 'path data)
-                             (alist-get 'output data)
-                             (lark--get-nested data 'data 'path))))
-               (if path
-                   (progn
-                     (message "Lark: whiteboard image saved to %s" path)
-                     (find-file path))
-                 (message "Lark: whiteboard image exported")))))
+          ;; Run from the target directory so the relative "--output ."
+          ;; lands in the right place.
+          (let ((default-directory (or (and output-dir
+                                           (file-name-as-directory
+                                            (expand-file-name output-dir)))
+                                      default-directory)))
+            (lark--run-command
+             args
+             (lambda (data)
+               (let ((file (or (alist-get 'path data)
+                               (alist-get 'output data)
+                               (lark--get-nested data 'data 'path))))
+                 (if file
+                     (let ((full (expand-file-name file default-directory)))
+                       (message "Lark: whiteboard image saved to %s" full)
+                       (find-file full))
+                   (message "Lark: whiteboard image exported"))))))
         (lark--run-command
          args
          (lambda (data)
