@@ -118,23 +118,7 @@
     data)
    (t nil)))
 
-(defun lark-mail--make-entries (mails)
-  "Convert MAILS to `tabulated-list-entries' format."
-  (mapcar
-   (lambda (mail)
-     (let ((id (lark-mail--mail-id mail))
-           (read (if (lark-mail--mail-read-p mail) " " "*"))
-           (from (lark-mail--mail-from mail))
-           (subject (lark-mail--mail-subject mail))
-           (date (lark-mail--mail-date mail))
-           (att (if (lark-mail--mail-has-attachment-p mail) "@" " ")))
-       (list id (vector
-                 (propertize read 'face (if (equal read "*")
-                                            'bold 'default))
-                 from subject date att))))
-   mails))
-
-;;;; Tabulated list mode
+;;;; Mail list mode (mu4e-like)
 
 (defvar lark-mail-mode-map
   (let ((map (make-sparse-keymap)))
@@ -146,25 +130,78 @@
     (define-key map (kbd "d")   #'lark-mail-delete)
     (define-key map (kbd "/")   #'lark-mail-search)
     (define-key map (kbd "y")   #'lark-mail-copy-id)
+    (define-key map (kbd "n")   #'lark-mail--next)
+    (define-key map (kbd "p")   #'lark-mail--prev)
     (define-key map (kbd "?")   #'lark-mail-dispatch)
     map)
   "Keymap for `lark-mail-mode'.")
 
-(define-derived-mode lark-mail-mode tabulated-list-mode
+(define-derived-mode lark-mail-mode special-mode
   "Lark Mail"
-  "Major mode for browsing Lark mail."
-  (setq tabulated-list-format
-        [("" 2 nil)                     ; unread marker
-         ("From" 25 t)
-         ("Subject" 45 t)
-         ("Date" 16 t)
-         ("" 2 nil)])                   ; attachment marker
-  (setq tabulated-list-padding 1)
-  (tabulated-list-init-header))
+  "Major mode for browsing Lark mail, styled after mu4e.
+
+\\{lark-mail-mode-map}")
+
+(defun lark-mail--id-at-point ()
+  "Return the mail ID at point, or nil."
+  (get-text-property (point) 'lark-mail-id))
+
+(defun lark-mail--next ()
+  "Move to the next mail entry."
+  (interactive)
+  (let ((current (lark-mail--id-at-point))
+        (pos (point)))
+    (when current
+      (while (and (not (eobp))
+                  (equal (lark-mail--id-at-point) current))
+        (forward-char)))
+    (while (and (not (eobp))
+                (not (lark-mail--id-at-point)))
+      (forward-char))
+    (when (eobp) (goto-char pos))
+    (beginning-of-line)))
+
+(defun lark-mail--prev ()
+  "Move to the previous mail entry."
+  (interactive)
+  (let ((current (lark-mail--id-at-point))
+        (pos (point)))
+    (when current
+      (while (and (not (bobp))
+                  (equal (lark-mail--id-at-point) current))
+        (backward-char)))
+    (while (and (not (bobp))
+                (not (lark-mail--id-at-point)))
+      (backward-char))
+    (if (lark-mail--id-at-point)
+        (beginning-of-line)
+      (goto-char pos))))
+
+(defun lark-mail--insert-entry (mail)
+  "Insert a single-line mu4e-style entry for MAIL."
+  (let* ((id (lark-mail--mail-id mail))
+         (unread (not (lark-mail--mail-read-p mail)))
+         (flags (concat (if unread "N" " ")
+                        (if (lark-mail--mail-has-attachment-p mail) "a" " ")))
+         (date (lark-mail--mail-date mail))
+         (from (lark-mail--mail-from mail))
+         (subject (lark-mail--mail-subject mail))
+         (face (if unread 'bold 'default))
+         (beg (point)))
+    (insert (propertize flags 'face 'font-lock-type-face)
+            "  "
+            (propertize (format "%-16s" date) 'face 'font-lock-comment-face)
+            "  "
+            (propertize (format "%-20s"
+                                (truncate-string-to-width from 20 nil nil t))
+                        'face face)
+            "  "
+            (propertize subject 'face face)
+            "\n")
+    (put-text-property beg (point) 'lark-mail-id id)))
 
 ;;;; Inbox
 ;; CLI: mail +triage [--query X] [--max N] [--format json]
-
 
 ;;;###autoload
 (defun lark-mail-inbox ()
@@ -184,17 +221,23 @@
   (lark-mail-inbox))
 
 (defun lark-mail--display-list (data folder)
-  "Display mail list DATA for FOLDER."
+  "Display mail list DATA for FOLDER in mu4e-like format."
   (let* ((mails (lark-mail--extract-mails data))
          (buf (get-buffer-create (format "*Lark Mail: %s*" folder))))
     (with-current-buffer buf
       (lark-mail-mode)
       (setq lark-mail--items mails
-            lark-mail--folder folder
-            tabulated-list-entries (lark-mail--make-entries mails))
-      (tabulated-list-print t)
+            lark-mail--folder folder)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (if (null mails)
+            (insert "  (no messages)\n")
+          (dolist (mail mails)
+            (lark-mail--insert-entry mail))))
+      (goto-char (point-min))
       (setq header-line-format
-            (format " Lark Mail: %s — %d message(s)" folder (length mails))))
+            (format " Lark Mail: %s — %d message(s)  [N]=new [a]=attach"
+                    folder (length mails))))
     (pop-to-buffer buf)))
 
 ;;;; Read mail
@@ -204,13 +247,66 @@
 (defun lark-mail-read ()
   "Read the mail at point."
   (interactive)
-  (let ((id (tabulated-list-get-id)))
+  (let ((id (lark-mail--id-at-point)))
     (unless id (user-error "No mail at point"))
     (message "Lark: fetching mail...")
     (lark--run-command
      (list "mail" "+message" "--message-id" id)
      (lambda (data)
        (lark-mail--display-detail data id)))))
+
+(defun lark-mail--header-field (label value)
+  "Insert a mail header LABEL: VALUE line if VALUE is non-empty."
+  (when (and value (stringp value) (not (string-empty-p value)))
+    (insert (propertize (format "%-10s" (concat label ":")) 'face 'font-lock-keyword-face)
+            value "\n")))
+
+(defun lark-mail--format-address (addr)
+  "Format a single address ADDR (string or alist) for display."
+  (cond
+   ((stringp addr) addr)
+   ((listp addr)
+    (let ((name (or (alist-get 'name addr) ""))
+          (address (or (alist-get 'address addr)
+                       (alist-get 'mail_address addr) "")))
+      (cond
+       ((and (not (string-empty-p name)) (not (string-empty-p address)))
+        (format "%s <%s>" name address))
+       ((not (string-empty-p name)) name)
+       ((not (string-empty-p address)) address)
+       (t ""))))
+   (t (format "%s" addr))))
+
+(defun lark-mail--format-address-list (addresses)
+  "Format ADDRESSES (string, alist, or list) for display."
+  (cond
+   ((null addresses) "")
+   ((stringp addresses) addresses)
+   ((and (listp addresses) (alist-get 'address addresses))
+    (lark-mail--format-address addresses))
+   ((and (listp addresses) (alist-get 'name addresses))
+    (lark-mail--format-address addresses))
+   ((listp addresses)
+    (mapconcat #'lark-mail--format-address addresses ", "))
+   (t (format "%s" addresses))))
+
+(defun lark-mail--extract-body (mail)
+  "Extract the best body text from MAIL."
+  (let ((body (or (alist-get 'body mail)
+                  (alist-get 'text_body mail)
+                  (alist-get 'content mail)
+                  (alist-get 'plain_text mail)
+                  (alist-get 'html_body mail))))
+    (cond
+     ((null body) "")
+     ((stringp body) body)
+     ((listp body)
+      (or (alist-get 'plain_text body)
+          (alist-get 'text body)
+          (alist-get 'content body)
+          (alist-get 'html body)
+          ""))
+     (t (format "%s" body)))))
 
 (defun lark-mail--display-detail (data mail-id)
   "Display mail detail DATA for MAIL-ID."
@@ -221,46 +317,72 @@
       (let ((inhibit-read-only t))
         (erase-buffer)
         (setq lark-mail--mail-id mail-id)
-        ;; Headers
+        ;; Subject line
         (insert (propertize subject 'face 'bold) "\n"
-                (make-string (min 72 (max 20 (length subject))) ?─) "\n\n")
-        (let ((from (lark-mail--mail-from mail))
-              (to (lark-mail--format-recipients
-                   (or (alist-get 'to mail) nil)))
-              (cc (lark-mail--format-recipients
-                   (or (alist-get 'cc mail) nil)))
-              (date (lark-mail--mail-date mail)))
-          (insert (propertize "From: " 'face 'bold) from "\n")
-          (unless (string-empty-p to)
-            (insert (propertize "To: " 'face 'bold) to "\n"))
-          (unless (string-empty-p cc)
-            (insert (propertize "Cc: " 'face 'bold) cc "\n"))
-          (unless (string-empty-p date)
-            (insert (propertize "Date: " 'face 'bold) date "\n")))
+                (make-string (min 72 (max 20 (length subject))) ?─) "\n")
+        ;; Headers
+        (lark-mail--header-field "From"
+          (lark-mail--format-address-list (or (alist-get 'from mail)
+                                              (alist-get 'sender mail))))
+        (lark-mail--header-field "To"
+          (lark-mail--format-address-list (alist-get 'to mail)))
+        (lark-mail--header-field "Cc"
+          (lark-mail--format-address-list (alist-get 'cc mail)))
+        (lark-mail--header-field "Bcc"
+          (lark-mail--format-address-list (alist-get 'bcc mail)))
+        (lark-mail--header-field "Reply-To"
+          (lark-mail--format-address-list (alist-get 'reply_to mail)))
+        (lark-mail--header-field "Date" (lark-mail--mail-date mail))
+        (lark-mail--header-field "Mail-ID" (or mail-id ""))
+        ;; Labels / folder
+        (let ((labels (or (alist-get 'labels mail)
+                          (alist-get 'label_ids mail))))
+          (when labels
+            (lark-mail--header-field "Labels"
+              (cond
+               ((stringp labels) labels)
+               ((listp labels) (mapconcat (lambda (l) (format "%s" l)) labels ", "))
+               (t "")))))
+        (let ((thread-id (or (alist-get 'thread_id mail) "")))
+          (lark-mail--header-field "Thread" thread-id))
         ;; Attachments
-        (let ((attachments (alist-get 'attachments mail)))
-          (when attachments
-            (insert "\n" (propertize "Attachments:" 'face 'bold) "\n")
+        (let ((attachments (or (alist-get 'attachments mail)
+                               (alist-get 'files mail))))
+          (when (and (listp attachments) attachments)
+            (insert "\n" (propertize "Attachments" 'face 'bold) "\n")
             (dolist (att attachments)
-              (let ((name (or (alist-get 'file_name att)
-                              (alist-get 'name att) "unknown")))
-                (insert "  " name "\n")))))
+              (let* ((name (or (alist-get 'file_name att)
+                               (alist-get 'name att)
+                               (alist-get 'filename att) "unknown"))
+                     (size (or (alist-get 'size att)
+                               (alist-get 'file_size att)))
+                     (mime (or (alist-get 'mime_type att)
+                               (alist-get 'content_type att) "")))
+                (insert "  " (propertize name 'face 'link))
+                (when size
+                  (insert (propertize (format "  (%s)" (lark-mail--format-size size))
+                                      'face 'font-lock-comment-face)))
+                (when (and mime (not (string-empty-p mime)))
+                  (insert (propertize (format "  [%s]" mime)
+                                      'face 'font-lock-comment-face)))
+                (insert "\n")))))
         ;; Body
         (insert "\n" (make-string 72 ?─) "\n\n")
-        (let ((body (or (alist-get 'body mail)
-                        (alist-get 'text_body mail)
-                        (alist-get 'content mail) "")))
-          (if (stringp body)
-              (insert body)
-            (insert (or (alist-get 'text body)
-                        (alist-get 'content body)
-                        (pp-to-string body)))))
-        (insert "\n\n"
-                (propertize "Mail ID: " 'face 'font-lock-comment-face)
-                (or mail-id "") "\n"))
+        (let ((body (lark-mail--extract-body mail)))
+          (if (string-empty-p body)
+              (insert (propertize "(no body)" 'face 'font-lock-comment-face) "\n")
+            (insert body "\n"))))
       (special-mode)
       (goto-char (point-min)))
     (pop-to-buffer buf)))
+
+(defun lark-mail--format-size (size)
+  "Format byte SIZE as a human-readable string."
+  (cond
+   ((not (numberp size)) (format "%s" size))
+   ((< size 1024) (format "%d B" size))
+   ((< size (* 1024 1024)) (format "%.1f KB" (/ size 1024.0)))
+   (t (format "%.1f MB" (/ size (* 1024.0 1024.0))))))
 
 (defun lark-mail--format-recipients (recipients)
   "Format RECIPIENTS list to a display string."
@@ -324,7 +446,7 @@
 (defun lark-mail-reply ()
   "Reply to the mail at point or in the current detail buffer."
   (interactive)
-  (let ((id (or (tabulated-list-get-id) lark-mail--mail-id)))
+  (let ((id (or (lark-mail--id-at-point) lark-mail--mail-id)))
     (unless id (user-error "No mail selected"))
     (let ((body (read-string "Reply: ")))
       (when (string-empty-p body)
@@ -343,7 +465,7 @@
 (defun lark-mail-forward ()
   "Forward the mail at point."
   (interactive)
-  (let ((id (or (tabulated-list-get-id) lark-mail--mail-id)))
+  (let ((id (or (lark-mail--id-at-point) lark-mail--mail-id)))
     (unless id (user-error "No mail selected"))
     (let ((to (read-string "Forward to (email): ")))
       (when (string-empty-p to)
@@ -363,7 +485,7 @@
 (defun lark-mail-delete ()
   "Delete the mail at point."
   (interactive)
-  (let ((id (tabulated-list-get-id)))
+  (let ((id (lark-mail--id-at-point)))
     (unless id (user-error "No mail at point"))
     (when (yes-or-no-p (format "Delete mail %s? " id))
       (message "Lark: deleting mail...")
@@ -397,7 +519,7 @@
 (defun lark-mail-copy-id ()
   "Copy the mail ID at point to the kill ring."
   (interactive)
-  (let ((id (or (tabulated-list-get-id) lark-mail--mail-id)))
+  (let ((id (or (lark-mail--id-at-point) lark-mail--mail-id)))
     (unless id (user-error "No mail ID"))
     (kill-new id)
     (message "Copied: %s" id)))

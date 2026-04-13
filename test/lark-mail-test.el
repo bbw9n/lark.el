@@ -69,32 +69,39 @@
 (ert-deftest lark-mail-test-extract-mails-empty ()
   (should (null (lark-mail--extract-mails nil))))
 
-;;;; Make entries
+;;;; Insert entry
 
-(ert-deftest lark-mail-test-make-entries ()
-  (let* ((mails '(((mail_id . "m1")
-                    (subject . "Hello")
-                    (from . "alice@x.com")
-                    (date . "2026-04-11")
-                    (is_read . t))))
-         (entries (lark-mail--make-entries mails)))
-    (should (= (length entries) 1))
-    (should (equal (car (car entries)) "m1"))
-    (let ((vec (cadr (car entries))))
-      ;; read marker should be space (read)
-      (should (equal (substring-no-properties (aref vec 0)) " "))
-      (should (equal (aref vec 1) "alice@x.com"))
-      (should (equal (aref vec 2) "Hello"))
-      (should (equal (aref vec 3) "2026-04-11")))))
+(ert-deftest lark-mail-test-insert-entry ()
+  "Insert a read mail entry with text properties."
+  (let ((mail '((mail_id . "m1")
+                (subject . "Hello")
+                (from . "alice@x.com")
+                (date . "2026-04-11")
+                (is_read . t))))
+    (with-temp-buffer
+      (lark-mail--insert-entry mail)
+      (goto-char (point-min))
+      ;; Read flag should be space, not N
+      (should (looking-at "  "))
+      ;; Subject and from present
+      (should (search-forward "alice@x.com" nil t))
+      (goto-char (point-min))
+      (should (search-forward "Hello" nil t))
+      ;; Text property
+      (goto-char (point-min))
+      (should (equal (get-text-property (point) 'lark-mail-id) "m1")))))
 
-(ert-deftest lark-mail-test-make-entries-unread ()
-  (let* ((mails '(((mail_id . "m2")
-                    (subject . "Urgent")
-                    (from . "bob@x.com")
-                    (date . "2026-04-11"))))
-         (entries (lark-mail--make-entries mails)))
-    ;; unread marker should be *
-    (should (equal (substring-no-properties (aref (cadr (car entries)) 0)) "*"))))
+(ert-deftest lark-mail-test-insert-entry-unread ()
+  "Unread mail entry should have N flag."
+  (let ((mail '((mail_id . "m2")
+                (subject . "Urgent")
+                (from . "bob@x.com")
+                (date . "2026-04-11"))))
+    (with-temp-buffer
+      (lark-mail--insert-entry mail)
+      (goto-char (point-min))
+      ;; Unread flag N
+      (should (looking-at "N")))))
 
 ;;;; Format recipients
 
