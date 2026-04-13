@@ -3,8 +3,8 @@
 #+OPTIONS: toc:3
 
 An Emacs package that wraps [[https://github.com/larksuite/cli][lark-cli]] to bring Lark/Feishu into Emacs.
-Transient menus for command dispatch, tabulated-list buffers for data,
-async execution to keep Emacs responsive.
+Transient menus for command dispatch, mu4e-style mail, dired-like drive
+browsing, org-table spreadsheets, and async execution throughout.
 
 * Prerequisites
 
@@ -216,20 +216,23 @@ Browse
 | =C-c l t= | =lark-tasks-list=        | My tasks              |
 | =C-c l m= | =lark-im-dispatch=       | Messenger menu        |
 | =C-c l e= | =lark-mail-inbox=        | Mail inbox            |
+| =C-c l d= | =lark-docs-dispatch=     | Docs menu             |
+| =C-c l f= | =lark-drive-list=        | Drive root listing    |
+| =C-c l k= | =lark-contacts-dispatch= | Contacts menu         |
 | =C-c l s= | =lark-auth-status=       | Auth status           |
 
 ** Main Dispatch (=C-c l l=)
 
-The main transient menu provides access to all 11 Lark domains:
+The main transient menu provides access to all 12 Lark domains:
 
-| Key | Domain     | Key | Domain    |
-|-----+------------+-----+-----------|
-| =c= | Calendar   | =s= | Sheets    |
-| =m= | Messenger  | =e= | Mail      |
-| =d= | Docs       | =w= | Wiki      |
-| =f= | Drive      | =k= | Contacts  |
-| =b= | Base       | =v= | Meetings  |
-| =t= | Tasks      |     |           |
+| Key | Domain     | Key | Domain     |
+|-----+------------+-----+------------|
+| =c= | Calendar   | =s= | Sheets     |
+| =m= | Messenger  | =e= | Mail       |
+| =d= | Docs       | =w= | Wiki       |
+| =f= | Drive      | =k= | Contacts   |
+| =b= | Base       | =v= | Meetings   |
+| =t= | Tasks      | =W= | Whiteboard |
 
 Plus auth commands (=a= status, =L= login, =O= logout, =I= identity switch)
 and =S= for schema lookup.
@@ -275,6 +278,8 @@ and =S= for schema lookup.
 
 ** Mail
 
+mu4e-style interface with flag indicators and shr-rendered HTML bodies.
+
 | Command                | Description                      |
 |------------------------+----------------------------------|
 | =lark-mail-inbox=      | Show inbox                       |
@@ -285,6 +290,103 @@ and =S= for schema lookup.
 | =lark-mail-delete=     | Delete mail (at point)           |
 | =lark-mail-search=     | Search mail                      |
 | =lark-mail-drafts=     | List drafts                      |
+
+Keybindings in the mail list:
+
+| Key   | Action                |
+|-------+-----------------------|
+| =RET= | Read message          |
+| =c=   | Compose new mail      |
+| =r=   | Reply                 |
+| =f=   | Forward               |
+| =d=   | Delete                |
+| =/=   | Search                |
+| =n=   | Next message          |
+| =p=   | Previous message      |
+| =g=   | Refresh               |
+
+** Docs
+
+| Command                  | Description                          |
+|--------------------------+--------------------------------------|
+| =lark-docs-search=       | Search documents                     |
+| =lark-docs-fetch=        | Fetch document content (URL or token)|
+| =lark-docs-create=       | Create document (transient form)     |
+| =lark-docs-update=       | Update document (transient form)     |
+| =lark-docs-media-download= | Download media from a document     |
+| =lark-docs-media-insert=   | Insert media into a document       |
+| =lark-docs-media-preview=  | Preview media                      |
+
+** Drive
+
+Dired-like file browser for Lark Drive. Owner names are resolved from
+contact open_ids automatically.
+
+| Command                | Description                    |
+|------------------------+--------------------------------|
+| =lark-drive-list=       | List root (or folder by token) |
+| =lark-drive-open=       | Open item at point (RET)       |
+| =lark-drive-view-content= | View doc/docx/sheet content (=v=) |
+| =lark-drive-upload=     | Upload local file              |
+| =lark-drive-download=   | Download file at point         |
+| =lark-drive-mkdir=      | Create folder (=+=)            |
+| =lark-drive-copy=       | Copy file (=C=)                |
+| =lark-drive-move=       | Move/rename file (=R=)         |
+| =lark-drive-import=     | Import local file to Drive     |
+| =lark-drive-export=     | Export cloud doc to local      |
+
+Keybindings in the drive buffer:
+
+| Key   | Action                         |
+|-------+--------------------------------|
+| =RET= | Open (descend into folder / show detail) |
+| =v=   | View doc/docx/sheet content    |
+| =^=   | Go up to parent folder         |
+| =w=   | Copy file token                |
+| =W=   | Copy file URL                  |
+| =n/p= | Next/previous file             |
+
+In the file detail buffer, press =RET= to view the content of
+doc/docx/sheet files directly.
+
+** Sheets
+
+Spreadsheet data is displayed as editable org-mode tables.
+
+| Command                   | Description                       |
+|---------------------------+-----------------------------------|
+| =lark-sheets-info=         | Show spreadsheet info             |
+| =lark-sheets-read=         | Read range as org table           |
+| =lark-sheets-write-table=  | Write org table back to sheet     |
+| =lark-sheets-append-table= | Append rows from org table        |
+| =lark-sheets-create=       | Create spreadsheet (transient)    |
+| =lark-sheets-create-from-table= | Create from org table at point |
+| =lark-sheets-find=         | Find cells by text                |
+| =lark-sheets-export=       | Export as xlsx/csv                |
+
+In the sheet info buffer, press =RET= on a sheet line to read the first
+100 rows as an org table.
+
+** Contacts
+
+| Command                     | Description                   |
+|-----------------------------+-------------------------------|
+| =lark-contact-get-user=      | Look up user by ID            |
+| =lark-contact-search=        | Search contacts by keyword    |
+| =lark-contact-resolve-name=  | Resolve open_id to name (cached) |
+
+** Meetings
+
+| Command                     | Description                       |
+|-----------------------------+-----------------------------------|
+| =lark-meetings-search=       | Search meeting records            |
+| =lark-meetings-open=         | Open meeting detail (auto-fetches recording) |
+| =lark-meetings-notes=        | Fetch meeting notes (summary, todos, chapters) |
+| =lark-meetings-recording=    | Query recording for a meeting     |
+| =lark-meetings-download-recording= | Download recording by minute token |
+
+Meeting detail pages automatically check for recordings and show a
+clickable download link when available.
 
 * Customization
 
@@ -347,18 +449,25 @@ that lark.el runs, including arguments and exit codes.
 
 #+begin_example
 lark.el                  Entry point, defgroup, prefix keymap
-lark-core.el             Process management, JSON parsing, error handling
+lark-core.el             Process management, JSON parsing, CLI debug line stripping
 lark-auth.el             OAuth device-code login, status, identity switching
 lark-transient.el        Top-level transient dispatch menu
 lark-calendar.el         Calendar: agenda, events, create, free/busy, RSVP
 lark-tasks.el            Tasks: list, create, complete, subtasks, tasklists
 lark-im.el               Messenger: chats, messages, send, reply, events
-lark-mail.el             Mail: inbox, read, compose, reply, forward, search
+lark-mail.el             Mail: mu4e-style inbox, shr HTML rendering, compose
+lark-docs.el             Docs: search, fetch, create, update, media operations
+lark-drive.el            Drive: dired-like browser, upload/download, owner names
+lark-sheets.el           Sheets: org-table read/write, create, find, export
+lark-contact.el          Contacts: user lookup, search, name resolution cache
+lark-meetings.el         Meetings: search, notes, recording with download links
+lark-whiteboard.el       Whiteboard: create and update whiteboards
 #+end_example
 
 All CLI calls funnel through =lark--run-command= (async) or
-=lark--run-command-sync=. Output is always =--format json=, parsed with
-=json-parse-string=.
+=lark--run-command-sync=. Output is =--format json= by default, parsed
+with =json-parse-string=. CLI debug lines (=[cmd +sub]= prefixes and
+=tip= lines) are automatically stripped before JSON parsing.
 
 * License
 
