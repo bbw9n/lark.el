@@ -32,6 +32,12 @@
 
 ;;; Code:
 
+;;;; Load path setup for subdirectories
+
+(let ((dir (file-name-directory (or load-file-name (buffer-file-name)))))
+  (dolist (sub '("core" "domain" "ai"))
+    (add-to-list 'load-path (expand-file-name sub dir))))
+
 (require 'lark-core)
 (require 'lark-auth)
 (require 'lark-transient)

@@ -675,29 +675,42 @@ that lark.el runs, including arguments and exit codes.
 * Architecture
 
 #+begin_example
-lark.el                  Entry point, defgroup, prefix keymap
-lark-core.el             Process management, JSON parsing, CLI debug line stripping
-lark-auth.el             OAuth device-code login, status, identity switching
-lark-transient.el        Top-level transient dispatch menu
-lark-calendar.el         Calendar: agenda, events, create, free/busy, RSVP
-lark-tasks.el            Tasks: list, create, complete, subtasks, tasklists
-lark-im.el               Messenger: chats, messages, send, reply, events
-lark-mail.el             Mail: mu4e-style inbox, shr HTML rendering, compose
-lark-docs.el             Docs: search, fetch, create, update, media operations
-lark-drive.el            Drive: dired-like browser, upload/download, owner names
-lark-sheets.el           Sheets: org-table read/write, create, find, export
-lark-contact.el          Contacts: user lookup, search, name resolution cache
-lark-meetings.el         Meetings: search, notes, recording with download links
-lark-whiteboard.el       Whiteboard: create and update whiteboards
-lark-ai.el               AI: prompt -> plan -> execute -> synthesize -> present
-lark-ai-skills.el        AI: skill registry, loader, system prompt assembly
-lark-ai-context.el       AI: buffer context extraction for all domain modes
+lark.el                         Entry point, defgroup, prefix keymap, load-path setup
+
+core/
+  lark-core.el                  Process management, JSON parsing, CLI debug line stripping
+  lark-auth.el                  OAuth device-code login, status, identity switching
+  lark-transient.el             Top-level transient dispatch menu
+
+domain/
+  lark-calendar.el              Calendar: agenda, events, create, free/busy, RSVP
+  lark-tasks.el                 Tasks: list, create, complete, subtasks, tasklists
+  lark-im.el                    Messenger: chats, messages, send, reply, events
+  lark-mail.el                  Mail: mu4e-style inbox, shr HTML rendering, compose
+  lark-docs.el                  Docs: search, fetch, create, update, media operations
+  lark-drive.el                 Drive: dired-like browser, upload/download, owner names
+  lark-sheets.el                Sheets: org-table read/write, create, find, export
+  lark-contact.el               Contacts: user lookup, search, name resolution cache
+  lark-meetings.el              Meetings: search, notes, recording with download links
+  lark-whiteboard.el            Whiteboard: create and update whiteboards
+
+ai/
+  lark-ai.el                    AI: prompt -> plan -> execute -> synthesize -> present
+  lark-ai-skills.el             AI: skill registry, loader, system prompt assembly
+  lark-ai-context.el            AI: buffer context extraction for all domain modes
+
+test/
+  lark-*-test.el                ERT tests for each module
 #+end_example
 
 All CLI calls funnel through =lark--run-command= (async) or
-=lark--run-command-sync=. Output is =--format json= by default, parsed
-with =json-parse-string=. CLI debug lines (=[cmd +sub]= prefixes and
+=lark--run-command-sync=.  Output is =--format json= by default, parsed
+with =json-parse-string=.  CLI debug lines (=[cmd +sub]= prefixes and
 =tip= lines) are automatically stripped before JSON parsing.
+
+=lark.el= automatically adds =core/=, =domain/=, and =ai/= to the
+=load-path= at load time, so a single =(add-to-list 'load-path "/path/to/lark.el")=
+is sufficient.
 
 * License
 

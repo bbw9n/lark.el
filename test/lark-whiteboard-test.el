@@ -8,8 +8,9 @@
 
 (require 'ert)
 
-(let ((dir (file-name-directory (or load-file-name (buffer-file-name)))))
-  (add-to-list 'load-path (expand-file-name ".." dir)))
+(let ((root (expand-file-name ".." (file-name-directory (or load-file-name (buffer-file-name))))))
+  (dolist (sub '("." "core" "domain" "ai"))
+    (add-to-list 'load-path (expand-file-name sub root))))
 
 (require 'lark-whiteboard)
 
