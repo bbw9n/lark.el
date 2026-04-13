@@ -49,6 +49,9 @@
 (defvar-local lark-im--chats nil
   "Cached chat list for the current buffer.")
 
+(defvar-local lark-im--chat-query nil
+  "Last search query used to fetch the chat list.")
+
 ;;;; Event subscription process
 
 (defvar lark-im--event-process nil
@@ -218,26 +221,32 @@
 
 ;;;###autoload
 (defun lark-im-chats (&optional query)
-  "List Lark chats. With QUERY, search by keyword."
-  (interactive)
+  "List Lark chats. With QUERY, search by keyword.
+When called interactively, prompt for a search query."
+  (interactive
+   (list (read-string "Search chats (keyword): ")))
+  (when (or (null query) (string-empty-p query))
+    (user-error "A search query is required (e.g. a chat name or keyword)"))
   (message "Lark: fetching chats...")
-  (let ((args (list "im" "+chat-search")))
-    (when (and query (not (string-empty-p query)))
-      (setq args (append args (list "--query" query))))
-    (lark--run-command args #'lark-im--display-chats)))
+  (let ((q query))
+    (lark--run-command
+     (list "im" "+chat-search" "--query" query)
+     (lambda (data) (lark-im--display-chats data q)))))
 
 (defun lark-im-chats-refresh ()
-  "Refresh the chat list buffer."
+  "Refresh the chat list buffer with the previous query."
   (interactive)
-  (lark-im-chats))
+  (lark-im-chats (or lark-im--chat-query
+                      (read-string "Search chats (keyword): "))))
 
-(defun lark-im--display-chats (data)
-  "Display chat list DATA."
+(defun lark-im--display-chats (data &optional query)
+  "Display chat list DATA.  QUERY is stored for refresh."
   (let* ((chats (lark-im--extract-chats data))
          (buf (get-buffer-create "*Lark Chats*")))
     (with-current-buffer buf
       (lark-im-chats-mode)
       (setq lark-im--chats chats
+            lark-im--chat-query query
             tabulated-list-entries (lark-im--make-chat-entries chats))
       (tabulated-list-print t)
       (setq header-line-format

@@ -110,10 +110,9 @@ like ((datetime . \"...\") (timezone . \"...\"))."
       ""))
 
 (defun lark-calendar--event-organizer (event)
-  "Extract the organizer from EVENT."
-  (or (alist-get 'organizer_name event)
-      (lark--get-nested event 'organizer 'display_name)
-      (lark--get-nested event 'organizer 'name)
+  "Extract the organizer from EVENT.
+Prefer display_name from event_organizer; fall back to organizer_calendar_id."
+  (or (lark--get-nested event 'event_organizer 'display_name)
       (let ((cal-id (alist-get 'organizer_calendar_id event)))
         (when (and cal-id (not (string-empty-p cal-id)))
           cal-id))
