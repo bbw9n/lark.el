@@ -305,15 +305,18 @@
 
 (defun lark-mail--extract-body (mail)
   "Extract the best body from MAIL as (TYPE . CONTENT).
-TYPE is `plain' or `html'.  Prefers plain text; falls back to HTML."
-  (let ((plain (alist-get 'body_plain_text mail))
-        (html (alist-get 'body_html mail))
+TYPE is `plain' or `html'.  Prefers HTML (rendered via shr); falls back
+to plain text."
+  (let ((html (alist-get 'body_html mail))
+        (plain (alist-get 'body_plain_text mail))
         (body (or (alist-get 'body mail)
                   (alist-get 'text_body mail)
                   (alist-get 'content mail)
                   (alist-get 'plain_text mail)))
         (preview (alist-get 'body_preview mail)))
     (cond
+     ((and (stringp html) (not (string-empty-p html)))
+      (cons 'html html))
      ((and (stringp plain) (not (string-empty-p plain)))
       (cons 'plain plain))
      ((and (stringp body) (not (string-empty-p body)))
@@ -326,8 +329,6 @@ TYPE is `plain' or `html'.  Prefers plain text; falls back to HTML."
                   (cons 'plain text)))))
      ((and (stringp preview) (not (string-empty-p preview)))
       (cons 'plain preview))
-     ((and (stringp html) (not (string-empty-p html)))
-      (cons 'html html))
      (t (cons 'plain "")))))
 
 (defun lark-mail--display-detail (data mail-id)
