@@ -26,6 +26,14 @@
 (autoload 'lark-meetings-dispatch "lark-meetings" nil t)
 (autoload 'lark-whiteboard-dispatch "lark-whiteboard" nil t)
 
+;; Autoloads for AI layer
+(autoload 'lark-ai-ask "lark-ai" nil t)
+(autoload 'lark-ai-chat "lark-ai" nil t)
+(autoload 'lark-ai-act "lark-ai" nil t)
+(autoload 'lark-ai-workflow-standup "lark-ai" nil t)
+(autoload 'lark-ai-workflow-meeting-summary "lark-ai" nil t)
+(autoload 'lark-ai-workflow-schedule "lark-ai" nil t)
+
 ;;;; Top-level dispatch
 
 ;;;###autoload (autoload 'lark-dispatch "lark-transient" nil t)
@@ -44,11 +52,19 @@
    ("k" "Contacts"   lark-contacts-dispatch)
    ("v" "Meetings"   lark-meetings-dispatch)
    ("W" "Whiteboard" lark-whiteboard-dispatch)]
+  ["AI"
+   ("i" "Ask AI"       lark-ai-ask)
+   ("I" "AI chat"      lark-ai-chat)
+   ("." "AI act"       lark-ai-act)]
+  ["AI Workflows"
+   ("1" "Standup report"    lark-ai-workflow-standup)
+   ("2" "Meeting summary"   lark-ai-workflow-meeting-summary)
+   ("3" "Schedule meeting"  lark-ai-workflow-schedule)]
   ["Auth & Config"
    ("a" "Auth status"  lark-auth-status)
    ("L" "Login"        lark-auth-login)
    ("O" "Logout"       lark-auth-logout)
-   ("I" "Identity"     lark-auth-switch-identity)
+   ("X" "Identity"     lark-auth-switch-identity)
    ("S" "Schema"       lark-schema-lookup)]
   ["Options"
    ("-d" "Dry run"  "--dry-run")

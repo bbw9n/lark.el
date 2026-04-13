@@ -241,17 +241,20 @@ Browse
 
 ** Global Keybindings (prefix =C-c l=)
 
-| Key       | Command                  | Description           |
-|-----------+--------------------------+-----------------------|
-| =C-c l l= | =lark-dispatch=          | Main transient menu   |
-| =C-c l a= | =lark-calendar-agenda=   | Today's agenda        |
-| =C-c l t= | =lark-tasks-list=        | My tasks              |
-| =C-c l m= | =lark-im-dispatch=       | Messenger menu        |
-| =C-c l e= | =lark-mail-inbox=        | Mail inbox            |
-| =C-c l d= | =lark-docs-dispatch=     | Docs menu             |
-| =C-c l f= | =lark-drive-list=        | Drive root listing    |
-| =C-c l k= | =lark-contacts-dispatch= | Contacts menu         |
-| =C-c l s= | =lark-auth-status=       | Auth status           |
+| Key       | Command                  | Description             |
+|-----------+--------------------------+-------------------------|
+| =C-c l l= | =lark-dispatch=          | Main transient menu     |
+| =C-c l a= | =lark-calendar-agenda=   | Today's agenda          |
+| =C-c l t= | =lark-tasks-list=        | My tasks                |
+| =C-c l m= | =lark-im-dispatch=       | Messenger menu          |
+| =C-c l e= | =lark-mail-inbox=        | Mail inbox              |
+| =C-c l d= | =lark-docs-dispatch=     | Docs menu               |
+| =C-c l f= | =lark-drive-list=        | Drive root listing      |
+| =C-c l k= | =lark-contacts-dispatch= | Contacts menu           |
+| =C-c l s= | =lark-auth-status=       | Auth status             |
+| =C-c l i= | =lark-ai-ask=            | Ask AI (natural language)|
+| =C-c l I= | =lark-ai-chat=           | AI chat buffer          |
+| =C-c l .= | =lark-ai-act=            | AI action at point      |
 
 ** Main Dispatch (=C-c l l=)
 
@@ -266,8 +269,9 @@ The main transient menu provides access to all 12 Lark domains:
 | =b= | Base       | =v= | Meetings   |
 | =t= | Tasks      | =W= | Whiteboard |
 
-Plus auth commands (=a= status, =L= login, =O= logout, =I= identity switch)
-and =S= for schema lookup.
+AI commands: =i= ask AI, =I= AI chat, =.= AI act at point.
+AI workflows: =1= standup report, =2= meeting summary, =3= schedule meeting.
+Auth: =a= status, =L= login, =O= logout, =X= identity switch, =S= schema.
 
 ** Calendar
 
@@ -420,19 +424,210 @@ In the sheet info buffer, press =RET= on a sheet line to read the first
 Meeting detail pages automatically check for recordings and show a
 clickable download link when available.
 
+* AI Layer
+
+lark.el includes an AI-native orchestration layer that turns natural-language
+prompts into multi-step lark-cli execution plans.  Instead of remembering
+which commands to chain together, you describe what you want and the AI
+figures out the steps.
+
+** How it works
+
+1. You type a prompt (e.g., "what's on my plate today?")
+2. lark.el selects the relevant lark-cli skill files (=SKILL.md=) based on
+   keywords in your prompt
+3. The skills + your prompt are sent to an LLM, which returns a JSON
+   execution plan
+4. The plan is shown in a review buffer — you can inspect, remove steps,
+   or cancel
+5. On confirmation, lark.el executes the CLI commands (in parallel where
+   possible), collecting results
+6. If the plan includes a synthesis step, results are sent back to the LLM
+   for a human-readable summary
+7. The final output is rendered in a buffer
+
+Write operations (create, update, delete, send) are flagged in the plan and
+require explicit confirmation before execution.
+
+** Prerequisites
+
+- An LLM backend: [[https://github.com/karthink/gptel][gptel]] (recommended) or any OpenAI-compatible HTTP endpoint
+- lark-cli skills installed in =~/.agent/skills/=:
+
+#+begin_src shell
+npx skills add larksuite/cli -g -y
+#+end_src
+
+** Setup
+
+*** With gptel (recommended)
+
+#+begin_src emacs-lisp
+(use-package gptel
+  :config
+  ;; configure your preferred provider
+  (setq gptel-model 'claude-sonnet-4-20250514))
+
+(setq lark-ai-backend 'gptel)  ;; this is the default
+#+end_src
+
+*** With a raw HTTP endpoint
+
+#+begin_src emacs-lisp
+(setq lark-ai-backend 'http
+      lark-ai-http-endpoint "https://api.openai.com/v1/chat/completions"
+      lark-ai-http-api-key "sk-...")
+#+end_src
+
+Or set the =LARK_AI_API_KEY= environment variable instead of hardcoding the key.
+
+** Keybindings
+
+| Key       | Command                          | Description                  |
+|-----------+----------------------------------+------------------------------|
+| =C-c l i= | =lark-ai-ask=                    | Natural-language prompt      |
+| =C-c l I= | =lark-ai-chat=                   | Conversational AI buffer     |
+| =C-c l .= | =lark-ai-act=                    | Context-aware action at point|
+
+These are also available from the main dispatch (=C-c l l=) under the
+"AI" and "AI Workflows" sections.
+
+** Examples
+
+*** Standup report
+
+#+begin_src
+C-c l i  "what's on my plate today?"
+#+end_src
+
+The AI generates a plan:
+
+#+begin_example
+Lark AI -- Execution Plan
+----------------------------------------
+
+  [0] Fetch today's agenda  (read-only)  [group 1]
+      lark-cli calendar +agenda
+  [1] Fetch open tasks  (read-only)  [group 1]
+      lark-cli task +get-my-tasks
+  [2] Summarize schedule and tasks  (AI synthesis)
+
+----------------------------------------
+  RET Execute  x Remove step  q Cancel
+#+end_example
+
+Steps 0 and 1 run in parallel (same group).  After execution, the LLM
+synthesizes results into:
+
+#+begin_example
+## 2026-04-13 Sunday
+
+### Agenda
+| Time        | Event              | Organizer | Status   |
+|-------------+--------------------+-----------+----------|
+| 09:00-09:30 | Daily Standup      | Alice     | accepted |
+| 14:00-15:00 | 1:1 with Manager   | Carol     | tentative|
+
+### Open Tasks
+- [ ] Review PR #142 (due: today)
+- [ ] Update API docs (due: Apr 14)
+
+### Notes
+- No scheduling conflicts
+- Free slots: 10:00-14:00, 15:00-18:00
+#+end_example
+
+Or use the dedicated command: =M-x lark-ai-workflow-standup=.
+
+*** Meeting summary
+
+#+begin_src
+C-c l i  "summarise my meetings this week"
+#+end_src
+
+The AI chains =vc +search= -> =vc +notes= -> synthesis, producing a
+structured report of all meetings with their notes and action items.
+
+Or: =M-x lark-ai-workflow-meeting-summary=.
+
+*** Schedule a meeting
+
+#+begin_src
+C-c l i  "set up a 30min sync with Alice next Tuesday afternoon"
+#+end_src
+
+The AI plan:
+
+#+begin_example
+  [0] Search contact "Alice"  (read-only)
+  [1] Find available time slots  (read-only)
+  [2] Check room availability  (read-only)
+  [3] Create calendar event  CAUTION writes
+#+end_example
+
+Step 3 is marked as a side-effect and will prompt for confirmation
+before executing.
+
+Or: =M-x lark-ai-workflow-schedule=.
+
+*** Context-aware actions
+
+When you're in a Lark buffer (agenda, chat, task list, etc.), press
+=C-c l .= to perform an AI action on the item at point.  The AI
+automatically knows the domain and which item you're looking at.
+
+For example, in the =*Lark Agenda*= buffer with point on an event:
+
+#+begin_src
+C-c l .  "reschedule to tomorrow at 3pm"
+#+end_src
+
+*** Conversational chat
+
+=C-c l I= opens a persistent AI chat buffer where you can ask follow-up
+questions.  Type your message and press =C-c C-c= to send.
+
+#+begin_example
+You: how many meetings do I have tomorrow?
+----------------------------------------
+AI: Generated a plan. Review it in the plan buffer.
+(after execution)
+AI: You have 3 meetings tomorrow:
+- 09:00-09:30  Daily Standup
+- 11:00-12:00  Design Review
+- 15:00-16:00  Sprint Retro
+#+end_example
+
+** Built-in workflows
+
+| Command                             | Description                      |
+|-------------------------------------+----------------------------------|
+| =lark-ai-workflow-standup=          | Today's agenda + open tasks      |
+| =lark-ai-workflow-meeting-summary=  | Summarise recent meetings        |
+| =lark-ai-workflow-schedule=         | Schedule a meeting with AI help  |
+
+These are shortcuts for common multi-step operations.  They also appear
+in the dispatch menu under "AI Workflows" (keys =1=, =2=, =3=).
+
 * Customization
 
 All options are under =M-x customize-group RET lark=.
 
-| Variable                    | Default      | Description                           |
-|-----------------------------+--------------+---------------------------------------|
-| =lark-cli-executable=      | ="lark-cli"= | Path to the lark-cli binary           |
-| =lark-default-format=      | ="json"=     | Output format (json/table/csv/pretty) |
-| =lark-default-identity=    | ="user"=     | Identity type (user/bot)              |
-| =lark-dry-run=             | =nil=        | Pass --dry-run to destructive commands |
-| =lark-im-message-limit=    | =50=         | Messages to fetch in chat history     |
-| =lark-mail-page-size=      | =20=         | Emails per page                       |
-| =lark-calendar-default-days= | =1=        | Days in agenda view                   |
+| Variable                    | Default        | Description                           |
+|-----------------------------+----------------+---------------------------------------|
+| =lark-cli-executable=      | ="lark-cli"=   | Path to the lark-cli binary           |
+| =lark-default-format=      | ="json"=       | Output format (json/table/csv/pretty) |
+| =lark-default-identity=    | ="user"=       | Identity type (user/bot)              |
+| =lark-dry-run=             | =nil=          | Pass --dry-run to destructive commands |
+| =lark-im-message-limit=    | =50=           | Messages to fetch in chat history     |
+| =lark-mail-page-size=      | =20=           | Emails per page                       |
+| =lark-calendar-default-days= | =1=          | Days in agenda view                   |
+| =lark-ai-backend=          | =gptel=        | LLM backend (=gptel= or =http=)      |
+| =lark-ai-model=            | =nil=          | Model ID (nil uses backend default)   |
+| =lark-ai-skills-directory= | =~/.agents/skills/= | Path to lark-cli SKILL.md files |
+| =lark-ai-confirm-side-effects= | =t=        | Confirm before write operations       |
+| =lark-ai-http-endpoint=    | =nil=          | URL for the =http= backend            |
+| =lark-ai-http-api-key=     | =nil=          | API key (or set =LARK_AI_API_KEY=)    |
 
 * Troubleshooting
 
@@ -494,6 +689,9 @@ lark-sheets.el           Sheets: org-table read/write, create, find, export
 lark-contact.el          Contacts: user lookup, search, name resolution cache
 lark-meetings.el         Meetings: search, notes, recording with download links
 lark-whiteboard.el       Whiteboard: create and update whiteboards
+lark-ai.el               AI: prompt -> plan -> execute -> synthesize -> present
+lark-ai-skills.el        AI: skill registry, loader, system prompt assembly
+lark-ai-context.el       AI: buffer context extraction for all domain modes
 #+end_example
 
 All CLI calls funnel through =lark--run-command= (async) or
