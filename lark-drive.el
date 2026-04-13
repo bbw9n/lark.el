@@ -20,6 +20,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-contact)
 (require 'json)
 (require 'transient)
 
@@ -132,6 +133,7 @@
     (define-key map (kbd "E")   #'lark-drive-export)
     (define-key map (kbd "w")   #'lark-drive-copy-token)
     (define-key map (kbd "W")   #'lark-drive-copy-url)
+    (define-key map (kbd "v")   #'lark-drive-view-content)
     (define-key map (kbd "n")   #'lark-drive--next-file)
     (define-key map (kbd "p")   #'lark-drive--prev-file)
     (define-key map (kbd "?")   #'lark-drive-dispatch)
@@ -199,6 +201,9 @@ Keybindings follow dired conventions where possible.")
   (let* ((name (lark-drive--file-name file))
          (type (lark-drive--file-type file))
          (modified (lark-drive--file-modified-time file))
+         (owner-id (lark-drive--file-owner-id file))
+         (owner-name (if (string-empty-p owner-id) ""
+                       (lark-contact-resolve-name owner-id "open_id")))
          (folder-p (lark-drive--folder-p file))
          (indicator (lark-drive--type-indicator type))
          (beg (point)))
@@ -208,6 +213,9 @@ Keybindings follow dired conventions where possible.")
             "  "
             (propertize (format "%-16s" modified)
                         'face 'font-lock-comment-face)
+            "  "
+            (propertize (format "%-12s" owner-name)
+                        'face 'font-lock-string-face)
             "  "
             (propertize (concat name indicator)
                         'face (if folder-p 'bold 'default))
@@ -329,6 +337,9 @@ Folders descend into them; files show metadata."
 (defun lark-drive--show-detail (file)
   "Display detail for FILE in a buffer."
   (let* ((name (lark-drive--file-name file))
+         (owner-id (lark-drive--file-owner-id file))
+         (owner-name (if (string-empty-p owner-id) ""
+                       (lark-contact-resolve-name owner-id "open_id")))
          (buf (get-buffer-create (format "*Lark Drive: %s*" name))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
@@ -339,7 +350,7 @@ Folders descend into them; files show metadata."
         (lark-drive--detail-field "Token" (lark-drive--file-token file))
         (lark-drive--detail-field "Modified" (lark-drive--file-modified-time file))
         (lark-drive--detail-field "Created" (lark-drive--file-created-time file))
-        (lark-drive--detail-field "Owner" (lark-drive--file-owner-id file))
+        (lark-drive--detail-field "Owner" owner-name)
         (lark-drive--detail-field "URL" (lark-drive--file-url file)))
       (special-mode)
       (goto-char (point-min)))
@@ -350,6 +361,32 @@ Folders descend into them; files show metadata."
   (when (and value (not (string-empty-p value)))
     (insert (propertize (format "  %-12s" (concat label ":")) 'face 'font-lock-keyword-face)
             value "\n")))
+
+;;;; View document content
+
+(defun lark-drive-view-content ()
+  "Fetch and view the content of the doc/docx/sheet at point.
+Uses the file URL to dispatch to `lark-docs-fetch' or `lark-sheets-info'."
+  (interactive)
+  (let ((file (lark-drive--file-at-point)))
+    (unless file (user-error "No file at point"))
+    (let ((type (lark-drive--file-type file))
+          (url (lark-drive--file-url file))
+          (token (lark-drive--file-token file)))
+      (when (lark-drive--folder-p file)
+        (user-error "Cannot view content of a folder"))
+      (let ((ref (if (and url (not (string-empty-p url))) url token)))
+        (when (string-empty-p ref)
+          (user-error "No URL or token available for this file"))
+        (pcase type
+          ((or "doc" "docx")
+           (require 'lark-docs)
+           (lark-docs-fetch ref))
+          ("sheet"
+           (require 'lark-sheets)
+           (lark-sheets-info ref))
+          (_
+           (user-error "Viewing content is not supported for type \"%s\"" type)))))))
 
 ;;;; Create folder (dired "+")
 
@@ -538,7 +575,8 @@ Folders descend into them; files show metadata."
   "Lark Drive commands."
   ["Browse"
    ("l" "List root"       lark-drive-list)
-   ("g" "Refresh"         lark-drive-refresh)]
+   ("g" "Refresh"         lark-drive-refresh)
+   ("v" "View content"    lark-drive-view-content)]
   ["File Operations"
    ("U" "Upload"          lark-drive-upload)
    ("D" "Download"        lark-drive-download)
