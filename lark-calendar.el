@@ -352,8 +352,8 @@ Shows events for the next 7 days."
   "Create a new Lark calendar event."
   ["Event Details"
    ("t" "Title"       "--summary=" :prompt "Event title: ")
-   ("s" "Start time"  "--start=" :prompt "Start (ISO 8601, e.g. 2026-04-11T10:00:00+08:00): ")
-   ("e" "End time"    "--end=" :prompt "End (ISO 8601): ")
+   ("s" "Start time"  "--start=" :prompt "Start (HH:MM, MM-DD HH:MM, or YYYY-MM-DD HH:MM): ")
+   ("e" "End time"    "--end=" :prompt "End (HH:MM, MM-DD HH:MM, or YYYY-MM-DD HH:MM): ")
    ("d" "Description" "--description=" :prompt "Description: ")]
   ["Attendees"
    ("a" "Attendees"   "--attendee-ids=" :prompt "Attendee IDs (comma-separated ou_/oc_): ")]
@@ -362,9 +362,11 @@ Shows events for the next 7 days."
    ("q"   "Cancel"    transient-quit-all)])
 
 (defun lark-calendar--do-create-event (&rest _args)
-  "Execute event creation with transient arguments."
+  "Execute event creation with transient arguments.
+Time values are expanded from shorthand (e.g. \"10:00\") to ISO 8601."
   (interactive)
-  (let ((args (transient-args 'lark-calendar-create-event)))
+  (let ((args (lark-calendar--expand-time-args
+               (transient-args 'lark-calendar-create-event))))
     (unless args
       (user-error "No event details provided"))
     (message "Lark: creating event...")
@@ -376,6 +378,18 @@ Shows events for the next 7 days."
                      (alist-get 'id data))))
          (message "Lark: event created%s"
                   (if id (format " (ID: %s)" id) "")))))))
+
+(defun lark-calendar--expand-time-args (args)
+  "Expand --start= and --end= values in ARGS through `lark--parse-time-input'."
+  (mapcar
+   (lambda (arg)
+     (cond
+      ((string-match "^--start=\\(.*\\)$" arg)
+       (concat "--start=" (lark--parse-time-input (match-string 1 arg))))
+      ((string-match "^--end=\\(.*\\)$" arg)
+       (concat "--end=" (lark--parse-time-input (match-string 1 arg))))
+      (t arg)))
+   args))
 
 ;;;; Event deletion
 ;; CLI: calendar events delete --params '{"calendar_id":"primary","event_id":"X"}'

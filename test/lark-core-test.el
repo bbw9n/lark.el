@@ -167,5 +167,33 @@
     (let ((result (lark--build-command '("calendar" "+create") nil)))
       (should-not (member "--format" result)))))
 
+;;;; lark--parse-time-input tests
+
+(ert-deftest lark-test-parse-time-hhmm ()
+  "HH:MM expands to today's date in ISO 8601."
+  (let ((result (lark--parse-time-input "10:00")))
+    (should (string-match-p "^[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T10:00:00" result))
+    ;; Should include timezone offset
+    (should (string-match-p "[+-][0-9]\\{2\\}:[0-9]\\{2\\}$" result))))
+
+(ert-deftest lark-test-parse-time-mmdd-hhmm ()
+  "MM-DD HH:MM expands to this year in ISO 8601."
+  (let ((result (lark--parse-time-input "04-15 14:30")))
+    (should (string-match-p "^[0-9]\\{4\\}-04-15T14:30:00" result))))
+
+(ert-deftest lark-test-parse-time-full ()
+  "YYYY-MM-DD HH:MM expands to ISO 8601."
+  (let ((result (lark--parse-time-input "2026-04-15 14:30")))
+    (should (string-match-p "^2026-04-15T14:30:00" result))))
+
+(ert-deftest lark-test-parse-time-iso8601-passthrough ()
+  "Already ISO 8601 is passed through."
+  (should (equal (lark--parse-time-input "2026-04-15T14:30:00+08:00")
+                 "2026-04-15T14:30:00+08:00")))
+
+(ert-deftest lark-test-parse-time-unknown-passthrough ()
+  "Unrecognized input is passed through."
+  (should (equal (lark--parse-time-input "tomorrow") "tomorrow")))
+
 (provide 'lark-core-test)
 ;;; lark-core-test.el ends here

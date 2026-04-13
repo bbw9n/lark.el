@@ -254,5 +254,55 @@ Example: (lark--get-nested data \\='items 0 \\='name)"
       (when (> ts 0)
         (format-time-string "%Y-%m-%d %H:%M" (seconds-to-time ts))))))
 
+;;;; Time input parsing
+
+(defun lark--parse-time-input (input)
+  "Parse a human-friendly time INPUT into ISO 8601 with timezone.
+Accepted formats:
+  HH:MM                 — today at HH:MM
+  MM-DD HH:MM           — this year, month-day at HH:MM
+  YYYY-MM-DD HH:MM      — full date and time
+  YYYY-MM-DDTHH:MM:SS+… — already ISO 8601, passed through
+Returns a string like \"2026-04-11T10:00:00+08:00\"."
+  (let ((s (string-trim input)))
+    (cond
+     ;; Already ISO 8601 (contains T or full datetime with timezone)
+     ((string-match-p "^[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T" s)
+      s)
+     ;; YYYY-MM-DD HH:MM
+     ((string-match "^\\([0-9]\\{4\\}\\)-\\([0-9]\\{1,2\\}\\)-\\([0-9]\\{1,2\\}\\)[[:space:]]+\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)$" s)
+      (lark--build-iso8601
+       (string-to-number (match-string 1 s))
+       (string-to-number (match-string 2 s))
+       (string-to-number (match-string 3 s))
+       (string-to-number (match-string 4 s))
+       (string-to-number (match-string 5 s))))
+     ;; MM-DD HH:MM
+     ((string-match "^\\([0-9]\\{1,2\\}\\)-\\([0-9]\\{1,2\\}\\)[[:space:]]+\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)$" s)
+      (lark--build-iso8601
+       (string-to-number (format-time-string "%Y"))
+       (string-to-number (match-string 1 s))
+       (string-to-number (match-string 2 s))
+       (string-to-number (match-string 3 s))
+       (string-to-number (match-string 4 s))))
+     ;; HH:MM — today
+     ((string-match "^\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)$" s)
+      (lark--build-iso8601
+       (string-to-number (format-time-string "%Y"))
+       (string-to-number (format-time-string "%m"))
+       (string-to-number (format-time-string "%d"))
+       (string-to-number (match-string 1 s))
+       (string-to-number (match-string 2 s))))
+     ;; Fallback: pass through as-is
+     (t s))))
+
+(defun lark--build-iso8601 (year month day hour minute)
+  "Build an ISO 8601 string from YEAR, MONTH, DAY, HOUR, MINUTE with local tz."
+  (let ((tz (format-time-string "%z")))
+    ;; %z gives "+0800", we need "+08:00"
+    (format "%04d-%02d-%02dT%02d:%02d:00%s:%s"
+            year month day hour minute
+            (substring tz 0 3) (substring tz 3 5))))
+
 (provide 'lark-core)
 ;;; lark-core.el ends here
