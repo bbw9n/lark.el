@@ -193,7 +193,8 @@ Each meeting is displayed as a multi-line section.")
 ;;;###autoload
 (defun lark-meetings-search (&optional query start end)
   "Search meeting records.
-QUERY is an optional keyword.  START and END default to last week through tomorrow."
+QUERY is an optional keyword.  START and END default to last
+week through tomorrow."
   (interactive
    (list (read-string "Search meetings (keyword, optional): ")
          (read-string (format "Start date [%s]: " (lark-meetings--default-start)))
@@ -390,6 +391,13 @@ Automatically queries for recordings and appends them if found."
    ((eq value :false) "false")
    (t (format "%s" value))))
 
+(defvar lark-meetings--download-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'lark-meetings--download-at-point)
+    (define-key map [mouse-1]   #'lark-meetings--download-at-point)
+    map)
+  "Keymap for download links in recording buffers.")
+
 (defun lark-meetings--insert-download-link (minute-token)
   "Insert a clickable download link for MINUTE-TOKEN.
 Uses the nf-fa-download icon ()."
@@ -400,13 +408,6 @@ Uses the nf-fa-download icon ()."
                       'lark-minute-token minute-token
                       'keymap lark-meetings--download-keymap)
           "\n"))
-
-(defvar lark-meetings--download-keymap
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "RET") #'lark-meetings--download-at-point)
-    (define-key map [mouse-1]   #'lark-meetings--download-at-point)
-    map)
-  "Keymap for download links in recording buffers.")
 
 (defun lark-meetings--download-at-point ()
   "Download the recording at point."

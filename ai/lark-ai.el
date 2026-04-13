@@ -29,6 +29,8 @@
 (require 'lark-ai-context)
 (require 'json)
 
+(defvar url-http-end-of-headers)
+
 ;;;; Customization
 
 (defcustom lark-ai-backend 'gptel
@@ -238,8 +240,7 @@ Results is an alist of (index . parsed-json-or-string)."
       (setq batch (nreverse batch)
             rest (nreverse rest))
       ;; Execute batch
-      (let ((pending (length batch))
-            (errors nil))
+      (let ((pending (length batch)))
         (dolist (step batch)
           (let ((idx (plist-get step :index))
                 (cmd (plist-get step :command))
@@ -293,7 +294,8 @@ Results is an alist of (index . parsed-json-or-string)."
 ;;;; LLM communication
 
 (defun lark-ai--call-llm (system-prompt user-message callback)
-  "Send SYSTEM-PROMPT and USER-MESSAGE to the LLM, call CALLBACK with response text."
+  "Send SYSTEM-PROMPT and USER-MESSAGE to the LLM.
+Call CALLBACK with the response text."
   (pcase lark-ai-backend
     ('gptel (lark-ai--call-gptel system-prompt user-message callback))
     ('http  (lark-ai--call-http system-prompt user-message callback))
@@ -502,7 +504,7 @@ Type your message and press \\[lark-ai-chat-send] to send."
     ;; Mark input as sent
     (goto-char (point-max))
     (insert "\n\n")
-    (let ((start (point)))
+    (progn
       (insert (propertize (format "You: %s\n" input) 'face 'bold)
               (make-string 40 ?─) "\n")
       (insert (propertize "AI: " 'face 'bold) "thinking...\n")

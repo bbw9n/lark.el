@@ -21,16 +21,40 @@ jobs:
 
       - name: Byte-compile
         run: |
-          emacs --batch -L . \
+          emacs --batch -L . -L core -L domain -L ai \
             --eval "(setq byte-compile-error-on-warn t)" \
-            -f batch-byte-compile lark-core.el lark-auth.el lark-calendar.el lark-tasks.el lark-im.el lark-mail.el lark-transient.el lark.el
+            -f batch-byte-compile \
+            core/lark-core.el \
+            core/lark-auth.el \
+            core/lark-transient.el \
+            domain/lark-calendar.el \
+            domain/lark-tasks.el \
+            domain/lark-im.el \
+            domain/lark-mail.el \
+            domain/lark-docs.el \
+            domain/lark-drive.el \
+            domain/lark-sheets.el \
+            domain/lark-contact.el \
+            domain/lark-meetings.el \
+            domain/lark-whiteboard.el \
+            ai/lark-ai-skills.el \
+            ai/lark-ai-context.el \
+            ai/lark-ai.el \
+            lark.el
 
       - name: Run tests
         run: |
-          emacs --batch -L . -L test \
+          emacs --batch -L . -L core -L domain -L ai -L test \
             -l lark-core-test \
             -l lark-calendar-test \
             -l lark-tasks-test \
             -l lark-im-test \
             -l lark-mail-test \
+            -l lark-docs-test \
+            -l lark-drive-test \
+            -l lark-sheets-test \
+            -l lark-contact-test \
+            -l lark-meetings-test \
+            -l lark-whiteboard-test \
+            -l lark-ai-test \
             -f ert-run-tests-batch-and-exit

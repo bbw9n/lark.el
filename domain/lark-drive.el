@@ -26,6 +26,9 @@
 (require 'json)
 (require 'transient)
 
+(declare-function lark-sheets-info "lark-sheets")
+(declare-function lark-docs-fetch "lark-docs")
+
 ;;;; Customization
 
 (defgroup lark-drive nil

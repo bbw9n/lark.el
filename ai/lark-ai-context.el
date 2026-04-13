@@ -125,8 +125,8 @@ Returns a plist with:
           :buffer-type "task-list"
           :item (when task-id
                   (list :task-id task-id
-                        :task (seq-find (lambda (t)
-                                          (equal (alist-get 'guid t) task-id))
+                        :task (seq-find (lambda (tk)
+                                          (equal (alist-get 'guid tk) task-id))
                                         items)))
           :summary (format "Task list with %d tasks%s"
                            (length items)
