@@ -109,6 +109,32 @@ like ((datetime . \"...\") (timezone . \"...\"))."
       (alist-get 'self_attendee_status event)
       ""))
 
+(defun lark-calendar--event-organizer (event)
+  "Extract the organizer from EVENT."
+  (or (alist-get 'organizer_name event)
+      (lark--get-nested event 'organizer 'display_name)
+      (lark--get-nested event 'organizer 'name)
+      (let ((cal-id (alist-get 'organizer_calendar_id event)))
+        (when (and cal-id (not (string-empty-p cal-id)))
+          cal-id))
+      ""))
+
+(defun lark-calendar--event-meeting-url (event)
+  "Extract the meeting/video chat URL from EVENT."
+  (or (lark--get-nested event 'vchat 'meeting_url)
+      (alist-get 'meeting_url event)
+      ""))
+
+(defun lark-calendar--event-start (event)
+  "Extract the start time display string from EVENT."
+  (lark-calendar--resolve-time
+   (or (alist-get 'start_time event) (alist-get 'start event))))
+
+(defun lark-calendar--event-end (event)
+  "Extract the end time display string from EVENT."
+  (lark-calendar--resolve-time
+   (or (alist-get 'end_time event) (alist-get 'end event))))
+
 (defun lark-calendar--extract-events (data)
   "Extract the event list from lark-cli response DATA.
 Handles the two response shapes from lark-cli:
@@ -128,19 +154,7 @@ Handles the two response shapes from lark-cli:
         (alist-get 'items inner))
        (t nil)))))
 
-(defun lark-calendar--make-entries (events)
-  "Convert EVENTS to `tabulated-list-entries' format."
-  (mapcar
-   (lambda (event)
-     (let ((id (lark-calendar--event-id event))
-           (time (lark-calendar--parse-event-time event))
-           (title (lark-calendar--event-title event))
-           (location (lark-calendar--event-location event))
-           (status (lark-calendar--event-status event)))
-       (list id (vector time title location status))))
-   events))
-
-;;;; Tabulated list mode
+;;;; Section-based event display
 
 (defvar lark-calendar-events-mode-map
   (let ((map (make-sparse-keymap)))
@@ -149,20 +163,128 @@ Handles the two response shapes from lark-cli:
     (define-key map (kbd "c")   #'lark-calendar-create-event)
     (define-key map (kbd "d")   #'lark-calendar-event-delete)
     (define-key map (kbd "y")   #'lark-calendar-event-copy-id)
+    (define-key map (kbd "n")   #'lark-calendar--next-event)
+    (define-key map (kbd "p")   #'lark-calendar--prev-event)
     (define-key map (kbd "?")   #'lark-calendar-dispatch)
     map)
   "Keymap for `lark-calendar-events-mode'.")
 
-(define-derived-mode lark-calendar-events-mode tabulated-list-mode
+(define-derived-mode lark-calendar-events-mode special-mode
   "Lark Events"
-  "Major mode for browsing Lark calendar events."
-  (setq tabulated-list-format
-        [("Time" 24 t)
-         ("Title" 40 t)
-         ("Location" 20 t)
-         ("Status" 10 t)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+  "Major mode for browsing Lark calendar events.
+Each event is displayed as a multi-line section.")
+
+(defun lark-calendar--rsvp-face (status)
+  "Return a face for RSVP STATUS."
+  (pcase status
+    ("accept" 'success)
+    ("decline" 'error)
+    ("tentative" 'warning)
+    ("needs_action" 'font-lock-comment-face)
+    (_ 'default)))
+
+(defun lark-calendar--insert-field (label value)
+  "Insert a LABEL: VALUE line if VALUE is non-empty.
+VALUE may span multiple lines; continuation lines are indented."
+  (when (and value (not (string-empty-p value)))
+    (let ((prefix (format "  %-12s" (concat label ":")))
+          (indent (make-string 14 ?\s)))
+      (insert (propertize prefix 'face 'font-lock-keyword-face))
+      (let ((lines (split-string value "\n")))
+        (insert (car lines) "\n")
+        (dolist (line (cdr lines))
+          (insert indent line "\n"))))))
+
+(defun lark-calendar--insert-event (event)
+  "Insert a multi-line section for EVENT into the current buffer."
+  (let ((id (lark-calendar--event-id event))
+        (title (lark-calendar--event-title event))
+        (start (lark-calendar--event-start event))
+        (end (lark-calendar--event-end event))
+        (location (lark-calendar--event-location event))
+        (status (lark-calendar--event-status event))
+        (organizer (lark-calendar--event-organizer event))
+        (meeting-url (lark-calendar--event-meeting-url event))
+        (beg (point)))
+    ;; Title line
+    (insert (propertize title 'face 'bold) "\n")
+    ;; Fields
+    (lark-calendar--insert-field "Start" start)
+    (lark-calendar--insert-field "End" end)
+    (lark-calendar--insert-field "Location" location)
+    (lark-calendar--insert-field "Organizer" organizer)
+    (lark-calendar--insert-field "Meeting" meeting-url)
+    (when (and status (not (string-empty-p status)))
+      (insert (format "  %-12s" "RSVP:")
+              (propertize status 'face (lark-calendar--rsvp-face status))
+              "\n"))
+    ;; Separator
+    (insert "\n")
+    ;; Tag the whole section with the event ID for navigation
+    (put-text-property beg (point) 'lark-event-id id)))
+
+(defun lark-calendar--render-events (events buf-name &optional calendar-id)
+  "Render EVENTS into a section-based buffer named BUF-NAME.
+Optional CALENDAR-ID is stored for refresh."
+  (let ((buf (get-buffer-create buf-name)))
+    (with-current-buffer buf
+      (lark-calendar-events-mode)
+      (setq lark-calendar--events events
+            lark-calendar--calendar-id calendar-id)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (if (null events)
+            (insert "(no events)\n")
+          (dolist (event events)
+            (lark-calendar--insert-event event))))
+      (goto-char (point-min))
+      (setq header-line-format
+            (format " %s — %d event(s)" buf-name (length events))))
+    (pop-to-buffer buf)))
+
+;;;; Navigation within event sections
+
+(defun lark-calendar--event-id-at-point ()
+  "Return the event ID at point, or nil."
+  (get-text-property (point) 'lark-event-id))
+
+(defun lark-calendar--next-event ()
+  "Move to the next event section."
+  (interactive)
+  (let ((current (lark-calendar--event-id-at-point))
+        (pos (point)))
+    ;; Move past current section
+    (when current
+      (while (and (not (eobp))
+                  (equal (get-text-property (point) 'lark-event-id) current))
+        (forward-char)))
+    ;; Find next section
+    (while (and (not (eobp))
+                (not (get-text-property (point) 'lark-event-id)))
+      (forward-char))
+    (when (eobp) (goto-char pos))))
+
+(defun lark-calendar--prev-event ()
+  "Move to the previous event section."
+  (interactive)
+  (let ((current (lark-calendar--event-id-at-point))
+        (pos (point)))
+    ;; Move before current section
+    (when current
+      (while (and (not (bobp))
+                  (equal (get-text-property (point) 'lark-event-id) current))
+        (backward-char)))
+    ;; Skip gap
+    (while (and (not (bobp))
+                (not (get-text-property (point) 'lark-event-id)))
+      (backward-char))
+    ;; Move to start of that section
+    (let ((target (get-text-property (point) 'lark-event-id)))
+      (if target
+          (while (and (not (bobp))
+                      (equal (get-text-property (1- (point)) 'lark-event-id) target))
+            (backward-char))
+        (goto-char pos)))))
 
 ;;;; Agenda
 ;; CLI: calendar +agenda [--calendar-id X] [--start X] [--end X]
@@ -187,18 +309,9 @@ Optional CALENDAR-ID to show a specific calendar (default: primary)."
   (lark-calendar-agenda lark-calendar--calendar-id))
 
 (defun lark-calendar--display-agenda (data)
-  "Display agenda DATA in a tabulated list buffer."
-  (let* ((events (lark-calendar--extract-events data))
-         (buf (get-buffer-create "*Lark Agenda*")))
-    (with-current-buffer buf
-      (lark-calendar-events-mode)
-      (setq lark-calendar--events events
-            lark-calendar--calendar-id nil
-            tabulated-list-entries (lark-calendar--make-entries events))
-      (tabulated-list-print t)
-      (setq header-line-format
-            (format " Lark Agenda — %d event(s)" (length events))))
-    (pop-to-buffer buf)))
+  "Display agenda DATA in a section-based buffer."
+  (let ((events (lark-calendar--extract-events data)))
+    (lark-calendar--render-events events "*Lark Agenda*")))
 
 ;;;; Event listing (uses +agenda with date range)
 ;; There is no "events list" command; use +agenda with --start/--end.
@@ -222,19 +335,11 @@ Shows events for the next 7 days."
 
 (defun lark-calendar--display-events (data &optional calendar-id)
   "Display event list DATA for CALENDAR-ID."
-  (let* ((events (lark-calendar--extract-events data))
-         (buf (get-buffer-create (if calendar-id
-                                     (format "*Lark Events: %s*" calendar-id)
-                                   "*Lark Events*"))))
-    (with-current-buffer buf
-      (lark-calendar-events-mode)
-      (setq lark-calendar--events events
-            lark-calendar--calendar-id calendar-id
-            tabulated-list-entries (lark-calendar--make-entries events))
-      (tabulated-list-print t)
-      (setq header-line-format
-            (format " Lark Events — %d event(s)" (length events))))
-    (pop-to-buffer buf)))
+  (let ((events (lark-calendar--extract-events data))
+        (name (if calendar-id
+                  (format "*Lark Events: %s*" calendar-id)
+                "*Lark Events*")))
+    (lark-calendar--render-events events name calendar-id)))
 
 ;;;; Calendar listing
 ;; CLI: calendar calendars list [--params JSON]
@@ -279,7 +384,7 @@ Shows events for the next 7 days."
 (defun lark-calendar-event-open ()
   "Open the event at point in a detail view."
   (interactive)
-  (let ((id (tabulated-list-get-id)))
+  (let ((id (lark-calendar--event-id-at-point)))
     (unless id (user-error "No event at point"))
     (message "Lark: fetching event details...")
     (let ((params (json-encode `((calendar_id . "primary")
@@ -397,7 +502,7 @@ Time values are expanded from shorthand (e.g. \"10:00\") to ISO 8601."
 (defun lark-calendar-event-delete ()
   "Delete the event at point."
   (interactive)
-  (let ((id (tabulated-list-get-id)))
+  (let ((id (lark-calendar--event-id-at-point)))
     (unless id (user-error "No event at point"))
     (when (yes-or-no-p (format "Delete event %s? " id))
       (message "Lark: deleting event...")
@@ -414,7 +519,7 @@ Time values are expanded from shorthand (e.g. \"10:00\") to ISO 8601."
 (defun lark-calendar-event-copy-id ()
   "Copy the event ID at point to the kill ring."
   (interactive)
-  (let ((id (tabulated-list-get-id)))
+  (let ((id (lark-calendar--event-id-at-point)))
     (unless id (user-error "No event at point"))
     (kill-new id)
     (message "Copied: %s" id)))
@@ -491,7 +596,7 @@ Time values are expanded from shorthand (e.g. \"10:00\") to ISO 8601."
 (defun lark-calendar-rsvp (event-id status)
   "RSVP to EVENT-ID with STATUS (accept/decline/tentative)."
   (interactive
-   (list (or (tabulated-list-get-id)
+   (list (or (lark-calendar--event-id-at-point)
              (read-string "Event ID: "))
          (completing-read "RSVP: " '("accept" "decline" "tentative") nil t)))
   (lark--run-command

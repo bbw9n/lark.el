@@ -68,24 +68,53 @@
   "Nil data returns nil."
   (should (null (lark-calendar--extract-events nil))))
 
-;;;; Make entries
+;;;; Field extractors
 
-(ert-deftest lark-calendar-test-make-entries ()
-  "Convert events to tabulated-list entries."
-  (let* ((events '(((event_id . "ev1")
-                     (summary . "Standup")
-                     (start_time . ((datetime . "2026-04-11T09:00:00+08:00")))
-                     (end_time . ((datetime . "2026-04-11T09:30:00+08:00")))
-                     (location . "Room 1")
-                     (self_rsvp_status . "accepted"))))
-         (entries (lark-calendar--make-entries events)))
-    (should (= (length entries) 1))
-    (should (equal (car (car entries)) "ev1"))
-    (let ((vec (cadr (car entries))))
-      (should (stringp (aref vec 0)))      ; time
-      (should (equal (aref vec 1) "Standup"))
-      (should (equal (aref vec 2) "Room 1"))
-      (should (equal (aref vec 3) "accepted")))))
+(ert-deftest lark-calendar-test-event-organizer ()
+  "Extract organizer from event."
+  (should (equal (lark-calendar--event-organizer '((organizer_name . "Alice")))
+                 "Alice"))
+  (should (equal (lark-calendar--event-organizer
+                  '((organizer_calendar_id . "cal@group")))
+                 "cal@group"))
+  (should (equal (lark-calendar--event-organizer '((foo . "bar"))) "")))
+
+(ert-deftest lark-calendar-test-event-meeting-url ()
+  "Extract meeting URL from event."
+  (should (equal (lark-calendar--event-meeting-url
+                  '((vchat . ((meeting_url . "https://vc.example.com/123")))))
+                 "https://vc.example.com/123"))
+  (should (equal (lark-calendar--event-meeting-url '((foo . "bar"))) "")))
+
+(ert-deftest lark-calendar-test-event-start-end ()
+  "Extract start/end times from event."
+  (let ((event '((start_time . ((datetime . "2026-04-11T09:00:00+08:00")))
+                 (end_time . ((datetime . "2026-04-11T09:30:00+08:00"))))))
+    (should (equal (lark-calendar--event-start event) "2026-04-11T09:00"))
+    (should (equal (lark-calendar--event-end event) "2026-04-11T09:30"))))
+
+;;;; Section rendering
+
+(ert-deftest lark-calendar-test-insert-event ()
+  "Insert event renders all fields with text property."
+  (let ((event '((event_id . "ev1")
+                 (summary . "Standup")
+                 (start_time . ((datetime . "2026-04-11T09:00:00+08:00")))
+                 (end_time . ((datetime . "2026-04-11T09:30:00+08:00")))
+                 (location . "Room 1")
+                 (self_rsvp_status . "accept")
+                 (vchat . ((meeting_url . "https://vc.example.com/1"))))))
+    (with-temp-buffer
+      (lark-calendar--insert-event event)
+      (let ((text (buffer-string)))
+        (should (string-match-p "Standup" text))
+        (should (string-match-p "2026-04-11T09:00" text))
+        (should (string-match-p "Room 1" text))
+        (should (string-match-p "accept" text))
+        (should (string-match-p "vc.example.com" text)))
+      ;; Check text property
+      (goto-char (point-min))
+      (should (equal (get-text-property (point) 'lark-event-id) "ev1")))))
 
 ;;;; Time resolution
 
