@@ -47,26 +47,29 @@
 
 ;;;; Event parsing
 
+(defun lark-calendar--resolve-time (time-val)
+  "Resolve TIME-VAL to a displayable string.
+TIME-VAL can be a number (unix timestamp), a string, or an alist
+like ((datetime . \"...\") (timezone . \"...\"))."
+  (cond
+   ((numberp time-val) (or (lark--format-timestamp time-val) ""))
+   ((stringp time-val) (lark-calendar--format-datetime time-val))
+   ((and (listp time-val) (alist-get 'datetime time-val))
+    (lark-calendar--format-datetime (alist-get 'datetime time-val)))
+   ((and (listp time-val) (alist-get 'date time-val))
+    (alist-get 'date time-val))
+   ((and (listp time-val) (alist-get 'timestamp time-val))
+    (or (lark--format-timestamp (alist-get 'timestamp time-val)) ""))
+   (t "")))
+
 (defun lark-calendar--parse-event-time (event)
   "Extract a display time string from EVENT."
   (let* ((start (or (alist-get 'start_time event)
-                    (lark--get-nested event 'start 'timestamp)
-                    (lark--get-nested event 'start 'date_time)
-                    (lark--get-nested event 'start 'date)))
+                    (alist-get 'start event)))
          (end (or (alist-get 'end_time event)
-                  (lark--get-nested event 'end 'timestamp)
-                  (lark--get-nested event 'end 'date_time)
-                  (lark--get-nested event 'end 'date)))
-         (start-str (if (numberp start)
-                        (lark--format-timestamp start)
-                      (if (stringp start)
-                          (lark-calendar--format-datetime start)
-                        "")))
-         (end-str (if (numberp end)
-                      (lark--format-timestamp end)
-                    (if (stringp end)
-                        (lark-calendar--format-datetime end)
-                      ""))))
+                  (alist-get 'end event)))
+         (start-str (lark-calendar--resolve-time start))
+         (end-str (lark-calendar--resolve-time end)))
     (if (and start-str end-str
              (string-prefix-p (substring start-str 0 (min 10 (length start-str)))
                               end-str))
@@ -101,27 +104,29 @@
 
 (defun lark-calendar--event-status (event)
   "Extract the status/RSVP from EVENT."
-  (or (alist-get 'status event)
+  (or (alist-get 'self_rsvp_status event)
+      (alist-get 'status event)
       (alist-get 'self_attendee_status event)
       ""))
 
 (defun lark-calendar--extract-events (data)
-  "Extract the event list from lark-cli response DATA."
-  (cond
-   ((and (listp data) (alist-get 'items data))
-    (alist-get 'items data))
-   ((and (listp data) (alist-get 'events data))
-    (alist-get 'events data))
-   ((and (listp data) (alist-get 'data data))
+  "Extract the event list from lark-cli response DATA.
+Handles the two response shapes from lark-cli:
+  {ok: true, data: [...]}       — +agenda returns data as a direct event array
+  {code: 0, data: {items: ...}} — raw API style"
+  (when (listp data)
     (let ((inner (alist-get 'data data)))
-      (or (alist-get 'items inner)
-          (alist-get 'events inner)
-          (and (listp inner) inner))))
-   ((and (listp data) (listp (car data))
-         (or (alist-get 'event_id (car data))
-             (alist-get 'summary (car data))))
-    data)
-   (t nil)))
+      (cond
+       ;; {data: [<event>, ...]} — +agenda style, data is the array directly
+       ((and (listp inner) (listp (car inner))
+             (or (null inner)
+                 (alist-get 'event_id (car inner))
+                 (alist-get 'summary (car inner))))
+        inner)
+       ;; {data: {items: [...]}} — raw API style
+       ((and (listp inner) (alist-get 'items inner))
+        (alist-get 'items inner))
+       (t nil)))))
 
 (defun lark-calendar--make-entries (events)
   "Convert EVENTS to `tabulated-list-entries' format."
@@ -246,9 +251,7 @@ Shows events for the next 7 days."
 
 (defun lark-calendar--display-calendars (data)
   "Display calendar list DATA."
-  (let* ((calendars (or (alist-get 'items data)
-                        (lark--get-nested data 'data 'items)
-                        (and (listp data) data)))
+  (let* ((calendars (lark--get-nested data 'data 'calendar_list))
          (buf (get-buffer-create "*Lark Calendars*")))
     (with-current-buffer buf
       (let ((inhibit-read-only t))

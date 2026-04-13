@@ -44,25 +44,27 @@
   (should (equal (lark-calendar--event-status '((foo . "bar")))
                  "")))
 
-;;;; Extract events from various response shapes
+;;;; Extract events from actual response shapes
 
-(ert-deftest lark-calendar-test-extract-events-items ()
-  "Extract events from {items: [...]} shape."
-  (let ((data '((items . (((event_id . "1") (summary . "A"))
-                           ((event_id . "2") (summary . "B")))))))
+(ert-deftest lark-calendar-test-extract-events-agenda ()
+  "Extract events from +agenda shape: {ok: t, data: [<events>]}."
+  (let ((data '((ok . t)
+                (data . (((event_id . "1") (summary . "A"))
+                          ((event_id . "2") (summary . "B")))))))
     (should (= (length (lark-calendar--extract-events data)) 2))))
 
-(ert-deftest lark-calendar-test-extract-events-nested ()
-  "Extract events from {data: {items: [...]}} shape."
-  (let ((data '((data . ((items . (((event_id . "1")))))))))
+(ert-deftest lark-calendar-test-extract-events-raw-api ()
+  "Extract events from raw API shape: {code: 0, data: {items: [...]}}."
+  (let ((data '((code . 0)
+                (data . ((items . (((event_id . "1") (summary . "A")))))))))
     (should (= (length (lark-calendar--extract-events data)) 1))))
 
-(ert-deftest lark-calendar-test-extract-events-flat ()
-  "Extract events from a flat list."
-  (let ((data '(((event_id . "1") (summary . "A")))))
-    (should (= (length (lark-calendar--extract-events data)) 1))))
+(ert-deftest lark-calendar-test-extract-events-empty-data ()
+  "Empty data array returns nil."
+  (let ((data '((ok . t) (data))))
+    (should (null (lark-calendar--extract-events data)))))
 
-(ert-deftest lark-calendar-test-extract-events-empty ()
+(ert-deftest lark-calendar-test-extract-events-nil ()
   "Nil data returns nil."
   (should (null (lark-calendar--extract-events nil))))
 
@@ -72,10 +74,10 @@
   "Convert events to tabulated-list entries."
   (let* ((events '(((event_id . "ev1")
                      (summary . "Standup")
-                     (start_time . 1700000000)
-                     (end_time . 1700003600)
+                     (start_time . ((datetime . "2026-04-11T09:00:00+08:00")))
+                     (end_time . ((datetime . "2026-04-11T09:30:00+08:00")))
                      (location . "Room 1")
-                     (status . "accepted"))))
+                     (self_rsvp_status . "accepted"))))
          (entries (lark-calendar--make-entries events)))
     (should (= (length entries) 1))
     (should (equal (car (car entries)) "ev1"))
@@ -84,6 +86,29 @@
       (should (equal (aref vec 1) "Standup"))
       (should (equal (aref vec 2) "Room 1"))
       (should (equal (aref vec 3) "accepted")))))
+
+;;;; Time resolution
+
+(ert-deftest lark-calendar-test-resolve-time-datetime-object ()
+  "Resolve {datetime: ...} object."
+  (should (equal (lark-calendar--resolve-time
+                  '((datetime . "2026-04-11T09:00:00+08:00")))
+                 "2026-04-11T09:00")))
+
+(ert-deftest lark-calendar-test-resolve-time-string ()
+  "Resolve plain datetime string."
+  (should (equal (lark-calendar--resolve-time "2026-04-11T10:00:00")
+                 "2026-04-11T10:00")))
+
+(ert-deftest lark-calendar-test-resolve-time-number ()
+  "Resolve numeric timestamp."
+  (let ((result (lark-calendar--resolve-time 1700000000)))
+    (should (stringp result))
+    (should (string-match-p "^[0-9]\\{4\\}-" result))))
+
+(ert-deftest lark-calendar-test-resolve-time-nil ()
+  "Resolve nil returns empty string."
+  (should (equal (lark-calendar--resolve-time nil) "")))
 
 ;;;; Format datetime
 
