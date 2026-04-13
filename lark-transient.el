@@ -19,6 +19,7 @@
 (autoload 'lark-mail-dispatch "lark-mail" nil t)
 (autoload 'lark-contacts-dispatch "lark-contact" nil t)
 (autoload 'lark-docs-dispatch "lark-docs" nil t)
+(autoload 'lark-drive-dispatch "lark-drive" nil t)
 (autoload 'lark-whiteboard-dispatch "lark-whiteboard" nil t)
 
 ;;;; Top-level dispatch
@@ -85,7 +86,7 @@
         ("q" "Quit" transient-quit-all)])))
 
 ;; lark-docs-dispatch is now provided by lark-docs.el
-(lark--define-stub-dispatch lark-drive-dispatch "Drive")
+;; lark-drive-dispatch is now provided by lark-drive.el
 (lark--define-stub-dispatch lark-base-dispatch "Base")
 (lark--define-stub-dispatch lark-sheets-dispatch "Sheets")
 (lark--define-stub-dispatch lark-wiki-dispatch "Wiki")
