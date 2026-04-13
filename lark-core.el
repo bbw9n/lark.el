@@ -139,12 +139,15 @@ KEYS are keyword arguments:
   :format   - output format (default: `lark-default-format')
   :raw      - if non-nil, pass raw string to callback instead of parsed JSON
   :no-error - if non-nil, don't signal errors from the response
+  :literal  - if non-nil, use CMD-ARGS as-is (skip --format/--as/--dry-run)
 
 Returns the process object."
   (let* ((format (plist-get keys :format))
          (raw (plist-get keys :raw))
          (no-error (plist-get keys :no-error))
-         (full-args (lark--build-command cmd-args extra-args format))
+         (literal (plist-get keys :literal))
+         (full-args (if literal cmd-args
+                      (lark--build-command cmd-args extra-args format)))
          (exe (lark--executable))
          (proc-name (format "lark-%s" (string-join cmd-args "-")))
          proc)
@@ -189,11 +192,14 @@ EXTRA-ARGS is a plist of keyword arguments.
 KEYS are keyword arguments:
   :format   - output format (default: `lark-default-format')
   :raw      - if non-nil, return raw string instead of parsed JSON
-  :no-error - if non-nil, don't signal errors from the response"
+  :no-error - if non-nil, don't signal errors from the response
+  :literal  - if non-nil, use CMD-ARGS as-is (skip --format/--as/--dry-run)"
   (let* ((format (plist-get keys :format))
          (raw (plist-get keys :raw))
          (no-error (plist-get keys :no-error))
-         (full-args (lark--build-command cmd-args extra-args format))
+         (literal (plist-get keys :literal))
+         (full-args (if literal cmd-args
+                      (lark--build-command cmd-args extra-args format)))
          (exe (lark--executable))
          (output-buf (generate-new-buffer " *lark-sync*"))
          exit-code output)
