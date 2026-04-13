@@ -1,0 +1,90 @@
+;;; lark.el --- Emacs interface to Lark/Feishu via lark-cli -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 Free Software Foundation, Inc.
+
+;; Author: lark.el contributors
+;; URL: https://github.com/user/lark.el
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "28.1"))
+;; Keywords: comm, tools
+
+;; This file is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation; either version 3, or (at your option)
+;; any later version.
+
+;;; Commentary:
+
+;; lark.el provides an Emacs interface to the Lark/Feishu platform by
+;; wrapping the lark-cli command-line tool.  It covers 11 business
+;; domains including Calendar, Messenger, Docs, Drive, Base, Sheets,
+;; Tasks, Mail, Contacts, Wiki, and Meetings.
+;;
+;; The package uses transient menus for command dispatch and
+;; tabulated-list-mode for data display.  All CLI interactions are
+;; async by default to keep Emacs responsive.
+;;
+;; Quick start:
+;;   M-x lark-dispatch   or   C-c l l
+;;
+;; Prerequisites:
+;;   - lark-cli installed and on PATH (https://github.com/larksuite/cli)
+;;   - Emacs 28.1+ (for built-in transient)
+
+;;; Code:
+
+(require 'lark-core)
+(require 'lark-auth)
+(require 'lark-transient)
+
+;;;; Customization
+
+(defgroup lark nil
+  "Emacs interface to Lark/Feishu via lark-cli."
+  :group 'comm
+  :prefix "lark-")
+
+(defcustom lark-cli-executable "lark-cli"
+  "Path to the lark-cli executable."
+  :type 'string
+  :group 'lark)
+
+(defcustom lark-default-format "json"
+  "Default output format for lark-cli commands.
+One of \"json\", \"table\", \"csv\", \"ndjson\", or \"pretty\"."
+  :type '(choice (const "json")
+                 (const "table")
+                 (const "csv")
+                 (const "ndjson")
+                 (const "pretty"))
+  :group 'lark)
+
+(defcustom lark-default-identity "user"
+  "Default identity for lark-cli commands.
+Either \"user\" or \"bot\"."
+  :type '(choice (const "user")
+                 (const "bot"))
+  :group 'lark)
+
+(defcustom lark-dry-run nil
+  "When non-nil, pass --dry-run to all destructive lark-cli commands."
+  :type 'boolean
+  :group 'lark)
+
+;;;; Prefix keymap
+
+(defvar lark-prefix-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "l") #'lark-dispatch)
+    (define-key map (kbd "s") #'lark-auth-status)
+    map)
+  "Keymap for Lark commands, intended to be bound under a prefix like C-c l.")
+
+;;;###autoload
+(defun lark-setup-prefix-key (&optional key)
+  "Bind `lark-prefix-map' to KEY (default \"C-c l\") in `global-map'."
+  (interactive)
+  (global-set-key (kbd (or key "C-c l")) lark-prefix-map))
+
+(provide 'lark)
+;;; lark.el ends here

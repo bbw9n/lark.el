@@ -1,0 +1,15 @@
+# Byte-compiled Emacs Lisp
+*.elc
+
+# Package artifacts
+/dist/
+*.tar
+
+# Auto-save and backup files
+*~
+\#*\#
+.\#*
+
+# Custom settings
+custom.el
+.plan.md
