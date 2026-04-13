@@ -72,11 +72,15 @@
 
 (ert-deftest lark-calendar-test-event-organizer ()
   "Extract organizer from event."
-  (should (equal (lark-calendar--event-organizer '((organizer_name . "Alice")))
+  ;; Prefer event_organizer.display_name
+  (should (equal (lark-calendar--event-organizer
+                  '((event_organizer . ((display_name . "Alice")))))
                  "Alice"))
+  ;; Fall back to organizer_calendar_id
   (should (equal (lark-calendar--event-organizer
                   '((organizer_calendar_id . "cal@group")))
                  "cal@group"))
+  ;; Empty when neither present
   (should (equal (lark-calendar--event-organizer '((foo . "bar"))) "")))
 
 (ert-deftest lark-calendar-test-event-meeting-url ()
