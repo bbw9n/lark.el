@@ -19,6 +19,7 @@
 (autoload 'lark-mail-dispatch "lark-mail" nil t)
 (autoload 'lark-contacts-dispatch "lark-contact" nil t)
 (autoload 'lark-docs-dispatch "lark-docs" nil t)
+(autoload 'lark-whiteboard-dispatch "lark-whiteboard" nil t)
 
 ;;;; Top-level dispatch
 
@@ -36,7 +37,8 @@
    ("e" "Mail"       lark-mail-dispatch)
    ("w" "Wiki"       lark-wiki-dispatch)
    ("k" "Contacts"   lark-contacts-dispatch)
-   ("v" "Meetings"   lark-meetings-dispatch)]
+   ("v" "Meetings"   lark-meetings-dispatch)
+   ("W" "Whiteboard" lark-whiteboard-dispatch)]
   ["Auth & Config"
    ("a" "Auth status"  lark-auth-status)
    ("L" "Login"        lark-auth-login)
