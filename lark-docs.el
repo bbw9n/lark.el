@@ -59,52 +59,76 @@
       data))
 
 (defun lark-docs--extract-search-results (data)
-  "Extract search result list from lark-cli response DATA."
-  (or (lark--get-nested data 'data 'items)
-      (alist-get 'items data)
-      (lark--get-nested data 'data 'docs)
-      (let ((inner (alist-get 'data data)))
-        (and (listp inner) (listp (car inner)) inner))))
+  "Extract search result list from lark-cli response DATA.
+Handles the response shape: {data: {results: [...], has_more, total}}."
+  (or (lark--get-nested data 'data 'results)
+      (alist-get 'results data)
+      (lark--get-nested data 'data 'items)
+      (alist-get 'items data)))
+
+(defun lark-docs--result-meta (doc)
+  "Return the result_meta sub-alist from DOC, or DOC itself.
+Search results nest fields under result_meta; other responses don't."
+  (or (alist-get 'result_meta doc) doc))
+
+(defun lark-docs--strip-highlight (str)
+  "Remove <h>...</h> highlight tags from STR."
+  (if (and str (stringp str))
+      (replace-regexp-in-string "</?h>" "" str)
+    str))
 
 (defun lark-docs--doc-title (doc)
   "Extract the title from DOC."
-  (or (alist-get 'title doc)
+  (or (lark-docs--strip-highlight (alist-get 'title_highlighted doc))
+      (alist-get 'title doc)
+      (alist-get 'title (lark-docs--result-meta doc))
       (alist-get 'name doc)
       "(untitled)"))
 
 (defun lark-docs--doc-token (doc)
   "Extract the document token from DOC."
-  (or (alist-get 'document_id doc)
-      (alist-get 'doc_token doc)
-      (alist-get 'token doc)
-      (alist-get 'obj_token doc)
-      (alist-get 'id doc)))
+  (let ((meta (lark-docs--result-meta doc)))
+    (or (alist-get 'document_id doc)
+        (alist-get 'doc_token doc)
+        (alist-get 'token meta)
+        (alist-get 'obj_token doc)
+        (alist-get 'id doc))))
 
 (defun lark-docs--doc-type (doc)
   "Extract the document type from DOC."
-  (or (alist-get 'doc_type doc)
-      (alist-get 'type doc)
-      (alist-get 'obj_type doc)
-      ""))
+  (let ((meta (lark-docs--result-meta doc)))
+    (or (alist-get 'entity_type doc)
+        (alist-get 'doc_types meta)
+        (alist-get 'doc_type doc)
+        (alist-get 'type doc)
+        "")))
 
 (defun lark-docs--doc-url (doc)
   "Extract the URL from DOC."
-  (or (alist-get 'url doc)
-      (alist-get 'doc_url doc)
-      ""))
+  (let ((meta (lark-docs--result-meta doc)))
+    (or (alist-get 'url meta)
+        (alist-get 'url doc)
+        (alist-get 'doc_url doc)
+        "")))
 
 (defun lark-docs--doc-owner (doc)
   "Extract the owner from DOC."
-  (or (alist-get 'owner_name doc)
-      (lark--get-nested doc 'owner 'name)
-      (alist-get 'owner_id doc)
-      ""))
+  (let ((meta (lark-docs--result-meta doc)))
+    (or (alist-get 'owner_name meta)
+        (alist-get 'owner_name doc)
+        (lark--get-nested doc 'owner 'name)
+        "")))
 
 (defun lark-docs--doc-create-time (doc)
   "Extract create time from DOC."
-  (let ((ts (or (alist-get 'create_time doc)
-                (alist-get 'created_time doc))))
+  (let* ((meta (lark-docs--result-meta doc))
+         (iso (or (alist-get 'create_time_iso meta) ""))
+         (ts (or (alist-get 'create_time meta)
+                 (alist-get 'create_time doc)
+                 (alist-get 'created_time doc))))
     (cond
+     ((and (stringp iso) (not (string-empty-p iso)))
+      (substring iso 0 (min 16 (length iso))))
      ((and (stringp ts) (not (string-empty-p ts)))
       (substring ts 0 (min 16 (length ts))))
      ((numberp ts) (or (lark--format-timestamp ts) ""))
@@ -112,10 +136,15 @@
 
 (defun lark-docs--doc-update-time (doc)
   "Extract update time from DOC."
-  (let ((ts (or (alist-get 'update_time doc)
-                (alist-get 'edit_time doc)
-                (alist-get 'updated_time doc))))
+  (let* ((meta (lark-docs--result-meta doc))
+         (iso (or (alist-get 'update_time_iso meta) ""))
+         (ts (or (alist-get 'update_time meta)
+                 (alist-get 'update_time doc)
+                 (alist-get 'edit_time doc)
+                 (alist-get 'updated_time doc))))
     (cond
+     ((and (stringp iso) (not (string-empty-p iso)))
+      (substring iso 0 (min 16 (length iso))))
      ((and (stringp ts) (not (string-empty-p ts)))
       (substring ts 0 (min 16 (length ts))))
      ((numberp ts) (or (lark--format-timestamp ts) ""))
@@ -154,6 +183,13 @@ Each result is displayed as a multi-line section.")
     (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face)
             value "\n")))
 
+(defun lark-docs--doc-summary (doc)
+  "Extract and clean the summary from search result DOC."
+  (lark-docs--strip-highlight
+   (or (alist-get 'summary_highlighted doc)
+       (alist-get 'summary doc)
+       "")))
+
 (defun lark-docs--insert-result (doc)
   "Insert a multi-line section for search result DOC."
   (let ((token (lark-docs--doc-token doc))
@@ -163,6 +199,7 @@ Each result is displayed as a multi-line section.")
         (owner (lark-docs--doc-owner doc))
         (created (lark-docs--doc-create-time doc))
         (updated (lark-docs--doc-update-time doc))
+        (summary (lark-docs--doc-summary doc))
         (beg (point)))
     (insert (propertize title 'face 'bold) "\n")
     (lark-docs--insert-field "Type" type)
@@ -171,6 +208,8 @@ Each result is displayed as a multi-line section.")
     (lark-docs--insert-field "Created" created)
     (lark-docs--insert-field "Updated" updated)
     (lark-docs--insert-field "URL" url)
+    (when (and summary (not (string-empty-p summary)))
+      (insert (propertize (format "  %s" summary) 'face 'font-lock-comment-face) "\n"))
     (insert "\n")
     (put-text-property beg (point) 'lark-doc-token token)
     (put-text-property beg (point) 'lark-doc-title title)))
