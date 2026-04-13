@@ -62,19 +62,29 @@
 
 (defun lark-mail--mail-from (mail)
   "Extract the sender from MAIL."
-  (let ((from (or (alist-get 'from mail)
+  (let ((from (or (alist-get 'head_from mail)
+                  (alist-get 'from mail)
                   (alist-get 'sender mail))))
     (cond
      ((stringp from) from)
-     ((listp from) (or (alist-get 'name from)
-                       (alist-get 'address from)
-                       ""))
+     ((listp from)
+      (let ((name (or (alist-get 'name from) ""))
+            (addr (or (alist-get 'mail_address from)
+                      (alist-get 'address from) "")))
+        (cond
+         ((and (not (string-empty-p name)) (not (string-empty-p addr)))
+          (format "%s <%s>" name addr))
+         ((not (string-empty-p name)) name)
+         ((not (string-empty-p addr)) addr)
+         (t ""))))
      (t ""))))
 
 (defun lark-mail--mail-date (mail)
   "Extract the date from MAIL."
-  (let ((date (or (alist-get 'date mail)
+  (let ((date (or (alist-get 'date_formatted mail)
+                  (alist-get 'date mail)
                   (alist-get 'send_time mail)
+                  (alist-get 'internal_date mail)
                   (alist-get 'timestamp mail))))
     (cond
      ((numberp date) (or (lark--format-timestamp date) ""))
@@ -282,31 +292,74 @@
   (cond
    ((null addresses) "")
    ((stringp addresses) addresses)
-   ((and (listp addresses) (alist-get 'address addresses))
-    (lark-mail--format-address addresses))
-   ((and (listp addresses) (alist-get 'name addresses))
+   ;; Single address alist (not a list of addresses)
+   ((and (listp addresses)
+         (or (alist-get 'address addresses)
+             (alist-get 'mail_address addresses)
+             (alist-get 'name addresses)))
     (lark-mail--format-address addresses))
    ((listp addresses)
     (mapconcat #'lark-mail--format-address addresses ", "))
    (t (format "%s" addresses))))
 
 (defun lark-mail--extract-body (mail)
-  "Extract the best body text from MAIL."
-  (let ((body (or (alist-get 'body mail)
-                  (alist-get 'text_body mail)
-                  (alist-get 'content mail)
-                  (alist-get 'plain_text mail)
-                  (alist-get 'html_body mail))))
-    (cond
-     ((null body) "")
-     ((stringp body) body)
-     ((listp body)
-      (or (alist-get 'plain_text body)
-          (alist-get 'text body)
-          (alist-get 'content body)
-          (alist-get 'html body)
-          ""))
-     (t (format "%s" body)))))
+  "Extract the best body text from MAIL.
+Prefers plain text over HTML.  Falls back to body_preview."
+  (or (let ((plain (alist-get 'body_plain_text mail)))
+        (and (stringp plain) (not (string-empty-p plain)) plain))
+      (let ((body (or (alist-get 'body mail)
+                      (alist-get 'text_body mail)
+                      (alist-get 'content mail)
+                      (alist-get 'plain_text mail))))
+        (cond
+         ((and (stringp body) (not (string-empty-p body))) body)
+         ((listp body)
+          (let ((text (or (alist-get 'plain_text body)
+                          (alist-get 'text body)
+                          (alist-get 'content body))))
+            (and (stringp text) (not (string-empty-p text)) text)))
+         (t nil)))
+      (let ((preview (alist-get 'body_preview mail)))
+        (and (stringp preview) (not (string-empty-p preview)) preview))
+      (let ((html (alist-get 'body_html mail)))
+        (and (stringp html) (not (string-empty-p html))
+             (lark-mail--html-to-text html)))
+      ""))
+
+(defun lark-mail--html-to-text (html)
+  "Convert HTML to plain text by stripping tags."
+  (with-temp-buffer
+    (insert html)
+    (goto-char (point-min))
+    ;; Remove style/script blocks
+    (while (re-search-forward "<\\(style\\|script\\)[^>]*>[^<]*</\\1>" nil t)
+      (replace-match ""))
+    (goto-char (point-min))
+    ;; <br> / <p> / <div> → newlines
+    (while (re-search-forward "<\\(br\\|/p\\|/div\\|/tr\\)[^>]*>" nil t)
+      (replace-match "\n"))
+    (goto-char (point-min))
+    ;; Strip remaining tags
+    (while (re-search-forward "<[^>]+>" nil t)
+      (replace-match ""))
+    (goto-char (point-min))
+    ;; Decode common entities
+    (dolist (pair '(("&amp;" . "&") ("&lt;" . "<") ("&gt;" . ">")
+                    ("&quot;" . "\"") ("&nbsp;" . " ") ("&#39;" . "'")
+                    ("&apos;" . "'") ("&#x200B;" . "")))
+      (goto-char (point-min))
+      (while (search-forward (car pair) nil t)
+        (replace-match (cdr pair))))
+    (goto-char (point-min))
+    ;; Numeric entities
+    (while (re-search-forward "&#\\([0-9]+\\);" nil t)
+      (let ((char (string-to-number (match-string 1))))
+        (replace-match (string char))))
+    ;; Collapse excessive blank lines
+    (goto-char (point-min))
+    (while (re-search-forward "\n\\{3,\\}" nil t)
+      (replace-match "\n\n"))
+    (string-trim (buffer-string))))
 
 (defun lark-mail--display-detail (data mail-id)
   "Display mail detail DATA for MAIL-ID."
@@ -322,7 +375,8 @@
                 (make-string (min 72 (max 20 (length subject))) ?─) "\n")
         ;; Headers
         (lark-mail--header-field "From"
-          (lark-mail--format-address-list (or (alist-get 'from mail)
+          (lark-mail--format-address-list (or (alist-get 'head_from mail)
+                                              (alist-get 'from mail)
                                               (alist-get 'sender mail))))
         (lark-mail--header-field "To"
           (lark-mail--format-address-list (alist-get 'to mail)))
@@ -334,7 +388,9 @@
           (lark-mail--format-address-list (alist-get 'reply_to mail)))
         (lark-mail--header-field "Date" (lark-mail--mail-date mail))
         (lark-mail--header-field "Mail-ID" (or mail-id ""))
-        ;; Labels / folder
+        ;; Folder / labels / state
+        (lark-mail--header-field "Folder"
+          (or (alist-get 'folder_id mail) ""))
         (let ((labels (or (alist-get 'labels mail)
                           (alist-get 'label_ids mail))))
           (when labels
@@ -343,8 +399,10 @@
                ((stringp labels) labels)
                ((listp labels) (mapconcat (lambda (l) (format "%s" l)) labels ", "))
                (t "")))))
-        (let ((thread-id (or (alist-get 'thread_id mail) "")))
-          (lark-mail--header-field "Thread" thread-id))
+        (lark-mail--header-field "State"
+          (or (alist-get 'message_state_text mail) ""))
+        (lark-mail--header-field "Thread"
+          (or (alist-get 'thread_id mail) ""))
         ;; Attachments
         (let ((attachments (or (alist-get 'attachments mail)
                                (alist-get 'files mail))))
