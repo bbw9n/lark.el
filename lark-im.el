@@ -116,26 +116,39 @@ Uses owner_id and owner_id_type via `lark-contact-resolve-name'."
   (or (alist-get 'description chat) ""))
 
 (defun lark-im--chat-create-time (chat)
-  "Extract and format create time from CHAT."
+  "Extract and format create time from CHAT.
+Expects an ISO 8601 string like \"2026-01-04T09:08:05Z\".
+Truncates to \"YYYY-MM-DD HH:MM\" for display."
   (let ((ts (alist-get 'create_time chat)))
-    (cond
-     ((numberp ts) (or (lark--format-timestamp ts) ""))
-     ((stringp ts) (or (lark--format-timestamp ts) ts))
-     (t ""))))
+    (if (and (stringp ts) (not (string-empty-p ts)))
+        (substring ts 0 (min 16 (length ts)))
+      "")))
 
-(defun lark-im--make-chat-entries (chats)
-  "Convert CHATS to `tabulated-list-entries' format."
-  (mapcar
-   (lambda (chat)
-     (let ((id (lark-im--chat-id-of chat))
-           (name (lark-im--chat-name-of chat))
-           (type (lark-im--chat-type chat))
-           (owner (lark-im--chat-owner-name chat))
-           (desc (lark-im--chat-description chat))
-           (created (lark-im--chat-create-time chat))
-           (members (lark-im--chat-member-count chat)))
-       (list id (vector name type owner desc created members))))
-   chats))
+(defun lark-im--insert-chat-field (label value)
+  "Insert a LABEL: VALUE line if VALUE is non-empty."
+  (when (and value (not (string-empty-p value)))
+    (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face)
+            value "\n")))
+
+(defun lark-im--insert-chat (chat)
+  "Insert a multi-line section for CHAT into the current buffer."
+  (let ((id (lark-im--chat-id-of chat))
+        (name (lark-im--chat-name-of chat))
+        (type (lark-im--chat-type chat))
+        (owner (lark-im--chat-owner-name chat))
+        (desc (lark-im--chat-description chat))
+        (created (lark-im--chat-create-time chat))
+        (members (lark-im--chat-member-count chat))
+        (beg (point)))
+    (insert (propertize name 'face 'bold) "\n")
+    (lark-im--insert-chat-field "Type" type)
+    (lark-im--insert-chat-field "Owner" owner)
+    (lark-im--insert-chat-field "Description" desc)
+    (lark-im--insert-chat-field "Created" created)
+    (lark-im--insert-chat-field "Members" members)
+    (insert "\n")
+    (put-text-property beg (point) 'lark-chat-id id)
+    (put-text-property beg (point) 'lark-chat-name name)))
 
 ;;;; Message parsing
 
@@ -209,22 +222,57 @@ Uses owner_id and owner_id_type via `lark-contact-resolve-name'."
     (define-key map (kbd "s")   #'lark-im-send-to-chat)
     (define-key map (kbd "c")   #'lark-im-group-create)
     (define-key map (kbd "y")   #'lark-im-chat-copy-id)
+    (define-key map (kbd "n")   #'lark-im--next-chat)
+    (define-key map (kbd "p")   #'lark-im--prev-chat)
     (define-key map (kbd "?")   #'lark-im-dispatch)
     map)
   "Keymap for `lark-im-chats-mode'.")
 
-(define-derived-mode lark-im-chats-mode tabulated-list-mode
+(define-derived-mode lark-im-chats-mode special-mode
   "Lark Chats"
-  "Major mode for browsing Lark chats."
-  (setq tabulated-list-format
-        [("Name" 30 t)
-         ("Type" 8 t)
-         ("Owner" 16 t)
-         ("Description" 24 t)
-         ("Created" 16 t)
-         ("Members" 8 t)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+  "Major mode for browsing Lark chats.
+Each chat is displayed as a multi-line section.")
+
+(defun lark-im--chat-id-at-point ()
+  "Return the chat ID at point, or nil."
+  (get-text-property (point) 'lark-chat-id))
+
+(defun lark-im--chat-name-at-point ()
+  "Return the chat name at point, or nil."
+  (get-text-property (point) 'lark-chat-name))
+
+(defun lark-im--next-chat ()
+  "Move to the next chat section."
+  (interactive)
+  (let ((current (lark-im--chat-id-at-point))
+        (pos (point)))
+    (when current
+      (while (and (not (eobp))
+                  (equal (get-text-property (point) 'lark-chat-id) current))
+        (forward-char)))
+    (while (and (not (eobp))
+                (not (get-text-property (point) 'lark-chat-id)))
+      (forward-char))
+    (when (eobp) (goto-char pos))))
+
+(defun lark-im--prev-chat ()
+  "Move to the previous chat section."
+  (interactive)
+  (let ((current (lark-im--chat-id-at-point))
+        (pos (point)))
+    (when current
+      (while (and (not (bobp))
+                  (equal (get-text-property (point) 'lark-chat-id) current))
+        (backward-char)))
+    (while (and (not (bobp))
+                (not (get-text-property (point) 'lark-chat-id)))
+      (backward-char))
+    (let ((target (get-text-property (point) 'lark-chat-id)))
+      (if target
+          (while (and (not (bobp))
+                      (equal (get-text-property (1- (point)) 'lark-chat-id) target))
+            (backward-char))
+        (goto-char pos)))))
 
 ;;;; Chat message mode
 
@@ -274,9 +322,14 @@ When called interactively, prompt for a search query."
     (with-current-buffer buf
       (lark-im-chats-mode)
       (setq lark-im--chats chats
-            lark-im--chat-query query
-            tabulated-list-entries (lark-im--make-chat-entries chats))
-      (tabulated-list-print t)
+            lark-im--chat-query query)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (if (null chats)
+            (insert "(no chats)\n")
+          (dolist (chat chats)
+            (lark-im--insert-chat chat))))
+      (goto-char (point-min))
       (setq header-line-format
             (format " Lark Chats — %d chat(s)" (length chats))))
     (pop-to-buffer buf)))
@@ -288,9 +341,9 @@ When called interactively, prompt for a search query."
 (defun lark-im-chat-open ()
   "Open the chat at point and show message history."
   (interactive)
-  (let ((id (tabulated-list-get-id)))
+  (let ((id (lark-im--chat-id-at-point)))
     (unless id (user-error "No chat at point"))
-    (let ((name (aref (tabulated-list-get-entry) 0)))
+    (let ((name (or (lark-im--chat-name-at-point) "")))
       (lark-im-messages id name))))
 
 ;;;###autoload
@@ -381,7 +434,7 @@ When called interactively, prompt for a search query."
 (defun lark-im-send-to-chat ()
   "Send a message to the chat at point."
   (interactive)
-  (let ((id (tabulated-list-get-id)))
+  (let ((id (lark-im--chat-id-at-point)))
     (unless id (user-error "No chat at point"))
     (lark-im-send id)))
 
@@ -432,7 +485,7 @@ Prompts for message ID if not determinable from point."
 (defun lark-im-chat-copy-id ()
   "Copy the chat ID at point to the kill ring."
   (interactive)
-  (let ((id (or (tabulated-list-get-id) lark-im--chat-id)))
+  (let ((id (or (lark-im--chat-id-at-point) lark-im--chat-id)))
     (unless id (user-error "No chat ID"))
     (kill-new id)
     (message "Copied: %s" id)))

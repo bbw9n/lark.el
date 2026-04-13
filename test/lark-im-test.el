@@ -90,24 +90,28 @@
 
 ;;;; Make entries
 
-(ert-deftest lark-im-test-make-chat-entries ()
+(ert-deftest lark-im-test-insert-chat ()
   (let* ((lark-contact--user-cache (make-hash-table :test 'equal))
-         (chats '(((chat_id . "c1")
-                    (name . "Dev Team")
-                    (chat_type . "group")
-                    (description . "Engineering chat")
-                    (create_time . 1700000000)
-                    (member_count . 10))))
-         (entries (lark-im--make-chat-entries chats)))
-    (should (= (length entries) 1))
-    (should (equal (car (car entries)) "c1"))
-    (let ((vec (cadr (car entries))))
-      (should (equal (aref vec 0) "Dev Team"))
-      (should (equal (aref vec 1) "group"))
-      (should (equal (aref vec 2) ""))           ; owner
-      (should (equal (aref vec 3) "Engineering chat")) ; description
-      (should (stringp (aref vec 4)))             ; created (formatted timestamp)
-      (should (equal (aref vec 5) "10")))))
+         (chat '((chat_id . "c1")
+                 (name . "Dev Team")
+                 (chat_type . "group")
+                 (description . "Engineering chat")
+                 (create_time . "2026-01-04T09:08:05Z")
+                 (member_count . 10))))
+    (with-temp-buffer
+      (lark-im--insert-chat chat)
+      (goto-char (point-min))
+      ;; Title line present
+      (should (search-forward "Dev Team" nil t))
+      ;; Fields present
+      (should (search-forward "group" nil t))
+      (should (search-forward "Engineering chat" nil t))
+      (should (search-forward "2026-01-04T09:08" nil t))
+      (should (search-forward "10" nil t))
+      ;; Text property covers the section
+      (goto-char (point-min))
+      (should (equal (get-text-property (point) 'lark-chat-id) "c1"))
+      (should (equal (get-text-property (point) 'lark-chat-name) "Dev Team")))))
 
 (provide 'lark-im-test)
 ;;; lark-im-test.el ends here
