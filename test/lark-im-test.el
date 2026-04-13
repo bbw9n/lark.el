@@ -95,6 +95,8 @@
          (chats '(((chat_id . "c1")
                     (name . "Dev Team")
                     (chat_type . "group")
+                    (description . "Engineering chat")
+                    (create_time . 1700000000)
                     (member_count . 10))))
          (entries (lark-im--make-chat-entries chats)))
     (should (= (length entries) 1))
@@ -102,9 +104,10 @@
     (let ((vec (cadr (car entries))))
       (should (equal (aref vec 0) "Dev Team"))
       (should (equal (aref vec 1) "group"))
-      ;; vec[2] is owner (empty when no owner_id)
-      (should (equal (aref vec 2) ""))
-      (should (equal (aref vec 3) "10")))))
+      (should (equal (aref vec 2) ""))           ; owner
+      (should (equal (aref vec 3) "Engineering chat")) ; description
+      (should (stringp (aref vec 4)))             ; created (formatted timestamp)
+      (should (equal (aref vec 5) "10")))))
 
 (provide 'lark-im-test)
 ;;; lark-im-test.el ends here

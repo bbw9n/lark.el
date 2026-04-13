@@ -111,6 +111,18 @@ Uses owner_id and owner_id_type via `lark-contact-resolve-name'."
     data)
    (t nil)))
 
+(defun lark-im--chat-description (chat)
+  "Extract description from CHAT."
+  (or (alist-get 'description chat) ""))
+
+(defun lark-im--chat-create-time (chat)
+  "Extract and format create time from CHAT."
+  (let ((ts (alist-get 'create_time chat)))
+    (cond
+     ((numberp ts) (or (lark--format-timestamp ts) ""))
+     ((stringp ts) (or (lark--format-timestamp ts) ts))
+     (t ""))))
+
 (defun lark-im--make-chat-entries (chats)
   "Convert CHATS to `tabulated-list-entries' format."
   (mapcar
@@ -119,8 +131,10 @@ Uses owner_id and owner_id_type via `lark-contact-resolve-name'."
            (name (lark-im--chat-name-of chat))
            (type (lark-im--chat-type chat))
            (owner (lark-im--chat-owner-name chat))
+           (desc (lark-im--chat-description chat))
+           (created (lark-im--chat-create-time chat))
            (members (lark-im--chat-member-count chat)))
-       (list id (vector name type owner members))))
+       (list id (vector name type owner desc created members))))
    chats))
 
 ;;;; Message parsing
@@ -203,9 +217,11 @@ Uses owner_id and owner_id_type via `lark-contact-resolve-name'."
   "Lark Chats"
   "Major mode for browsing Lark chats."
   (setq tabulated-list-format
-        [("Name" 36 t)
-         ("Type" 10 t)
-         ("Owner" 20 t)
+        [("Name" 30 t)
+         ("Type" 8 t)
+         ("Owner" 16 t)
+         ("Description" 24 t)
+         ("Created" 16 t)
          ("Members" 8 t)])
   (setq tabulated-list-padding 2)
   (tabulated-list-init-header))
