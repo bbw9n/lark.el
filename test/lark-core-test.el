@@ -73,6 +73,36 @@
   "Invalid JSON returns nil without error."
   (should (null (lark--parse-json "not json"))))
 
+;;;; lark--strip-debug-lines tests
+
+(ert-deftest lark-test-strip-debug-lines-removes-prefixed ()
+  "Strip lines with [cmd +sub] debug prefixes."
+  (let ((input "[vc +recording] fetching recording...\n[vc +recording] done\n{\"data\": 1}"))
+    (should (equal (string-trim (lark--strip-debug-lines input))
+                   "{\"data\": 1}"))))
+
+(ert-deftest lark-test-strip-debug-lines-preserves-json-array ()
+  "JSON arrays starting with [ are not stripped."
+  (let ((input "[1, 2, 3]"))
+    (should (equal (lark--strip-debug-lines input) input))))
+
+(ert-deftest lark-test-strip-debug-lines-no-debug ()
+  "Plain JSON passes through unchanged."
+  (let ((input "{\"key\": \"value\"}"))
+    (should (equal (lark--strip-debug-lines input) input))))
+
+(ert-deftest lark-test-parse-json-with-debug-lines ()
+  "parse-json strips debug lines and parses the JSON."
+  (let ((result (lark--parse-json
+                 "[vc +recording] querying...\n{\"data\": {\"id\": \"abc\"}}")))
+    (should result)
+    (should (equal (alist-get 'id (alist-get 'data result)) "abc"))))
+
+(ert-deftest lark-test-parse-json-only-debug-lines ()
+  "parse-json returns nil when input is only debug lines."
+  (should (null (lark--parse-json
+                 "[vc +recording] querying...\n[vc +recording] done\n"))))
+
 ;;;; lark--parse-ndjson tests
 
 (ert-deftest lark-test-parse-ndjson ()

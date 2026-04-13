@@ -96,15 +96,29 @@ lark-cli already defaults to json and not all subcommands support it."
 
 ;;;; JSON parsing
 
+(defun lark--strip-debug-lines (string)
+  "Remove CLI debug/log lines from STRING.
+Lines matching `[command +subcommand]' prefixes (e.g. `[vc +recording] ...')
+are stripped so the remaining text is valid JSON."
+  (let ((lines (split-string string "\n")))
+    (mapconcat #'identity
+               (seq-remove (lambda (line)
+                             (string-match-p "^\\[[-a-zA-Z0-9_]+ \\+[-a-zA-Z0-9_]+\\]" line))
+                           lines)
+               "\n")))
+
 (defun lark--parse-json (string)
   "Parse STRING as JSON, returning an alist.
-Returns nil if STRING is empty or not valid JSON."
+Returns nil if STRING is empty or not valid JSON.
+Debug lines from the CLI (e.g. `[vc +recording] ...') are stripped first."
   (when (and string (not (string-empty-p (string-trim string))))
-    (condition-case err
-        (json-parse-string string :object-type 'alist :array-type 'list)
-      (json-parse-error
-       (lark--log "JSON parse error: %s\nInput: %s" (error-message-string err) string)
-       nil))))
+    (let ((cleaned (lark--strip-debug-lines string)))
+      (when (not (string-empty-p (string-trim cleaned)))
+        (condition-case err
+            (json-parse-string cleaned :object-type 'alist :array-type 'list)
+          (json-parse-error
+           (lark--log "JSON parse error: %s\nInput: %s" (error-message-string err) cleaned)
+           nil))))))
 
 (defun lark--parse-ndjson (string)
   "Parse STRING as newline-delimited JSON, returning a list of alists."
