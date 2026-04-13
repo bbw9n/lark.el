@@ -1,5 +1,9 @@
 ;;; lark-meetings-test.el --- Tests for lark-meetings.el -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
+
 ;;; Code:
 
 (require 'ert)

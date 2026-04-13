@@ -14,7 +14,7 @@ browsing, org-table spreadsheets, and async execution throughout.
 ** Installing lark-cli
 
 #+begin_src shell
-npm install -g @larksuite/lark-cli
+npm install -g @larksuite/cli
 #+end_src
 
 Verify it works:
@@ -178,10 +178,25 @@ Or: =M-x lark-calendar-agenda=
 This fetches today's agenda and displays it in a =*Lark Agenda*= buffer:
 
 #+begin_example
-  Time                     Title                                    Location             Status
-  2026-04-11 09:00 - 09:30 Daily Standup                            Meeting Room A       accepted
-  2026-04-11 10:00 - 11:00 Sprint Planning                         Room 301             accepted
-  2026-04-11 14:00 - 15:00 1:1 with Manager                                             tentative
+Daily Standup
+  Start:      2026-04-12 09:00
+  End:        2026-04-12 09:30
+  Location:   Meeting Room A
+  Organizer:  Alice
+  RSVP:       accept
+
+Sprint Planning
+  Start:      2026-04-12 10:00
+  End:        2026-04-12 11:00
+  Location:   Room 301
+  Organizer:  Bob
+  RSVP:       accept
+
+1:1 with Manager
+  Start:      2026-04-12 14:00
+  End:        2026-04-12 15:00
+  Organizer:  Carol
+  RSVP:       tentative
 #+end_example
 
 *** Keybindings in the agenda buffer
@@ -425,7 +440,7 @@ All options are under =M-x customize-group RET lark=.
 
 lark-cli is not on your =PATH=. Either:
 
-- Install it: =npm install -g @anthropic-ai/lark-cli=
+- Install it: =npm install -g @larksuite/cli=
 - Set the full path: =(setq lark-cli-executable "/path/to/lark-cli")=
 
 ** "Lark: not authenticated"

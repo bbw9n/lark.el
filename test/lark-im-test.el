@@ -1,5 +1,9 @@
 ;;; lark-im-test.el --- Tests for lark-im.el -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
+
 ;;; Code:
 
 (require 'ert)

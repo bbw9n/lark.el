@@ -1,6 +1,8 @@
 ;;; lark-im.el --- Lark Messenger integration -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2026 Free Software Foundation, Inc.
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
 
 ;;; Commentary:
 

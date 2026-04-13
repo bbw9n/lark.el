@@ -1,6 +1,8 @@
 ;;; lark-core.el --- Core process management for lark.el -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2026 Free Software Foundation, Inc.
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
 
 ;;; Commentary:
 

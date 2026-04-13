@@ -1,5 +1,9 @@
 ;;; lark-core-test.el --- Tests for lark-core.el -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
+
 ;;; Commentary:
 
 ;; ERT tests for lark.el core functions.

@@ -1,5 +1,9 @@
 ;;; lark-docs-test.el --- Tests for lark-docs.el -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
+
 ;;; Code:
 
 (require 'ert)

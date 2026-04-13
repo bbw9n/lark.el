@@ -1,12 +1,12 @@
 ;;; lark.el --- Emacs interface to Lark/Feishu via lark-cli -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2026 Free Software Foundation, Inc.
+;; Copyright (C) 2026 bbw9n
 
-;; Author: lark.el contributors
+;; Author: bbw9n <bbw9nio@gmail.com>
 ;; URL: https://github.com/bbw9n/lark.el
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1"))
-;; Keywords: comm, tools
+;; Keywords: comm, tools, agent
 
 ;; This file is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -20,9 +20,8 @@
 ;; domains including Calendar, Messenger, Docs, Drive, Base, Sheets,
 ;; Tasks, Mail, Contacts, Wiki, and Meetings.
 ;;
-;; The package uses transient menus for command dispatch and
-;; tabulated-list-mode for data display.  All CLI interactions are
-;; async by default to keep Emacs responsive.
+;; The package uses transient menus for command dispatch.
+;; All CLI interactions are async by default to keep Emacs responsive.
 ;;
 ;; Quick start:
 ;;   M-x lark-dispatch   or   C-c l l

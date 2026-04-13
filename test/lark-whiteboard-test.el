@@ -1,5 +1,9 @@
 ;;; lark-whiteboard-test.el --- Tests for lark-whiteboard.el -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
+
 ;;; Code:
 
 (require 'ert)
