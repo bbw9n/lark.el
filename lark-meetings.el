@@ -352,6 +352,49 @@ QUERY is an optional keyword.  START and END default to last week through tomorr
 ;;;; Recording
 ;; CLI: vc +recording --meeting-ids X
 
+(defun lark-meetings--format-value (value)
+  "Format VALUE as a display string."
+  (cond
+   ((null value) "")
+   ((stringp value) value)
+   ((numberp value) (number-to-string value))
+   ((eq value t) "true")
+   ((eq value :false) "false")
+   (t (format "%s" value))))
+
+(defun lark-meetings--insert-recording (recording)
+  "Insert a structured section for a single RECORDING alist."
+  (let ((known-keys '(meeting_id minute_token url recording_url
+                      download_url status duration file_size
+                      title topic start_time end_time error)))
+    ;; Display known fields first in order
+    (dolist (key known-keys)
+      (let ((val (alist-get key recording)))
+        (when val
+          (let ((label (capitalize (replace-regexp-in-string "_" " " (symbol-name key))))
+                (str (lark-meetings--format-value val)))
+            (unless (string-empty-p str)
+              (lark-meetings--insert-field label str))))))
+    ;; Display remaining unknown fields
+    (dolist (pair recording)
+      (unless (memq (car pair) known-keys)
+        (let ((label (capitalize (replace-regexp-in-string "_" " " (symbol-name (car pair)))))
+              (val (cdr pair)))
+          (cond
+           ((and (listp val) (consp (car val)))
+            ;; Nested alist — render as indented sub-fields
+            (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face) "\n")
+            (dolist (sub-pair val)
+              (let ((sub-label (capitalize (replace-regexp-in-string "_" " " (symbol-name (car sub-pair)))))
+                    (sub-val (lark-meetings--format-value (cdr sub-pair))))
+                (unless (string-empty-p sub-val)
+                  (insert (propertize (format "    %-12s" (concat sub-label ":")) 'face 'font-lock-comment-face)
+                          sub-val "\n")))))
+           (t
+            (let ((str (lark-meetings--format-value val)))
+              (unless (string-empty-p str)
+                (lark-meetings--insert-field label str))))))))))
+
 ;;;###autoload
 (defun lark-meetings-recording (meeting-id)
   "Query recording / minute_token for MEETING-ID."
@@ -365,6 +408,10 @@ QUERY is an optional keyword.  START and END default to last week through tomorr
      (let* ((items (or (lark--get-nested data 'data 'items)
                        (lark--get-nested data 'data 'recordings)
                        (alist-get 'data data)))
+            ;; Normalize: if items is a single alist (not a list of alists), wrap it
+            (items (if (and items (listp items) (not (listp (car items))))
+                       (list items)
+                     items))
             (buf (get-buffer-create (format "*Lark Recording: %s*" meeting-id))))
        (with-current-buffer buf
          (let ((inhibit-read-only t))
@@ -373,7 +420,12 @@ QUERY is an optional keyword.  START and END default to last week through tomorr
                    (make-string 60 ?─) "\n\n")
            (if (null items)
                (insert "(no recording found)\n")
-             (insert (pp-to-string items) "\n")))
+             (let ((idx 0))
+               (dolist (rec items)
+                 (when (> idx 0)
+                   (insert "\n" (make-string 40 ?─) "\n\n"))
+                 (lark-meetings--insert-recording rec)
+                 (setq idx (1+ idx))))))
          (special-mode)
          (goto-char (point-min)))
        (pop-to-buffer buf)))))
