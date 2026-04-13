@@ -21,6 +21,7 @@
 (autoload 'lark-docs-dispatch "lark-docs" nil t)
 (autoload 'lark-drive-dispatch "lark-drive" nil t)
 (autoload 'lark-sheets-dispatch "lark-sheets" nil t)
+(autoload 'lark-meetings-dispatch "lark-meetings" nil t)
 (autoload 'lark-whiteboard-dispatch "lark-whiteboard" nil t)
 
 ;;;; Top-level dispatch
@@ -92,7 +93,7 @@
 ;; lark-sheets-dispatch is now provided by lark-sheets.el
 (lark--define-stub-dispatch lark-wiki-dispatch "Wiki")
 ;; lark-contacts-dispatch is now provided by lark-contact.el
-(lark--define-stub-dispatch lark-meetings-dispatch "Meetings")
+;; lark-meetings-dispatch is now provided by lark-meetings.el
 
 (provide 'lark-transient)
 ;;; lark-transient.el ends here
