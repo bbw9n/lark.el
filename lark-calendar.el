@@ -210,9 +210,9 @@ Shows events for the next 7 days."
   (interactive)
   (message "Lark: fetching events...")
   (let ((args (list "calendar" "+agenda"
-                    "--start" (format-time-string "%Y-%m-%dT00:00:00%z")
-                    "--end" (format-time-string "%Y-%m-%dT23:59:59%z"
-                                                (time-add nil (* 7 86400))))))
+                    "--start" (lark--format-time-iso8601)
+                    "--end" (lark--format-time-iso8601
+                             (time-add nil (* 7 86400))))))
     (when calendar-id
       (setq args (append args (list "--calendar-id" calendar-id))))
     (lark--run-command

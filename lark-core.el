@@ -296,13 +296,21 @@ Returns a string like \"2026-04-11T10:00:00+08:00\"."
      ;; Fallback: pass through as-is
      (t s))))
 
+(defun lark--tz-offset ()
+  "Return the local timezone offset as ISO 8601 (e.g. \"+08:00\")."
+  (let ((tz (format-time-string "%z")))
+    ;; %z gives "+0800", ISO 8601 needs "+08:00"
+    (concat (substring tz 0 3) ":" (substring tz 3 5))))
+
 (defun lark--build-iso8601 (year month day hour minute)
   "Build an ISO 8601 string from YEAR, MONTH, DAY, HOUR, MINUTE with local tz."
-  (let ((tz (format-time-string "%z")))
-    ;; %z gives "+0800", we need "+08:00"
-    (format "%04d-%02d-%02dT%02d:%02d:00%s:%s"
-            year month day hour minute
-            (substring tz 0 3) (substring tz 3 5))))
+  (format "%04d-%02d-%02dT%02d:%02d:00%s"
+          year month day hour minute (lark--tz-offset)))
+
+(defun lark--format-time-iso8601 (&optional time)
+  "Format TIME (default now) as ISO 8601 with timezone offset."
+  (concat (format-time-string "%Y-%m-%dT%H:%M:%S" time)
+          (lark--tz-offset)))
 
 (provide 'lark-core)
 ;;; lark-core.el ends here
