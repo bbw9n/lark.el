@@ -51,6 +51,23 @@ Clone this repo and add it to your =load-path=:
   (lark-setup-prefix-key))
 #+end_src
 
+** Doom Emacs
+
+Add in packages.el from the source of github repo
+
+#+begin_src emacs-lisp
+(package! lark
+  :recipe (:host github :repo "bbw9n/lark.el" :branch "main"))
+#+end_src
+
+Ensure to setup =(lark-setup-prefix-key)= in your config.el
+
+#+begin_src emacs-lisp
+(use-package! lark
+  :config
+  (lark-setup-prefix-key))
+#+end_src
+
 * Quick Start: First-Time Setup
 
 This section walks you through initial configuration, authentication,
