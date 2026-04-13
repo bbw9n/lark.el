@@ -22,6 +22,7 @@
 (require 'lark-core)
 (require 'json)
 (require 'transient)
+(require 'shr)
 
 ;;;; Customization
 
@@ -303,63 +304,31 @@
    (t (format "%s" addresses))))
 
 (defun lark-mail--extract-body (mail)
-  "Extract the best body text from MAIL.
-Prefers plain text over HTML.  Falls back to body_preview."
-  (or (let ((plain (alist-get 'body_plain_text mail)))
-        (and (stringp plain) (not (string-empty-p plain)) plain))
-      (let ((body (or (alist-get 'body mail)
-                      (alist-get 'text_body mail)
-                      (alist-get 'content mail)
-                      (alist-get 'plain_text mail))))
-        (cond
-         ((and (stringp body) (not (string-empty-p body))) body)
-         ((listp body)
-          (let ((text (or (alist-get 'plain_text body)
-                          (alist-get 'text body)
-                          (alist-get 'content body))))
-            (and (stringp text) (not (string-empty-p text)) text)))
-         (t nil)))
-      (let ((preview (alist-get 'body_preview mail)))
-        (and (stringp preview) (not (string-empty-p preview)) preview))
-      (let ((html (alist-get 'body_html mail)))
-        (and (stringp html) (not (string-empty-p html))
-             (lark-mail--html-to-text html)))
-      ""))
-
-(defun lark-mail--html-to-text (html)
-  "Convert HTML to plain text by stripping tags."
-  (with-temp-buffer
-    (insert html)
-    (goto-char (point-min))
-    ;; Remove style/script blocks
-    (while (re-search-forward "<\\(style\\|script\\)[^>]*>[^<]*</\\1>" nil t)
-      (replace-match ""))
-    (goto-char (point-min))
-    ;; <br> / <p> / <div> → newlines
-    (while (re-search-forward "<\\(br\\|/p\\|/div\\|/tr\\)[^>]*>" nil t)
-      (replace-match "\n"))
-    (goto-char (point-min))
-    ;; Strip remaining tags
-    (while (re-search-forward "<[^>]+>" nil t)
-      (replace-match ""))
-    (goto-char (point-min))
-    ;; Decode common entities
-    (dolist (pair '(("&amp;" . "&") ("&lt;" . "<") ("&gt;" . ">")
-                    ("&quot;" . "\"") ("&nbsp;" . " ") ("&#39;" . "'")
-                    ("&apos;" . "'") ("&#x200B;" . "")))
-      (goto-char (point-min))
-      (while (search-forward (car pair) nil t)
-        (replace-match (cdr pair))))
-    (goto-char (point-min))
-    ;; Numeric entities
-    (while (re-search-forward "&#\\([0-9]+\\);" nil t)
-      (let ((char (string-to-number (match-string 1))))
-        (replace-match (string char))))
-    ;; Collapse excessive blank lines
-    (goto-char (point-min))
-    (while (re-search-forward "\n\\{3,\\}" nil t)
-      (replace-match "\n\n"))
-    (string-trim (buffer-string))))
+  "Extract the best body from MAIL as (TYPE . CONTENT).
+TYPE is `plain' or `html'.  Prefers plain text; falls back to HTML."
+  (let ((plain (alist-get 'body_plain_text mail))
+        (html (alist-get 'body_html mail))
+        (body (or (alist-get 'body mail)
+                  (alist-get 'text_body mail)
+                  (alist-get 'content mail)
+                  (alist-get 'plain_text mail)))
+        (preview (alist-get 'body_preview mail)))
+    (cond
+     ((and (stringp plain) (not (string-empty-p plain)))
+      (cons 'plain plain))
+     ((and (stringp body) (not (string-empty-p body)))
+      (cons 'plain body))
+     ((and (listp body)
+           (let ((text (or (alist-get 'plain_text body)
+                           (alist-get 'text body)
+                           (alist-get 'content body))))
+             (and (stringp text) (not (string-empty-p text))
+                  (cons 'plain text)))))
+     ((and (stringp preview) (not (string-empty-p preview)))
+      (cons 'plain preview))
+     ((and (stringp html) (not (string-empty-p html)))
+      (cons 'html html))
+     (t (cons 'plain "")))))
 
 (defun lark-mail--display-detail (data mail-id)
   "Display mail detail DATA for MAIL-ID."
@@ -426,10 +395,21 @@ Prefers plain text over HTML.  Falls back to body_preview."
                 (insert "\n")))))
         ;; Body
         (insert "\n" (make-string 72 ?─) "\n\n")
-        (let ((body (lark-mail--extract-body mail)))
-          (if (string-empty-p body)
-              (insert (propertize "(no body)" 'face 'font-lock-comment-face) "\n")
-            (insert body "\n"))))
+        (let* ((body-pair (lark-mail--extract-body mail))
+               (body-type (car body-pair))
+               (body-content (cdr body-pair)))
+          (cond
+           ((string-empty-p body-content)
+            (insert (propertize "(no body)" 'face 'font-lock-comment-face) "\n"))
+           ((eq body-type 'html)
+            (let ((shr-use-fonts nil)
+                  (shr-width (min 72 (window-width))))
+              (shr-insert-document
+               (with-temp-buffer
+                 (insert body-content)
+                 (libxml-parse-html-region (point-min) (point-max))))))
+           (t
+            (insert body-content "\n")))))
       (special-mode)
       (goto-char (point-min)))
     (pop-to-buffer buf)))
