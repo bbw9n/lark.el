@@ -412,6 +412,7 @@ to plain text."
            (t
             (insert body-content "\n")))))
       (special-mode)
+      (visual-line-mode 1)
       (goto-char (point-min)))
     (pop-to-buffer buf)))
 
