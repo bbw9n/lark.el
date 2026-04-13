@@ -12,13 +12,13 @@
 ;;;; Task parsing tests
 
 (ert-deftest lark-tasks-test-task-id ()
-  "Extract task ID from various formats."
+  "Extract task ID — guid preferred."
+  (should (equal (lark-tasks--task-id '((guid . "g789")))
+                 "g789"))
   (should (equal (lark-tasks--task-id '((task_id . "t_123")))
                  "t_123"))
   (should (equal (lark-tasks--task-id '((id . "456")))
-                 "456"))
-  (should (equal (lark-tasks--task-id '((guid . "g789")))
-                 "g789")))
+                 "456")))
 
 (ert-deftest lark-tasks-test-task-title ()
   "Extract task title."
@@ -43,10 +43,20 @@
   (should (equal (lark-tasks--task-status '((is_completed . t)))
                  "done")))
 
+(ert-deftest lark-tasks-test-task-status-done-zero-string ()
+  "completed_at of \"0\" means not completed."
+  (should (equal (lark-tasks--task-status '((completed_at . "0") (status . "todo")))
+                 "todo")))
+
 (ert-deftest lark-tasks-test-task-status-explicit ()
   "Explicit status field is used."
   (should (equal (lark-tasks--task-status '((status . "in_progress")))
                  "in_progress")))
+
+(ert-deftest lark-tasks-test-task-due-due-at ()
+  "due_at (ISO string from +get-my-tasks) is preferred."
+  (should (equal (lark-tasks--task-due '((due_at . "2025-09-11T08:00:00+08:00")))
+                 "2025-09-11")))
 
 (ert-deftest lark-tasks-test-task-due-timestamp ()
   "Format numeric due timestamp."
@@ -74,6 +84,27 @@
   (should (equal (lark-tasks--task-creator '((foo . "bar")))
                  "")))
 
+(ert-deftest lark-tasks-test-task-url ()
+  (should (equal (lark-tasks--task-url '((url . "https://example.com")))
+                 "https://example.com"))
+  (should (equal (lark-tasks--task-url '((foo . "bar"))) "")))
+
+(ert-deftest lark-tasks-test-task-created-at ()
+  (should (equal (lark-tasks--task-created-at '((created_at . "2026-02-13T14:32:17+08:00")))
+                 "2026-02-13T14:32"))
+  (should (equal (lark-tasks--task-created-at '((foo . "bar"))) "")))
+
+(ert-deftest lark-tasks-test-task-origin ()
+  (should (equal (lark-tasks--task-origin
+                  '((origin . ((href . ((title . "My Doc")))))))
+                 "My Doc"))
+  (should (equal (lark-tasks--task-origin '((foo . "bar"))) "")))
+
+(ert-deftest lark-tasks-test-task-subtask-count ()
+  (should (equal (lark-tasks--task-subtask-count '((subtask_count . 3))) "3"))
+  (should (equal (lark-tasks--task-subtask-count '((subtask_count . 0))) ""))
+  (should (equal (lark-tasks--task-subtask-count '((foo . "bar"))) "")))
+
 ;;;; Extract tasks from various response shapes
 
 (ert-deftest lark-tasks-test-extract-tasks-items ()
@@ -86,6 +117,11 @@
   (let ((data '((data . ((tasks . (((task_id . "1")))))))))
     (should (= (length (lark-tasks--extract-tasks data)) 1))))
 
+(ert-deftest lark-tasks-test-extract-tasks-nested-guid ()
+  "Extract tasks from {data: {items: [...]}} with guid."
+  (let ((data '((data . ((items . (((guid . "g1") (summary . "A")))))))))
+    (should (= (length (lark-tasks--extract-tasks data)) 1))))
+
 (ert-deftest lark-tasks-test-extract-tasks-flat ()
   "Extract from flat list."
   (let ((data '(((task_id . "1") (summary . "A")))))
@@ -95,23 +131,54 @@
   "Nil data returns nil."
   (should (null (lark-tasks--extract-tasks nil))))
 
-;;;; Make entries
+;;;; Multi-line insert
 
-(ert-deftest lark-tasks-test-make-entries ()
-  "Convert tasks to tabulated-list entries."
-  (let* ((tasks '(((task_id . "t1")
-                    (summary . "Fix bug")
-                    (due . "2026-04-15")
-                    (status . "todo")
-                    (creator_name . "Alice"))))
-         (entries (lark-tasks--make-entries tasks)))
-    (should (= (length entries) 1))
-    (should (equal (car (car entries)) "t1"))
-    (let ((vec (cadr (car entries))))
-      (should (equal (substring-no-properties (aref vec 0)) "todo"))
-      (should (equal (aref vec 1) "Fix bug"))
-      (should (equal (aref vec 2) "2026-04-15"))
-      (should (equal (aref vec 3) "Alice")))))
+(ert-deftest lark-tasks-test-insert-task ()
+  "Insert task section with text properties."
+  (let ((task '((guid . "g1")
+                (summary . "Fix bug")
+                (status . "todo")
+                (due_at . "2026-04-15T08:00:00+08:00")
+                (created_at . "2026-02-13T14:32:17+08:00")
+                (url . "https://example.com/task/g1"))))
+    (with-temp-buffer
+      (lark-tasks--insert-task task)
+      (goto-char (point-min))
+      (should (search-forward "Fix bug" nil t))
+      (should (search-forward "todo" nil t))
+      (should (search-forward "2026-04-15" nil t))
+      (should (search-forward "2026-02-13T14:32" nil t))
+      (goto-char (point-min))
+      (should (equal (get-text-property (point) 'lark-task-id) "g1")))))
+
+;;;; Agenda entry insert
+
+(ert-deftest lark-tasks-test-agenda-insert-entry ()
+  "Insert agenda entry with TODO keyword."
+  (let ((task '((guid . "g2")
+                (summary . "Review PR")
+                (status . "todo")
+                (due_at . "2026-04-12T17:00:00+08:00"))))
+    (with-temp-buffer
+      (lark-tasks-agenda--insert-entry task 'today)
+      (goto-char (point-min))
+      (should (search-forward "TODO" nil t))
+      (should (search-forward "Review PR" nil t))
+      (should (search-forward "<2026-04-12>" nil t))
+      (goto-char (point-min))
+      (should (equal (get-text-property (point) 'lark-task-id) "g2")))))
+
+(ert-deftest lark-tasks-test-agenda-insert-entry-done ()
+  "Insert agenda entry with DONE keyword."
+  (let ((task '((guid . "g3")
+                (summary . "Deploy")
+                (completed_at . "2026-04-10")
+                (due_at . "2026-04-10T08:00:00+08:00"))))
+    (with-temp-buffer
+      (lark-tasks-agenda--insert-entry task 'today)
+      (goto-char (point-min))
+      (should (search-forward "DONE" nil t))
+      (should (search-forward "Deploy" nil t)))))
 
 ;;;; Format date
 
