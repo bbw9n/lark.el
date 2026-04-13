@@ -281,8 +281,7 @@ FOLDER-NAME is used for display."
         (name (or folder-name "My Drive")))
     (lark--run-command
      (list "drive" "files" "list"
-           "--params" (json-encode `((folder_token . ,token)))
-           "--page-all")
+           "--params" (json-encode `((folder_token . ,token))))
      (lambda (data)
        (let ((files (lark-drive--extract-files data)))
          (lark-drive--render files token name))))))
