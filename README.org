@@ -29,7 +29,8 @@ lark-cli --help
 
 #+begin_src emacs-lisp
 (straight-use-package
- '(lark :type git :host github :repo "bbw9n/lark.el"))
+ '(lark :type git :host github :repo "bbw9n/lark.el"
+        :files ("*.el" "core" "domain" "ai")))
 #+end_src
 
 ** From source (manual)
@@ -57,7 +58,8 @@ Add in packages.el from the source of github repo
 
 #+begin_src emacs-lisp
 (package! lark
-  :recipe (:host github :repo "bbw9n/lark.el" :branch "main"))
+  :recipe (:host github :repo "bbw9n/lark.el" :branch "main"
+           :files ("*.el" "core" "domain" "ai")))
 #+end_src
 
 Ensure to setup =(lark-setup-prefix-key)= in your config.el
