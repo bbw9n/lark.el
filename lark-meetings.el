@@ -363,16 +363,15 @@ QUERY is an optional keyword.  START and END default to last week through tomorr
    (t (format "%s" value))))
 
 (defun lark-meetings--insert-download-link (minute-token)
-  "Insert an org-mode style download link for MINUTE-TOKEN.
-Uses the nf-fa-download icon ()."
-  (let ((beg (point)))
-    (insert "  "
-            (propertize (format "[[ download:%s][ Download Recording]]" minute-token)
-                        'face 'link
-                        'mouse-face 'highlight
-                        'lark-minute-token minute-token
-                        'keymap lark-meetings--download-keymap)
-            "\n")))
+  "Insert a clickable download link for MINUTE-TOKEN.
+Uses the nf-fa-download icon ()."
+  (insert "  "
+          (propertize " Download Recording"
+                      'face 'link
+                      'mouse-face 'highlight
+                      'lark-minute-token minute-token
+                      'keymap lark-meetings--download-keymap)
+          "\n"))
 
 (defvar lark-meetings--download-keymap
   (let ((map (make-sparse-keymap)))
