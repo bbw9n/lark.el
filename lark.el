@@ -34,9 +34,15 @@
 
 ;;;; Load path setup for subdirectories
 
-(let ((dir (file-name-directory (or load-file-name (buffer-file-name)))))
-  (dolist (sub '("core" "domain" "ai"))
-    (add-to-list 'load-path (expand-file-name sub dir))))
+(defconst lark--directory
+  (file-name-directory
+   (or load-file-name
+       (bound-and-true-p byte-compile-current-file)
+       buffer-file-name))
+  "Directory where lark.el is installed.")
+
+(dolist (sub '("core" "domain" "ai"))
+  (add-to-list 'load-path (expand-file-name sub lark--directory)))
 
 (require 'lark-core)
 (require 'lark-auth)
