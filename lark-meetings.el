@@ -250,7 +250,8 @@ QUERY is an optional keyword.  START and END default to last week through tomorr
 ;; CLI: vc meeting get --params '{"meeting_id":"X"}'
 
 (defun lark-meetings-open ()
-  "Open the meeting at point — show full display info."
+  "Open the meeting at point — show full display info.
+Automatically queries for recordings and appends them if found."
   (interactive)
   (let ((meeting (lark-meetings--meeting-at-point)))
     (unless meeting (user-error "No meeting at point"))
@@ -274,7 +275,32 @@ QUERY is an optional keyword.  START and END default to last week through tomorr
                     info "\n")))
         (special-mode)
         (goto-char (point-min)))
-      (pop-to-buffer buf))))
+      (pop-to-buffer buf)
+      ;; Async: check for recording and append if found
+      (when (and id (not (string-empty-p id)))
+        (lark--run-command
+         (list "vc" "+recording" "--meeting-ids" id)
+         (lambda (data)
+           (let* ((items (or (lark--get-nested data 'data 'items)
+                             (lark--get-nested data 'data 'recordings)
+                             (alist-get 'data data)))
+                  (items (if (and items (listp items) (not (listp (car items))))
+                             (list items)
+                           items)))
+             (when items
+               (when (buffer-live-p buf)
+                 (with-current-buffer buf
+                   (let ((inhibit-read-only t))
+                     (goto-char (point-max))
+                     (insert "\n" (propertize "Recording" 'face 'bold) "\n"
+                             (make-string 40 ?─) "\n\n")
+                     (let ((idx 0))
+                       (dolist (rec items)
+                         (when (> idx 0)
+                           (insert "\n" (make-string 40 ?─) "\n\n"))
+                         (lark-meetings--insert-recording rec)
+                         (setq idx (1+ idx))))))))))
+         nil :no-error t)))))
 
 ;;;; Meeting notes
 ;; CLI: vc +notes --meeting-ids X

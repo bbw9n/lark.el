@@ -99,11 +99,13 @@ lark-cli already defaults to json and not all subcommands support it."
 (defun lark--strip-debug-lines (string)
   "Remove CLI debug/log lines from STRING.
 Lines matching `[command +subcommand]' prefixes (e.g. `[vc +recording] ...')
-are stripped so the remaining text is valid JSON."
+and `tip:' hint lines from lark-cli are stripped so the remaining text is
+valid JSON."
   (let ((lines (split-string string "\n")))
     (mapconcat #'identity
                (seq-remove (lambda (line)
-                             (string-match-p "^\\[[-a-zA-Z0-9_]+ \\+[-a-zA-Z0-9_]+\\]" line))
+                             (or (string-match-p "^\\[[-a-zA-Z0-9_]+ \\+[-a-zA-Z0-9_]+\\]" line)
+                                 (string-match-p "^tip[ :]" line)))
                            lines)
                "\n")))
 

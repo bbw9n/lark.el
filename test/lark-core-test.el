@@ -103,6 +103,30 @@
   (should (null (lark--parse-json
                  "[vc +recording] querying...\n[vc +recording] done\n"))))
 
+(ert-deftest lark-test-strip-debug-lines-removes-tip ()
+  "Strip tip lines from CLI output."
+  (let ((input "tip: use --verbose for more details\n{\"data\": 1}"))
+    (should (equal (string-trim (lark--strip-debug-lines input))
+                   "{\"data\": 1}"))))
+
+(ert-deftest lark-test-strip-debug-lines-tip-no-colon ()
+  "Strip tip lines without colon separator."
+  (let ((input "tip something helpful\n{\"count\": 5}"))
+    (should (equal (string-trim (lark--strip-debug-lines input))
+                   "{\"count\": 5}"))))
+
+(ert-deftest lark-test-parse-json-with-tip-line ()
+  "parse-json strips tip lines and parses the JSON."
+  (let ((result (lark--parse-json
+                 "tip: login required\n{\"items\": [1, 2]}")))
+    (should result)
+    (should (equal (alist-get 'items result) '(1 2)))))
+
+(ert-deftest lark-test-strip-debug-lines-preserves-title-field ()
+  "JSON containing a key like `title' is not stripped."
+  (let ((input "{\"title\": \"tips for success\"}"))
+    (should (equal (lark--strip-debug-lines input) input))))
+
 ;;;; lark--parse-ndjson tests
 
 (ert-deftest lark-test-parse-ndjson ()
