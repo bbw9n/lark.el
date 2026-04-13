@@ -312,9 +312,9 @@ When called interactively, prompt for a search query."
         (time (lark-im--msg-time msg))
         (content (lark-im--msg-content msg))
         (type (lark-im--msg-type msg))
-        (id (lark-im--msg-id msg)))
-    (insert (propertize sender 'face 'bold
-                        'lark-message-id id)
+        (id (lark-im--msg-id msg))
+        (beg (point)))
+    (insert (propertize sender 'face 'bold)
             "  "
             (propertize time 'face 'font-lock-comment-face)
             "\n")
@@ -324,7 +324,8 @@ When called interactively, prompt for a search query."
                           'face 'font-lock-type-face)
               (if (string-empty-p content) "" (format ": %s" content))
               "\n"))
-    (insert "\n")))
+    (insert "\n")
+    (put-text-property beg (point) 'lark-message-id id)))
 
 ;;;; Send message
 ;; CLI: im +messages-send --chat-id X --text X
