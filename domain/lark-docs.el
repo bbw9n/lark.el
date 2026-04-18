@@ -27,6 +27,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'org-lark)
 (require 'json)
 (require 'transient)
 
@@ -40,6 +41,14 @@
 (defcustom lark-docs-search-page-size "15"
   "Default page size for document search."
   :type 'string
+  :group 'lark-docs)
+
+(defcustom lark-docs-render-mode 'org
+  "How to render fetched document content.
+`org' renders via org-lark (Lark tags, code blocks, tables converted).
+`markdown' displays raw markdown in markdown-mode or special-mode."
+  :type '(choice (const :tag "Org (via org-lark)" org)
+                 (const :tag "Markdown" markdown))
   :group 'lark-docs)
 
 ;;;; Buffer-local variables
@@ -158,6 +167,8 @@ Search results nest fields under result_meta; other responses don't."
 (defvar lark-docs-search-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'lark-docs-open-at-point)
+    (define-key map (kbd "O")   #'lark-docs-open-as-org-at-point)
+    (define-key map (kbd "E")   #'lark-docs-export-org-at-point)
     (define-key map (kbd "g")   #'lark-docs-search-refresh)
     (define-key map (kbd "n")   #'lark-docs--next-result)
     (define-key map (kbd "p")   #'lark-docs--prev-result)
@@ -294,6 +305,23 @@ Each result is displayed as a multi-line section.")
     (unless token (user-error "No document at point"))
     (lark-docs-fetch token)))
 
+(defun lark-docs-open-as-org-at-point ()
+  "Fetch the document at point and display as Org."
+  (interactive)
+  (let ((token (lark-docs--doc-token-at-point)))
+    (unless token (user-error "No document at point"))
+    (lark-docs-fetch-as-org token)))
+
+(defun lark-docs-export-org-at-point ()
+  "Export the document at point to an Org file."
+  (interactive)
+  (let ((token (lark-docs--doc-token-at-point))
+        (title (lark-docs--doc-title-at-point)))
+    (unless token (user-error "No document at point"))
+    (let ((output (read-file-name "Write Org file: " nil nil nil
+                                  (concat (or title "lark-export") ".org"))))
+      (lark-docs-export-org token output))))
+
 (defun lark-docs-copy-token ()
   "Copy the document token at point to the kill ring."
   (interactive)
@@ -326,7 +354,25 @@ Each result is displayed as a multi-line section.")
                       (alist-get 'body doc)
                       (lark--get-nested doc 'document 'content)
                       ""))
-         (buf (get-buffer-create (format "*Lark Doc: %s*" title))))
+         (doc-url (lark-docs--doc-url doc)))
+    ;; Try org rendering if configured and content is available
+    (if (and (not (string-empty-p content))
+             (lark-docs--use-org-p))
+        (condition-case err
+            (let ((org-content (lark-docs--markdown-to-org
+                                content title
+                                (or (alist-get 'doc_id doc) token)
+                                (or doc-url doc-ref))))
+              (lark-docs--display-org-buffer org-content title token))
+          (error
+           (message "Lark: org-lark conversion failed (%s), falling back to markdown"
+                    (error-message-string err))
+           (lark-docs--display-document-markdown title token doc content)))
+      (lark-docs--display-document-markdown title token doc content))))
+
+(defun lark-docs--display-document-markdown (title token doc content)
+  "Display document as markdown.  TITLE, TOKEN, DOC, CONTENT as expected."
+  (let ((buf (get-buffer-create (format "*Lark Doc: %s*" title))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -339,8 +385,8 @@ Each result is displayed as a multi-line section.")
         (if (string-empty-p content)
             (insert (propertize "(no content)" 'face 'font-lock-comment-face) "\n")
           (insert content "\n")))
+      (if (fboundp 'markdown-mode) (markdown-mode) (special-mode))
       (setq lark-docs--doc-token token)
-      (special-mode)
       (goto-char (point-min))
       (setq header-line-format (format " Lark Doc: %s" title)))
     (pop-to-buffer buf)))
@@ -536,6 +582,90 @@ Optional OUTPUT is the local save path."
      (lambda (_data)
        (message "Lark: whiteboard updated")))))
 
+;;;; org-lark integration
+;; org-lark is bundled with lark.el and provides Lark Markdown → Org
+;; conversion (Lark tags, code blocks, tables, media download).
+
+(defun lark-docs--use-org-p ()
+  "Return non-nil if documents should be rendered as Org."
+  (eq lark-docs-render-mode 'org))
+
+(defun lark-docs--sync-org-lark-config ()
+  "Sync lark.el config into org-lark variables."
+  (setq org-lark-cli-program lark-cli-executable))
+
+(defun lark-docs--markdown-to-org (markdown &optional title doc-id source)
+  "Convert Lark MARKDOWN to an Org string using org-lark's pipeline.
+TITLE, DOC-ID, and SOURCE are metadata for the header.
+Media is not downloaded (buffer-only display)."
+  (lark-docs--sync-org-lark-config)
+  (let* ((org-lark-download-media nil)
+         (fetched `((markdown . ,markdown)
+                    (title . ,title)
+                    (doc_id . ,doc-id)))
+         (st (make-org-lark--state
+              :output-file (expand-file-name "lark-doc.org" temporary-file-directory)
+              :asset-dir (expand-file-name "lark-assets/" temporary-file-directory))))
+    (org-lark--pipeline markdown fetched (or source "") st)))
+
+;;;###autoload
+(defun lark-docs-fetch-as-org (doc)
+  "Fetch a Lark document DOC and display it in org-mode."
+  (interactive "sDocument URL or token: ")
+  (when (string-empty-p doc)
+    (user-error "Document URL or token is required"))
+  (message "Lark: fetching document as org...")
+  (lark--run-command
+   (list "docs" "+fetch" "--doc" doc)
+   (lambda (data)
+     (let* ((inner (lark-docs--extract-doc data))
+            (title (or (lark-docs--doc-title inner) doc))
+            (token (or (lark-docs--doc-token inner) doc))
+            (content (or (alist-get 'content inner)
+                         (alist-get 'markdown inner)
+                         (alist-get 'body inner)
+                         (lark--get-nested inner 'document 'content)
+                         ""))
+            (doc-id (or (alist-get 'doc_id inner) token))
+            (url (lark-docs--doc-url inner)))
+       (if (string-empty-p content)
+           (message "Lark: document has no content")
+         (let ((org-content (lark-docs--markdown-to-org
+                             content title doc-id (or url doc))))
+           (lark-docs--display-org-buffer org-content title token)))))))
+
+(defun lark-docs--display-org-buffer (org-content title token)
+  "Display ORG-CONTENT in an org-mode buffer named after TITLE.
+TOKEN is stored as the doc token."
+  (let ((buf (get-buffer-create (format "*Lark Doc: %s*" title))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert org-content))
+      (org-mode)
+      (setq-local lark-docs--doc-token token)
+      (goto-char (point-min))
+      (setq header-line-format (format " Lark Doc (org): %s" title)))
+    (pop-to-buffer buf)))
+
+;;;###autoload
+(defun lark-docs-export-org (doc output-file)
+  "Export Lark document DOC to OUTPUT-FILE as Org.
+Delegates to `org-lark-export' which handles media download."
+  (interactive
+   (list (read-string "Document URL or token: "
+                      (when lark-docs--doc-token lark-docs--doc-token))
+         (read-file-name "Write Org file: " nil nil nil "lark-export.org")))
+  (lark-docs--sync-org-lark-config)
+  (org-lark-export doc output-file))
+
+(defun lark-docs-toggle-render-mode ()
+  "Toggle between org and markdown render modes."
+  (interactive)
+  (setq lark-docs-render-mode
+        (if (eq lark-docs-render-mode 'markdown) 'org 'markdown))
+  (message "Lark docs render mode: %s" lark-docs-render-mode))
+
 ;;;; Transient dispatch
 
 ;;;###autoload (autoload 'lark-docs-dispatch "lark-docs" nil t)
@@ -543,10 +673,14 @@ Optional OUTPUT is the local save path."
   "Lark Docs commands."
   ["Read"
    ("s" "Search"           lark-docs-search)
-   ("f" "Fetch document"   lark-docs-fetch)]
+   ("f" "Fetch document"   lark-docs-fetch)
+   ("O" "Fetch as Org"     lark-docs-fetch-as-org)]
   ["Write"
    ("c" "Create document"  lark-docs-create)
    ("u" "Update document"  lark-docs-update)]
+  ["Org Export"
+   ("E" "Export to Org file" lark-docs-export-org)
+   ("M" "Toggle render mode" lark-docs-toggle-render-mode)]
   ["Media"
    ("d" "Download media"   lark-docs-media-download)
    ("i" "Insert media"     lark-docs-media-insert)

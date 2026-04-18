@@ -122,5 +122,61 @@
       (should (equal (get-text-property (point) 'lark-doc-token) "SrhtwtsCYi"))
       (should (equal (get-text-property (point) 'lark-doc-title) "My Document")))))
 
+;;;; org-lark integration
+
+(ert-deftest lark-docs-test-render-mode-org ()
+  "Org render mode returns t."
+  (let ((lark-docs-render-mode 'org))
+    (should (lark-docs--use-org-p))))
+
+(ert-deftest lark-docs-test-render-mode-markdown ()
+  "Markdown render mode returns nil."
+  (let ((lark-docs-render-mode 'markdown))
+    (should-not (lark-docs--use-org-p))))
+
+(ert-deftest lark-docs-test-toggle-render-mode ()
+  "Toggle cycles between org and markdown."
+  (let ((lark-docs-render-mode 'org))
+    (lark-docs-toggle-render-mode)
+    (should (eq lark-docs-render-mode 'markdown))
+    (lark-docs-toggle-render-mode)
+    (should (eq lark-docs-render-mode 'org))))
+
+(ert-deftest lark-docs-test-display-document-markdown-fallback ()
+  "Display document in markdown mode when content is present."
+  (let ((lark-docs-render-mode 'markdown))
+    (lark-docs--display-document-markdown "Test" "tok123"
+                                          '((doc_type . "docx")) "# Hello")
+    (unwind-protect
+        (let ((buf (get-buffer "*Lark Doc: Test*")))
+          (should buf)
+          (with-current-buffer buf
+            (should (string-match-p "Hello" (buffer-string)))
+            (should (equal lark-docs--doc-token "tok123"))))
+      (when-let ((buf (get-buffer "*Lark Doc: Test*")))
+        (kill-buffer buf)))))
+
+(ert-deftest lark-docs-test-org-buffer-display ()
+  "Display org content in an org-mode buffer."
+  (lark-docs--display-org-buffer "#+title: Test\n\n* Heading\nBody\n" "Test" "tok456")
+  (unwind-protect
+      (let ((buf (get-buffer "*Lark Doc: Test*")))
+        (should buf)
+        (with-current-buffer buf
+          (should (derived-mode-p 'org-mode))
+          (should (string-match-p "Heading" (buffer-string)))
+          (should (equal lark-docs--doc-token "tok456"))))
+    (when-let ((buf (get-buffer "*Lark Doc: Test*")))
+      (kill-buffer buf))))
+
+(ert-deftest lark-docs-test-markdown-to-org ()
+  "Conversion produces org output with metadata."
+  (cl-letf (((symbol-function 'org-lark--pandoc)
+             (lambda (md) md)))
+    (let ((out (lark-docs--markdown-to-org "# Hello" "Test" "d1" "src")))
+      (should (string-match-p "#\\+title: Test" out))
+      (should (string-match-p "#\\+lark_doc_id: d1" out))
+      (should (string-match-p "#\\+lark_source: src" out)))))
+
 (provide 'lark-docs-test)
 ;;; lark-docs-test.el ends here
