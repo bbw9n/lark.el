@@ -31,6 +31,12 @@
 
 (defvar url-http-end-of-headers)
 
+;; Forward declarations for IM module
+(defvar lark-im--chat-id)
+(defvar lark-im--chat-name)
+(defvar lark-im--messages)
+(declare-function lark-im-messages "lark-im")
+
 ;;;; Customization
 
 (defcustom lark-ai-backend 'gptel
@@ -560,7 +566,145 @@ Type your message and press \\[lark-ai-chat-send] to send."
       (goto-char (point-max))
       (insert (propertize "AI: " 'face 'bold) text "\n\n"))))
 
+;;;; Smart reply compose buffer
+
+(defvar lark-ai-reply-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map text-mode-map)
+    (define-key map (kbd "C-c C-c") #'lark-ai-reply-send)
+    (define-key map (kbd "C-c C-k") #'lark-ai-reply-cancel)
+    map)
+  "Keymap for `lark-ai-reply-mode'.")
+
+(define-derived-mode lark-ai-reply-mode text-mode "Lark Reply"
+  "Major mode for editing an AI-drafted reply before sending.
+\\[lark-ai-reply-send] to send, \\[lark-ai-reply-cancel] to cancel."
+  (setq header-line-format
+        " Lark AI Reply — C-c C-c send, C-c C-k cancel"))
+
+(defvar-local lark-ai-reply--message-id nil
+  "Message ID to reply to.")
+
+(defvar-local lark-ai-reply--chat-id nil
+  "Chat ID the reply belongs to.")
+
+(defvar-local lark-ai-reply--chat-name nil
+  "Chat name for refreshing after send.")
+
+(defun lark-ai-reply-send ()
+  "Send the drafted reply in the current compose buffer."
+  (interactive)
+  (let ((text (string-trim (buffer-string)))
+        (msg-id lark-ai-reply--message-id)
+        (chat-id lark-ai-reply--chat-id)
+        (chat-name lark-ai-reply--chat-name))
+    (when (string-empty-p text)
+      (user-error "Empty reply"))
+    (unless msg-id
+      (user-error "No message ID — cannot send reply"))
+    (quit-window t)
+    (message "Lark AI: sending reply...")
+    (lark--run-command
+     (list "im" "+messages-reply" "--message-id" msg-id "--text" text)
+     (lambda (_data)
+       (message "Lark AI: reply sent")
+       ;; Refresh the chat buffer if it exists
+       (when chat-id
+         (dolist (buf (buffer-list))
+           (with-current-buffer buf
+             (when (and (derived-mode-p 'lark-im-chat-mode)
+                        (boundp 'lark-im--chat-id)
+                        (equal lark-im--chat-id chat-id))
+               (lark-im-messages chat-id chat-name)))))))))
+
+(defun lark-ai-reply-cancel ()
+  "Cancel the reply draft."
+  (interactive)
+  (quit-window t)
+  (message "Lark AI: reply cancelled."))
+
+(defun lark-ai--open-compose-buffer (draft message-id chat-id chat-name)
+  "Open a compose buffer pre-filled with DRAFT.
+MESSAGE-ID is the message being replied to.
+CHAT-ID and CHAT-NAME identify the chat for refresh after send."
+  (let ((buf (get-buffer-create "*Lark AI Reply*")))
+    (with-current-buffer buf
+      (lark-ai-reply-mode)
+      (erase-buffer)
+      (insert draft)
+      (setq lark-ai-reply--message-id message-id
+            lark-ai-reply--chat-id chat-id
+            lark-ai-reply--chat-name chat-name)
+      (goto-char (point-min)))
+    (pop-to-buffer buf)))
+
+;;;; Thread context extraction for smart reply
+
+(defun lark-ai--collect-thread-context ()
+  "Collect thread context from the current chat buffer.
+Returns a plist (:chat-id ID :chat-name NAME :message-id ID
+:thread-text TEXT) or nil if not in a chat buffer."
+  (unless (derived-mode-p 'lark-im-chat-mode)
+    (user-error "Not in a Lark chat buffer"))
+  (let ((chat-id (and (boundp 'lark-im--chat-id) lark-im--chat-id))
+        (chat-name (and (boundp 'lark-im--chat-name) lark-im--chat-name))
+        (messages (and (boundp 'lark-im--messages) lark-im--messages))
+        (msg-id (get-text-property (point) 'lark-message-id)))
+    (unless chat-id
+      (user-error "No chat ID in current buffer"))
+    (unless msg-id
+      (user-error "No message at point — place cursor on a message"))
+    ;; Build thread text from recent messages for LLM context
+    (let ((thread-text
+           (mapconcat
+            (lambda (msg)
+              (let ((sender (or (alist-get 'sender_name msg)
+                                (lark--get-nested msg 'sender 'name)
+                                "unknown"))
+                    (content (or (alist-get 'text msg)
+                                 (alist-get 'content msg)
+                                 (let ((body (alist-get 'body msg)))
+                                   (when body
+                                     (if (stringp body) body
+                                       (or (alist-get 'text body)
+                                           (alist-get 'content body)))))
+                                 ""))
+                    (id (or (alist-get 'message_id msg)
+                            (alist-get 'id msg))))
+                (format "%s%s: %s"
+                        (if (equal id msg-id) ">>> " "")
+                        sender content)))
+            (seq-take (reverse (reverse messages)) 20)
+            "\n")))
+      (list :chat-id chat-id
+            :chat-name chat-name
+            :message-id msg-id
+            :thread-text thread-text))))
+
 ;;;; Built-in workflow commands
+
+;;;###autoload
+(defun lark-ai-workflow-reply ()
+  "Draft an AI-powered reply to the message at point.
+Reads thread context from the current chat buffer, asks the LLM
+to draft a reply, and opens a compose buffer for editing before send."
+  (interactive)
+  (let* ((ctx (lark-ai--collect-thread-context))
+         (chat-id (plist-get ctx :chat-id))
+         (chat-name (plist-get ctx :chat-name))
+         (msg-id (plist-get ctx :message-id))
+         (thread-text (plist-get ctx :thread-text))
+         (skill-names (lark-ai-skills-select "reply message chat"))
+         (system-prompt (lark-ai-skills-build-system-prompt skill-names))
+         (user-msg (format "Draft a concise, natural reply to the message marked with >>> in this chat thread. Output ONLY the reply text, nothing else — no JSON, no plan, no explanation.\n\nChat: %s\n\n%s"
+                           (or chat-name chat-id)
+                           thread-text)))
+    (message "Lark AI: drafting reply...")
+    (lark-ai--call-llm
+     system-prompt user-msg
+     (lambda (draft)
+       (lark-ai--open-compose-buffer
+        (string-trim draft) msg-id chat-id chat-name)))))
 
 ;;;###autoload
 (defun lark-ai-workflow-standup ()

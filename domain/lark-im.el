@@ -282,6 +282,7 @@ Each chat is displayed as a multi-line section.")
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g")   #'lark-im-chat-refresh)
     (define-key map (kbd "r")   #'lark-im-reply)
+    (define-key map (kbd "R")   #'lark-ai-workflow-reply)
     (define-key map (kbd "s")   #'lark-im-send)
     (define-key map (kbd "e")   #'lark-im-react)
     (define-key map (kbd "q")   #'quit-window)
@@ -621,6 +622,8 @@ Dispatches to appropriate handler based on event type."
 
 ;;;; Transient dispatch
 
+(autoload 'lark-ai-workflow-reply "lark-ai" nil t)
+
 ;;;###autoload (autoload 'lark-im-dispatch "lark-im" nil t)
 (transient-define-prefix lark-im-dispatch ()
   "Lark Messenger commands."
@@ -635,6 +638,7 @@ Dispatches to appropriate handler based on event type."
    ("U" "Unsubscribe"   lark-im-unsubscribe)]
   ["In Chat"
    ("r" "Reply"         lark-im-reply)
+   ("R" "AI smart reply" lark-ai-workflow-reply)
    ("e" "React"         lark-im-react)
    ("g" "Refresh"       lark-im-chat-refresh)])
 

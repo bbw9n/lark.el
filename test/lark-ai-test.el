@@ -15,6 +15,7 @@
 (require 'lark-ai-skills)
 (require 'lark-ai-context)
 (require 'lark-ai)
+(require 'lark-im)
 
 ;;;; Skill frontmatter parsing
 
@@ -143,6 +144,85 @@
     (let ((ctx (lark-ai-context)))
       (should (null (plist-get ctx :domain)))
       (should (equal (plist-get ctx :buffer-type) "other")))))
+
+;;;; Smart reply — thread context extraction
+
+(ert-deftest lark-ai-test-collect-thread-context-not-chat ()
+  "Errors when not in a chat buffer."
+  (with-temp-buffer
+    (should-error (lark-ai--collect-thread-context) :type 'user-error)))
+
+(ert-deftest lark-ai-test-collect-thread-context-no-message ()
+  "Errors when no message at point."
+  (with-temp-buffer
+    (lark-im-chat-mode)
+    (setq-local lark-im--chat-id "oc_test123")
+    (setq-local lark-im--chat-name "Test Chat")
+    (setq-local lark-im--messages nil)
+    (let ((inhibit-read-only t))
+      (insert "no message here"))
+    (should-error (lark-ai--collect-thread-context) :type 'user-error)))
+
+(ert-deftest lark-ai-test-collect-thread-context-success ()
+  "Extracts thread context from a chat buffer."
+  (with-temp-buffer
+    (lark-im-chat-mode)
+    (setq-local lark-im--chat-id "oc_test123")
+    (setq-local lark-im--chat-name "Test Chat")
+    (setq-local lark-im--messages
+                '(((message_id . "msg_1") (sender_name . "Alice") (text . "Hello"))
+                  ((message_id . "msg_2") (sender_name . "Bob") (text . "Hi there"))))
+    ;; Insert text with message-id property
+    (let ((inhibit-read-only t)
+          (beg (point)))
+      (insert "Bob: Hi there")
+      (put-text-property beg (point) 'lark-message-id "msg_2"))
+    (goto-char (point-min))
+    (let ((ctx (lark-ai--collect-thread-context)))
+      (should (equal (plist-get ctx :chat-id) "oc_test123"))
+      (should (equal (plist-get ctx :chat-name) "Test Chat"))
+      (should (equal (plist-get ctx :message-id) "msg_2"))
+      ;; Thread text should contain both messages
+      (should (string-match-p "Alice" (plist-get ctx :thread-text)))
+      (should (string-match-p "Bob" (plist-get ctx :thread-text)))
+      ;; Target message should be marked with >>>
+      (should (string-match-p ">>>" (plist-get ctx :thread-text))))))
+
+;;;; Smart reply — compose buffer
+
+(ert-deftest lark-ai-test-compose-buffer-setup ()
+  "Compose buffer is set up with draft, message-id, and chat-id."
+  (lark-ai--open-compose-buffer "Draft reply" "msg_42" "oc_123" "Dev Chat")
+  (unwind-protect
+      (let ((buf (get-buffer "*Lark AI Reply*")))
+        (should buf)
+        (with-current-buffer buf
+          (should (derived-mode-p 'lark-ai-reply-mode))
+          (should (equal (string-trim (buffer-string)) "Draft reply"))
+          (should (equal lark-ai-reply--message-id "msg_42"))
+          (should (equal lark-ai-reply--chat-id "oc_123"))
+          (should (equal lark-ai-reply--chat-name "Dev Chat"))))
+    (when-let ((buf (get-buffer "*Lark AI Reply*")))
+      (kill-buffer buf))))
+
+(ert-deftest lark-ai-test-reply-cancel ()
+  "Cancel closes the compose buffer."
+  (lark-ai--open-compose-buffer "Draft" "msg_1" "oc_1" "Chat")
+  (unwind-protect
+      (with-current-buffer "*Lark AI Reply*"
+        (lark-ai-reply-cancel)
+        (should (null (get-buffer "*Lark AI Reply*"))))
+    (when-let ((buf (get-buffer "*Lark AI Reply*")))
+      (kill-buffer buf))))
+
+(ert-deftest lark-ai-test-reply-send-empty-errors ()
+  "Sending an empty reply signals an error."
+  (lark-ai--open-compose-buffer "" "msg_1" "oc_1" "Chat")
+  (unwind-protect
+      (with-current-buffer "*Lark AI Reply*"
+        (should-error (lark-ai-reply-send) :type 'user-error))
+    (when-let ((buf (get-buffer "*Lark AI Reply*")))
+      (kill-buffer buf))))
 
 ;;;; System prompt assembly
 

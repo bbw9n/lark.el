@@ -33,6 +33,7 @@
 (autoload 'lark-ai-workflow-standup "lark-ai" nil t)
 (autoload 'lark-ai-workflow-meeting-summary "lark-ai" nil t)
 (autoload 'lark-ai-workflow-schedule "lark-ai" nil t)
+(autoload 'lark-ai-workflow-reply "lark-ai" nil t)
 
 ;;;; Top-level dispatch
 
@@ -59,7 +60,8 @@
   ["AI Workflows"
    ("1" "Standup report"    lark-ai-workflow-standup)
    ("2" "Meeting summary"   lark-ai-workflow-meeting-summary)
-   ("3" "Schedule meeting"  lark-ai-workflow-schedule)]
+   ("3" "Schedule meeting"  lark-ai-workflow-schedule)
+   ("4" "Smart reply"       lark-ai-workflow-reply)]
   ["Auth & Config"
    ("a" "Auth status"  lark-auth-status)
    ("L" "Login"        lark-auth-login)
