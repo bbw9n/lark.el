@@ -7,6 +7,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 
 (let ((root (expand-file-name ".." (file-name-directory (or load-file-name (buffer-file-name))))))
   (dolist (sub '("." "core" "domain" "ai"))
@@ -169,14 +170,23 @@
     (when-let ((buf (get-buffer "*Lark Doc: Test*")))
       (kill-buffer buf))))
 
-(ert-deftest lark-docs-test-markdown-to-org ()
-  "Conversion produces org output with metadata."
-  (cl-letf (((symbol-function 'org-lark--pandoc)
-             (lambda (md) md)))
-    (let ((out (lark-docs--markdown-to-org "# Hello" "Test" "d1" "src")))
-      (should (string-match-p "#\\+title: Test" out))
-      (should (string-match-p "#\\+lark_doc_id: d1" out))
-      (should (string-match-p "#\\+lark_source: src" out)))))
+(ert-deftest lark-docs-test-fetch-routes-to-org ()
+  "lark-docs-fetch delegates to fetch-as-org when render mode is org."
+  (let ((lark-docs-render-mode 'org)
+        (called-with nil))
+    (cl-letf (((symbol-function 'lark-docs-fetch-as-org)
+               (lambda (doc) (setq called-with doc))))
+      (lark-docs-fetch "my-doc-token")
+      (should (equal called-with "my-doc-token")))))
+
+(ert-deftest lark-docs-test-fetch-routes-to-markdown ()
+  "lark-docs-fetch uses lark--run-command when render mode is markdown."
+  (let ((lark-docs-render-mode 'markdown)
+        (ran-command nil))
+    (cl-letf (((symbol-function 'lark--run-command)
+               (lambda (args &rest _) (setq ran-command args) nil)))
+      (lark-docs-fetch "my-doc-token")
+      (should (equal ran-command '("docs" "+fetch" "--doc" "my-doc-token"))))))
 
 (provide 'lark-docs-test)
 ;;; lark-docs-test.el ends here

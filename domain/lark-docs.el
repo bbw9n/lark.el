@@ -335,40 +335,35 @@ Each result is displayed as a multi-line section.")
 
 ;;;###autoload
 (defun lark-docs-fetch (doc)
-  "Fetch and display a Lark document by DOC (URL or token)."
+  "Fetch and display a Lark document by DOC (URL or token).
+When `lark-docs-render-mode' is `org', the content is converted to
+Org format via org-lark (Lark tags, code blocks, tables handled).
+Otherwise raw markdown is shown."
   (interactive "sDocument URL or token: ")
   (when (string-empty-p doc)
     (user-error "Document URL or token is required"))
-  (message "Lark: fetching document...")
-  (lark--run-command
-   (list "docs" "+fetch" "--doc" doc)
-   (lambda (data) (lark-docs--display-document data doc))))
+  (if (lark-docs--use-org-p)
+      (lark-docs-fetch-as-org doc)
+    (message "Lark: fetching document...")
+    (lark--run-command
+     (list "docs" "+fetch" "--doc" doc)
+     (lambda (data) (lark-docs--display-document-markdown-from-data data doc)))))
 
-(defun lark-docs--display-document (data doc-ref)
-  "Display fetched document DATA.  DOC-REF is the URL or token used."
+(defun lark-docs--extract-content (doc)
+  "Extract the markdown content string from a parsed DOC alist."
+  (or (alist-get 'content doc)
+      (alist-get 'markdown doc)
+      (alist-get 'body doc)
+      (lark--get-nested doc 'document 'content)
+      ""))
+
+(defun lark-docs--display-document-markdown-from-data (data doc-ref)
+  "Display fetched document DATA as markdown.  DOC-REF is the URL or token."
   (let* ((doc (lark-docs--extract-doc data))
          (title (or (lark-docs--doc-title doc) doc-ref))
          (token (or (lark-docs--doc-token doc) doc-ref))
-         (content (or (alist-get 'content doc)
-                      (alist-get 'markdown doc)
-                      (alist-get 'body doc)
-                      (lark--get-nested doc 'document 'content)
-                      ""))
-         (doc-url (lark-docs--doc-url doc)))
-    ;; Try org rendering if configured and content is available
-    (if (and (not (string-empty-p content))
-             (lark-docs--use-org-p))
-        (condition-case err
-            (let ((org-content (lark-docs--markdown-to-org
-                                content title
-                                (or (alist-get 'doc_id doc) token)
-                                (or doc-url doc-ref))))
-              (lark-docs--display-org-buffer org-content title token))
-          (error
-           (message "Lark: org-lark conversion failed (%s), falling back to markdown"
-                    (error-message-string err))
-           (lark-docs--display-document-markdown title token doc content)))
-      (lark-docs--display-document-markdown title token doc content))))
+         (content (lark-docs--extract-content doc)))
+    (lark-docs--display-document-markdown title token doc content)))
 
 (defun lark-docs--display-document-markdown (title token doc content)
   "Display document as markdown.  TITLE, TOKEN, DOC, CONTENT as expected."
@@ -594,45 +589,28 @@ Optional OUTPUT is the local save path."
   "Sync lark.el config into org-lark variables."
   (setq org-lark-cli-program lark-cli-executable))
 
-(defun lark-docs--markdown-to-org (markdown &optional title doc-id source)
-  "Convert Lark MARKDOWN to an Org string using org-lark's pipeline.
-TITLE, DOC-ID, and SOURCE are metadata for the header.
-Media is not downloaded (buffer-only display)."
-  (lark-docs--sync-org-lark-config)
-  (let* ((org-lark-download-media nil)
-         (fetched `((markdown . ,markdown)
-                    (title . ,title)
-                    (doc_id . ,doc-id)))
-         (st (make-org-lark--state
-              :output-file (expand-file-name "lark-doc.org" temporary-file-directory)
-              :asset-dir (expand-file-name "lark-assets/" temporary-file-directory))))
-    (org-lark--pipeline markdown fetched (or source "") st)))
-
 ;;;###autoload
 (defun lark-docs-fetch-as-org (doc)
-  "Fetch a Lark document DOC and display it in org-mode."
+  "Fetch a Lark document DOC and display it in org-mode.
+Uses `org-lark-fetch' to get the markdown, then converts via
+`org-lark--pipeline' and displays in an org-mode buffer."
   (interactive "sDocument URL or token: ")
   (when (string-empty-p doc)
     (user-error "Document URL or token is required"))
+  (lark-docs--sync-org-lark-config)
   (message "Lark: fetching document as org...")
-  (lark--run-command
-   (list "docs" "+fetch" "--doc" doc)
-   (lambda (data)
-     (let* ((inner (lark-docs--extract-doc data))
-            (title (or (lark-docs--doc-title inner) doc))
-            (token (or (lark-docs--doc-token inner) doc))
-            (content (or (alist-get 'content inner)
-                         (alist-get 'markdown inner)
-                         (alist-get 'body inner)
-                         (lark--get-nested inner 'document 'content)
-                         ""))
-            (doc-id (or (alist-get 'doc_id inner) token))
-            (url (lark-docs--doc-url inner)))
-       (if (string-empty-p content)
-           (message "Lark: document has no content")
-         (let ((org-content (lark-docs--markdown-to-org
-                             content title doc-id (or url doc))))
-           (lark-docs--display-org-buffer org-content title token)))))))
+  (let* ((fetched (org-lark-fetch doc))
+         (markdown (alist-get 'markdown fetched))
+         (title (or (alist-get 'title fetched) doc))
+         (doc-id (or (alist-get 'doc_id fetched) doc)))
+    (if (or (null markdown) (string-empty-p markdown))
+        (message "Lark: document has no content")
+      (let* ((org-lark-download-media nil)
+             (st (make-org-lark--state
+                  :output-file (expand-file-name "lark-doc.org" temporary-file-directory)
+                  :asset-dir (expand-file-name "lark-assets/" temporary-file-directory)))
+             (org-content (org-lark--pipeline markdown fetched doc st)))
+        (lark-docs--display-org-buffer org-content title doc-id)))))
 
 (defun lark-docs--display-org-buffer (org-content title token)
   "Display ORG-CONTENT in an org-mode buffer named after TITLE.
