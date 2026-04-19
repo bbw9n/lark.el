@@ -410,7 +410,7 @@ CALLBACK receives the synthesis text."
   "Ask the Lark AI assistant to execute a natural-language PROMPT.
 Selects relevant lark-cli skills, sends to LLM, reviews the plan,
 executes it, and presents results."
-  (interactive "Lark AI: ")
+  (interactive "sLark AI: ")
   (message "Lark AI: thinking...")
   (let* ((context (lark-ai-context-format))
          (skill-names (lark-ai-skills-select prompt))
