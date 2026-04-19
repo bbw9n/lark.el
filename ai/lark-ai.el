@@ -318,11 +318,11 @@ Call CALLBACK with the response text."
   (unless (require 'gptel nil t)
     (user-error "gptel is not installed; install it or set `lark-ai-backend' to `http'"))
   (gptel-request user-message
-    :system system-prompt
-    :callback (lambda (response info)
-                (if (stringp response)
-                    (funcall callback response)
-                  (message "Lark AI: LLM error: %S" info)))))
+                 :system system-prompt
+                 :callback (lambda (response info)
+                             (if (stringp response)
+                                 (funcall callback response)
+                               (message "Lark AI: LLM error: %S" info)))))
 
 ;; HTTP backend (OpenAI-compatible)
 (defun lark-ai--call-http (system-prompt user-message callback)
@@ -410,7 +410,7 @@ CALLBACK receives the synthesis text."
   "Ask the Lark AI assistant to execute a natural-language PROMPT.
 Selects relevant lark-cli skills, sends to LLM, reviews the plan,
 executes it, and presents results."
-  (interactive "sLark AI: ")
+  (interactive "Lark AI: ")
   (message "Lark AI: thinking...")
   (let* ((context (lark-ai-context-format))
          (skill-names (lark-ai-skills-select prompt))
@@ -502,7 +502,7 @@ Type your message and press \\[lark-ai-chat-send] to send."
   "Send the current input in the chat buffer to the LLM."
   (interactive)
   (let* ((input (string-trim (buffer-substring-no-properties
-                               (lark-ai-chat--input-start) (point-max))))
+                              (lark-ai-chat--input-start) (point-max))))
          (skill-names (lark-ai-skills-select input))
          (system-prompt (lark-ai-skills-build-system-prompt skill-names)))
     (when (string-empty-p input)
