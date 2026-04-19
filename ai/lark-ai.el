@@ -128,27 +128,27 @@ Returns a list of step plists, or nil on parse failure."
       (setq json-str (match-string 1 json-str)))
     (json-parse-string json-str :object-type 'alist :array-type 'list)))
 
-;;;; Plan / progress buffer
+;;;; Unified AI buffer
 ;;
-;; The *Lark AI* buffer is persistent and serves three phases:
+;; Everything happens in a single *Lark AI* buffer:
 ;;   1. Skill loading — shows which skills were selected
 ;;   2. Plan review  — shows the plan, user can confirm/edit/cancel
 ;;   3. Execution    — shows live progress as steps complete
+;;   4. Output       — final result appended below the plan
 
 (defvar lark-ai-plan-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'lark-ai-plan-execute)
     (define-key map (kbd "q")   #'lark-ai-plan-cancel)
     (define-key map (kbd "x")   #'lark-ai-plan-remove-step)
-    (define-key map (kbd "g")   #'lark-ai-plan-show)
     map)
   "Keymap for `lark-ai-plan-mode'.")
 
 (define-derived-mode lark-ai-plan-mode special-mode "Lark AI"
-  "Major mode for the Lark AI progress buffer.")
+  "Major mode for the unified Lark AI buffer.")
 
 (defvar-local lark-ai-plan--steps nil
-  "The plan steps in the current plan review buffer.")
+  "The plan steps in the current buffer.")
 
 (defvar-local lark-ai-plan--callback nil
   "Callback to invoke when the plan is confirmed.")
@@ -157,13 +157,20 @@ Returns a list of step plists, or nil on parse failure."
   "Current phase: `loading', `review', `executing', or `done'.")
 
 (defvar-local lark-ai-plan--step-status nil
-  "Alist of (index . status) where status is `pending', `running', `done', `skipped'.")
+  "Alist of (index . status).
+Status is `pending', `running', `done', or `skipped'.")
+
+(defvar-local lark-ai-plan--prompt nil
+  "The user prompt for the current session.")
+
+(defvar-local lark-ai-plan--skills nil
+  "Skill names loaded for the current session.")
 
 (defconst lark-ai--buf-name "*Lark AI*"
-  "Name of the persistent AI progress buffer.")
+  "Name of the unified AI buffer.")
 
 (defun lark-ai--get-buffer ()
-  "Get or create the persistent AI progress buffer."
+  "Get or create the AI buffer."
   (let ((buf (get-buffer-create lark-ai--buf-name)))
     (with-current-buffer buf
       (unless (derived-mode-p 'lark-ai-plan-mode)
@@ -171,7 +178,7 @@ Returns a list of step plists, or nil on parse failure."
     buf))
 
 (defun lark-ai--progress-log (fmt &rest args)
-  "Append a timestamped line to the progress buffer."
+  "Append a timestamped line to the log section of the AI buffer."
   (let ((buf (lark-ai--get-buffer))
         (line (format "[%s] %s\n"
                       (format-time-string "%H:%M:%S")
@@ -182,55 +189,47 @@ Returns a list of step plists, or nil on parse failure."
           (goto-char (point-max))
           (insert (propertize line 'face 'font-lock-comment-face)))))))
 
-;;; Phase 1: Skill loading display
+;;; Rendering — single function rebuilds the whole buffer
 
-(defun lark-ai--show-loading (prompt skill-names)
-  "Show skill loading status for PROMPT with selected SKILL-NAMES."
+(defun lark-ai--render ()
+  "Render the current state of the AI buffer."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
-      (setq lark-ai-plan--phase 'loading)
       (let ((inhibit-read-only t))
         (erase-buffer)
+        ;; Header
         (insert (propertize "Lark AI\n" 'face 'bold)
                 (make-string 50 ?─) "\n\n")
-        (insert (propertize "Prompt: " 'face 'font-lock-keyword-face)
-                prompt "\n\n")
-        (insert (propertize "Skills loaded:\n" 'face 'font-lock-keyword-face))
-        (dolist (name skill-names)
-          (insert "  " (propertize "●" 'face 'success) " " name "\n"))
-        (insert "\n" (propertize "Waiting for LLM response..." 'face 'font-lock-comment-face) "\n"))
-      (goto-char (point-min)))
-    (display-buffer buf)))
+        ;; Prompt
+        (when lark-ai-plan--prompt
+          (insert (propertize "Prompt: " 'face 'font-lock-keyword-face)
+                  lark-ai-plan--prompt "\n\n"))
+        ;; Skills
+        (when lark-ai-plan--skills
+          (insert (propertize "Skills: " 'face 'font-lock-keyword-face)
+                  (propertize (string-join lark-ai-plan--skills ", ")
+                              'face 'font-lock-comment-face)
+                  "\n\n"))
+        ;; Phase-specific content
+        (pcase lark-ai-plan--phase
+          ('loading
+           (insert (propertize "Waiting for LLM response...\n"
+                               'face 'font-lock-comment-face)))
+          ((or 'review 'executing 'done)
+           (lark-ai--render-steps)
+           (insert "\n")))
+        (goto-char (point-min))))))
 
-;;; Phase 2: Plan review
-
-(defun lark-ai--display-plan (steps callback)
-  "Display STEPS in the progress buffer for review.
-CALLBACK is called with confirmed steps."
-  (let ((buf (lark-ai--get-buffer)))
-    (with-current-buffer buf
-      (setq lark-ai-plan--steps steps
-            lark-ai-plan--callback callback
-            lark-ai-plan--phase 'review
-            lark-ai-plan--step-status
-            (mapcar (lambda (s) (cons (plist-get s :index) 'pending)) steps))
-      (lark-ai--render-plan))
-    (pop-to-buffer buf)))
-
-(defun lark-ai--render-plan ()
-  "Render the plan in the current buffer (must be the progress buffer)."
-  (let ((inhibit-read-only t)
-        (steps lark-ai-plan--steps)
+(defun lark-ai--render-steps ()
+  "Insert the steps section into the current buffer (called within `lark-ai--render')."
+  (let ((steps lark-ai-plan--steps)
         (phase lark-ai-plan--phase)
         (statuses lark-ai-plan--step-status))
-    (erase-buffer)
-    (insert (propertize "Lark AI\n" 'face 'bold)
-            (make-string 50 ?─) "\n\n")
-    ;; Phase indicator
+    ;; Phase label
     (insert (propertize
              (pcase phase
-               ('review   "Plan Review — confirm to execute")
-               ('executing "Executing...")
+               ('review    "Plan — confirm to execute")
+               ('executing "Executing")
                ('done      "Done")
                (_          ""))
              'face 'font-lock-keyword-face)
@@ -244,47 +243,85 @@ CALLBACK is called with confirmed steps."
              (synthesize (plist-get step :synthesize))
              (pg (plist-get step :parallel-group))
              (status (alist-get idx statuses))
-             (status-str
+             (indicator
               (pcase status
-                ('done    (propertize " ✓" 'face 'success))
-                ('running (propertize " ⟳" 'face 'warning))
-                ('skipped (propertize " ✗" 'face 'font-lock-comment-face))
-                (_        ""))))
-        (insert (propertize (format "  [%d]" idx) 'face 'font-lock-constant-face)
-                status-str " "
+                ('done    (propertize "✓" 'face 'success))
+                ('running (propertize "⟳" 'face 'warning))
+                ('skipped (propertize "✗" 'face 'font-lock-comment-face))
+                (_        (propertize "○" 'face 'font-lock-comment-face)))))
+        (insert "  " indicator " "
                 (propertize desc 'face
                             (pcase status
                               ('done 'font-lock-comment-face)
                               (_ (if side-effect 'warning 'default))))
                 (if (and side-effect (not (eq status 'done)))
-                    (propertize "  ⚠ writes" 'face 'error)
+                    (propertize " ⚠ writes" 'face 'error)
                   "")
                 (if synthesize
-                    (propertize "  (AI synthesis)" 'face 'font-lock-comment-face)
+                    (propertize " (synthesis)" 'face 'font-lock-comment-face)
                   "")
-                (if pg (format "  [group %d]" pg) "")
+                (if pg (format " [group %d]" pg) "")
                 "\n")
         (when cmd
-          (insert "      "
-                  (propertize (format "lark-cli %s" (string-join cmd " "))
+          (insert "    "
+                  (propertize (string-join cmd " ")
                               'face 'font-lock-string-face)
-                  "\n"))
-        (insert "\n")))
-    ;; Footer
-    (insert (make-string 50 ?─) "\n")
+                  "\n"))))
+    ;; Footer actions
+    (insert "\n")
     (pcase phase
       ('review
-       (insert "  " (propertize "RET" 'face 'bold) " Execute  "
+       (insert (propertize "RET" 'face 'bold) " Execute  "
                (propertize "x" 'face 'bold) " Remove step  "
                (propertize "q" 'face 'bold) " Cancel\n"))
       ('executing
-       (insert "  " (propertize "Execution in progress..." 'face 'font-lock-comment-face) "\n"))
-      ('done
-       (insert "  " (propertize "All steps completed." 'face 'success) "\n"))))
-  (goto-char (point-min)))
+       (insert (propertize "Running..." 'face 'font-lock-comment-face) "\n")))))
+
+;;; Phase transitions
+
+(defun lark-ai--show-loading (prompt skill-names)
+  "Initialize the AI buffer for a new session with PROMPT and SKILL-NAMES."
+  (let ((buf (lark-ai--get-buffer)))
+    (with-current-buffer buf
+      (setq lark-ai-plan--prompt prompt
+            lark-ai-plan--skills skill-names
+            lark-ai-plan--steps nil
+            lark-ai-plan--callback nil
+            lark-ai-plan--phase 'loading
+            lark-ai-plan--step-status nil)
+      (lark-ai--render))
+    (display-buffer buf)))
+
+(defun lark-ai--display-plan (steps callback)
+  "Show STEPS for review.  CALLBACK is called with confirmed steps."
+  (let ((buf (lark-ai--get-buffer)))
+    (with-current-buffer buf
+      (setq lark-ai-plan--steps steps
+            lark-ai-plan--callback callback
+            lark-ai-plan--phase 'review
+            lark-ai-plan--step-status
+            (mapcar (lambda (s) (cons (plist-get s :index) 'pending)) steps))
+      (lark-ai--render))
+    (pop-to-buffer buf)))
+
+(defun lark-ai--update-step-status (index status)
+  "Update step INDEX to STATUS and re-render."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (setf (alist-get index lark-ai-plan--step-status) status)
+      (lark-ai--render))))
+
+(defun lark-ai--mark-all-done ()
+  "Mark execution as done."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (setq lark-ai-plan--phase 'done)
+      (lark-ai--render))))
+
+;;; Plan actions
 
 (defun lark-ai-plan-execute ()
-  "Execute the plan in the current plan buffer."
+  "Execute the plan."
   (interactive)
   (unless (eq lark-ai-plan--phase 'review)
     (user-error "No plan to execute"))
@@ -292,15 +329,17 @@ CALLBACK is called with confirmed steps."
         (callback lark-ai-plan--callback))
     (setq lark-ai-plan--phase 'executing
           lark-ai-plan--callback nil)
-    (lark-ai--render-plan)
+    (lark-ai--render)
     (when callback
       (funcall callback steps))))
 
 (defun lark-ai-plan-cancel ()
   "Cancel the plan."
   (interactive)
-  (setq lark-ai-plan--phase 'done)
-  (lark-ai--progress-log "Plan cancelled by user."))
+  (setq lark-ai-plan--phase 'done
+        lark-ai-plan--callback nil)
+  (lark-ai--render)
+  (lark-ai--progress-log "Cancelled."))
 
 (defun lark-ai-plan-remove-step ()
   "Remove the step closest to point."
@@ -308,8 +347,7 @@ CALLBACK is called with confirmed steps."
   (unless (eq lark-ai-plan--phase 'review)
     (user-error "Can only remove steps during review"))
   (let* ((line (line-number-at-pos))
-         ;; Rough: each step is ~3 lines, header is 5 lines
-         (idx (max 0 (/ (- line 6) 3))))
+         (idx (max 0 (/ (- line 8) 2))))
     (when (and lark-ai-plan--steps (< idx (length lark-ai-plan--steps)))
       (setq lark-ai-plan--steps
             (append (seq-take lark-ai-plan--steps idx)
@@ -317,12 +355,7 @@ CALLBACK is called with confirmed steps."
       (setq lark-ai-plan--step-status
             (mapcar (lambda (s) (cons (plist-get s :index) 'pending))
                     lark-ai-plan--steps))
-      (lark-ai--render-plan))))
-
-(defun lark-ai-plan-show ()
-  "Show the current AI progress buffer."
-  (interactive)
-  (pop-to-buffer (lark-ai--get-buffer)))
+      (lark-ai--render))))
 
 ;;;; Plan execution
 
@@ -396,20 +429,6 @@ Results is an alist of (index . parsed-json-or-string)."
               (when (zerop pending)
                 (lark-ai--execute-next rest callback))))))))))
 
-(defun lark-ai--update-step-status (index status)
-  "Update step INDEX to STATUS in the progress buffer and re-render."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (setf (alist-get index lark-ai-plan--step-status) status)
-      (lark-ai--render-plan))))
-
-(defun lark-ai--mark-all-done ()
-  "Mark execution as done in the progress buffer."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (setq lark-ai-plan--phase 'done)
-      (lark-ai--render-plan))))
-
 (defun lark-ai--run-step (index cmd-args done-fn)
   "Run lark-cli with CMD-ARGS, store result at INDEX, then call DONE-FN."
   (lark-ai--update-step-status index 'running)
@@ -440,16 +459,20 @@ Call CALLBACK with the response text."
 (defvar gptel-model)
 (defvar gptel-backend)
 
+(defvar gptel-log-level)
+
 (defun lark-ai--call-gptel (system-prompt user-message callback)
   "Call the LLM via gptel."
   (unless (require 'gptel nil t)
     (user-error "gptel is not installed; install it or set `lark-ai-backend' to `http'"))
-  (gptel-request user-message
-                 :system system-prompt
-                 :callback (lambda (response info)
-                             (if (stringp response)
-                                 (funcall callback response)
-                               (message "Lark AI: LLM error: %S" info)))))
+  (let ((gptel-log-level nil)
+        (inhibit-message t))
+    (gptel-request user-message
+                   :system system-prompt
+                   :callback (lambda (response info)
+                               (if (stringp response)
+                                   (funcall callback response)
+                                 (lark-ai--progress-log "LLM error: %S" info))))))
 
 ;; HTTP backend (OpenAI-compatible)
 (defun lark-ai--call-http (system-prompt user-message callback)
@@ -474,7 +497,7 @@ Call CALLBACK with the response text."
      url
      (lambda (status)
        (if (plist-get status :error)
-           (message "Lark AI HTTP error: %S" (plist-get status :error))
+           (lark-ai--progress-log "HTTP error: %S" (plist-get status :error))
          (goto-char url-http-end-of-headers)
          (let* ((json-response (json-parse-buffer :object-type 'alist))
                 (content (lark--get-nested json-response
@@ -516,19 +539,23 @@ CALLBACK receives the synthesis text."
 
 ;;;; Output rendering
 
-(defun lark-ai--present (content &optional buffer-name)
-  "Render CONTENT string in a dedicated output buffer."
-  (let ((buf (get-buffer-create (or buffer-name "*Lark AI Output*"))))
+(defun lark-ai--present (content &optional _buffer-name)
+  "Append CONTENT as the output section of the *Lark AI* buffer."
+  (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert content "\n"))
-      (goto-char (point-min))
-      (if (fboundp 'markdown-mode)
-          (markdown-mode)
-        (special-mode))
-      (setq header-line-format " Lark AI Output"))
-    (pop-to-buffer buf)))
+        (goto-char (point-max))
+        (insert "\n" (make-string 50 ?─) "\n"
+                (propertize "Output\n" 'face 'bold)
+                (make-string 50 ?─) "\n\n"
+                content "\n")))
+    (pop-to-buffer buf)
+    ;; Scroll to the output section
+    (with-current-buffer buf
+      (goto-char (point-max))
+      (re-search-backward "^Output$" nil t)
+      (forward-line 2)
+      (recenter 0))))
 
 ;;;; Entry points
 
