@@ -558,6 +558,75 @@ Call CALLBACK with the response text."
            (funcall callback (or content "")))))
      nil t t)))
 
+;;; Streaming LLM calls
+
+(defun lark-ai--call-llm-stream (system-prompt user-message callback)
+  "Send to LLM with streaming, calling CALLBACK with full text when done.
+Chunks are streamed into the *Lark AI* output section in real-time."
+  (pcase lark-ai-backend
+    ('gptel
+     (lark-ai--call-gptel-stream system-prompt user-message callback))
+    (_
+     ;; Fallback: non-streaming
+     (lark-ai--call-llm system-prompt user-message callback))))
+
+(defun lark-ai--call-gptel-stream (system-prompt user-message callback)
+  "Call LLM via gptel with streaming into the output section."
+  (unless (require 'gptel nil t)
+    (user-error "gptel is not installed"))
+  ;; Prepare the output section before streaming starts
+  (let ((buf (lark-ai--get-buffer)))
+    (with-current-buffer buf
+      (setq lark-ai-plan--output "")
+      (lark-ai--render)))
+  (let ((gptel-log-level nil)
+        (inhibit-message t)
+        (accumulated ""))
+    (gptel-request user-message
+                   :system system-prompt
+                   :stream t
+                   :callback
+                   (lambda (response _info)
+                     (cond
+                      ;; String chunk: append to output
+                      ((stringp response)
+                       (setq accumulated
+                             (concat accumulated response))
+                       (lark-ai--stream-append response))
+                      ;; t = stream finished
+                      ((eq response t)
+                       (lark-ai--stream-finalize accumulated)
+                       (funcall callback accumulated))
+                      ;; reasoning chunk: ignore
+                      ((and (consp response)
+                            (eq (car response) 'reasoning))
+                       nil)
+                      ;; nil or error
+                      (t
+                       (lark-ai--progress-log
+                        "LLM stream error")))))))
+
+(defun lark-ai--stream-append (chunk)
+  "Append CHUNK to the output section of the *Lark AI* buffer."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (point-max))
+          (insert chunk))))))
+
+(defun lark-ai--stream-finalize (full-text)
+  "Finalize streaming: store FULL-TEXT, re-render with highlights."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (setq lark-ai-plan--output full-text)
+      (lark-ai--render)
+      ;; Scroll to output
+      (goto-char (point-max))
+      (when (re-search-backward "^Output$" nil t)
+        (forward-line 2)
+        (recenter 0)))))
+
 ;;;; Synthesis (second LLM pass)
 
 (defun lark-ai--synthesize (results plan system-prompt callback)
@@ -590,6 +659,30 @@ CALLBACK receives the synthesis text."
                            results-text instruction)))
     (lark-ai--call-llm system-prompt user-msg callback)))
 
+(defun lark-ai--synthesize-stream (results plan system-prompt)
+  "Like `lark-ai--synthesize' but streams the output."
+  (let* ((synth-step (seq-find (lambda (s) (plist-get s :synthesize)) plan))
+         (instruction (or (and synth-step
+                               (plist-get synth-step :synthesis-instruction))
+                          "Summarize the results clearly and concisely."))
+         (results-text
+          (mapconcat
+           (lambda (pair)
+             (let ((idx (car pair))
+                   (data (cdr pair)))
+               (unless (eq data :synthesize)
+                 (let ((step (seq-find (lambda (s) (= (plist-get s :index) idx)) plan)))
+                   (format "### Step %d: %s\n```json\n%s\n```\n"
+                           idx
+                           (or (and step (plist-get step :description)) "")
+                           (if data (json-encode data) "(no data)"))))))
+           (sort (copy-sequence results)
+                 (lambda (a b) (< (car a) (car b))))
+           "\n"))
+         (user-msg (format "Here are the execution results:\n\n%s\n\nInstruction: %s\n\nRespond with plain text (not JSON). Use markdown formatting."
+                           results-text instruction)))
+    (lark-ai--call-llm-stream system-prompt user-msg #'ignore)))
+
 ;;;; Output rendering
 
 (defun lark-ai--present (content &optional _buffer-name)
@@ -600,6 +693,11 @@ CALLBACK receives the synthesis text."
       (lark-ai--render))
     (pop-to-buffer buf)
     ;; Scroll to the output section
+    (lark-ai--scroll-to-output)))
+
+(defun lark-ai--scroll-to-output ()
+  "Scroll the AI buffer to the output section."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
     (with-current-buffer buf
       (goto-char (point-max))
       (when (re-search-backward "^Output$" nil t)
@@ -633,14 +731,13 @@ executes it, and presents results."
            (setq lark-ai--last-plan plan)
            (if (seq-every-p (lambda (s) (plist-get s :synthesize)) plan)
                (progn
-                 (lark-ai--progress-log "Pure synthesis — no CLI steps needed")
-                 (lark-ai--call-llm
+                 (lark-ai--progress-log "Pure synthesis — streaming")
+                 (lark-ai--mark-all-done)
+                 (lark-ai--call-llm-stream
                   system-prompt
                   (format "%s\n\n%s\nRespond with plain text using markdown."
                           prompt context)
-                  (lambda (text)
-                    (lark-ai--mark-all-done)
-                    (lark-ai--present text))))
+                  #'ignore))
              (lark-ai--display-plan
               plan
               (lambda (confirmed-steps)
@@ -652,11 +749,9 @@ executes it, and presents results."
                                  confirmed-steps)
                        (progn
                          (lark-ai--progress-log "Synthesizing results...")
-                         (lark-ai--synthesize
-                          results confirmed-steps system-prompt
-                          (lambda (text)
-                            (lark-ai--mark-all-done)
-                            (lark-ai--present text))))
+                         (lark-ai--mark-all-done)
+                         (lark-ai--synthesize-stream
+                          results confirmed-steps system-prompt))
                      (lark-ai--mark-all-done)
                      (lark-ai--present
                       (mapconcat
