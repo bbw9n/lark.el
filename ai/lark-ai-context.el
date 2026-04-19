@@ -61,6 +61,8 @@ Returns a plist with:
     (lark-ai-context--mail))
    ((derived-mode-p 'lark-docs-search-mode)
     (lark-ai-context--docs))
+   ((string-match-p "\\`\\*Lark Doc: " (buffer-name))
+    (lark-ai-context--docs))
    ((derived-mode-p 'lark-drive-mode)
     (lark-ai-context--drive))
    ((derived-mode-p 'lark-meetings-mode)
@@ -204,6 +206,17 @@ Returns a plist with:
                 (plist-get ctx :buffer-type)
                 (plist-get ctx :summary))
       "")))
+
+;;;###autoload
+(defun lark-ai-context-debug ()
+  "Display the AI context extracted from the current buffer."
+  (interactive)
+  (let ((ctx (lark-ai-context)))
+    (message "AI context: domain=%s type=%s item=%S\n  summary: %s"
+             (plist-get ctx :domain)
+             (plist-get ctx :buffer-type)
+             (plist-get ctx :item)
+             (plist-get ctx :summary))))
 
 (provide 'lark-ai-context)
 ;;; lark-ai-context.el ends here

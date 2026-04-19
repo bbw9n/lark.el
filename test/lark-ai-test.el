@@ -145,6 +145,31 @@
       (should (null (plist-get ctx :domain)))
       (should (equal (plist-get ctx :buffer-type) "other")))))
 
+(ert-deftest lark-ai-test-context-doc-detail-org ()
+  "Doc detail buffer in org-mode is recognized by buffer name."
+  (let ((buf (get-buffer-create "*Lark Doc: Test Doc*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (org-mode)
+          (setq-local lark-docs--doc-token "tok_abc")
+          (let ((ctx (lark-ai-context)))
+            (should (equal (plist-get ctx :domain) "docs"))
+            (should (equal (plist-get ctx :buffer-type) "doc-detail"))
+            (should (equal (plist-get (plist-get ctx :item) :doc-token) "tok_abc"))))
+      (kill-buffer buf))))
+
+(ert-deftest lark-ai-test-context-doc-detail-markdown ()
+  "Doc detail buffer in special-mode is recognized by buffer name."
+  (let ((buf (get-buffer-create "*Lark Doc: Another*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (special-mode)
+          (setq-local lark-docs--doc-token "tok_xyz")
+          (let ((ctx (lark-ai-context)))
+            (should (equal (plist-get ctx :domain) "docs"))
+            (should (equal (plist-get ctx :buffer-type) "doc-detail"))))
+      (kill-buffer buf))))
+
 ;;;; Smart reply — thread context extraction
 
 (ert-deftest lark-ai-test-collect-thread-context-not-chat ()
