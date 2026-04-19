@@ -410,6 +410,116 @@ Status is `pending', `running', `done', or `skipped'.")
                     lark-ai-plan--steps))
       (lark-ai--render))))
 
+;;;; $step-N interpolation
+
+(defun lark-ai--interpolate-cmd (cmd-args results)
+  "Replace $step-N references in CMD-ARGS using RESULTS.
+RESULTS is an alist of (index . parsed-json).
+Supports:
+  $step-0           — full result as JSON string
+  $step-0.field     — top-level field
+  $step-0.a.b       — nested field access
+  $step-0.items[0].id — array index + field
+  $step-0.items[*].id — collect from all elements"
+  (mapcar #'lark-ai--interpolate-arg
+          (mapcar (lambda (arg) (cons arg results)) cmd-args)))
+
+(defun lark-ai--interpolate-arg (arg-and-results)
+  "Interpolate a single ARG-AND-RESULTS (ARG . RESULTS) pair."
+  (let ((arg (car arg-and-results))
+        (results (cdr arg-and-results)))
+    (if (not (string-match-p "\\$step-[0-9]" arg))
+        arg
+      ;; Process all $step-N references in this arg
+      (let ((pos 0)
+            (out ""))
+        (while (string-match
+                "\\$step-\\([0-9]+\\)\\(\\(?:[.[][^[:space:]]*\\)?\\)"
+                arg pos)
+          (let* ((match-beg (match-beginning 0))
+                 (match-end (match-end 0))
+                 (idx (string-to-number (match-string 1 arg)))
+                 (path (match-string 2 arg))
+                 (data (alist-get idx results))
+                 (replacement
+                  (if (null data)
+                      (substring arg match-beg match-end)
+                    (if (or (null path) (string-empty-p path))
+                        (if (stringp data) data
+                          (json-encode data))
+                      (let ((val (lark-ai--resolve-path
+                                  data (substring path 1))))
+                        (cond
+                         ((null val) "")
+                         ((stringp val) val)
+                         ((numberp val) (number-to-string val))
+                         (t (json-encode val))))))))
+            (setq out (concat out
+                              (substring arg pos match-beg)
+                              replacement)
+                  pos match-end)))
+        (concat out (substring arg pos))))))
+
+(defun lark-ai--resolve-path (data path)
+  "Resolve a dot/bracket PATH against DATA.
+PATH examples: \"field\", \"a.b\", \"items[0].id\",
+\"items[*].id\"."
+  (let ((segments (lark-ai--parse-path path))
+        (current data))
+    (catch 'done
+      (dolist (seg segments)
+        (when (null current) (throw 'done nil))
+        (pcase seg
+          (`(index ,n)
+           (if (and (listp current) (<= 0 n) (< n (length current)))
+               (setq current (nth n current))
+             (throw 'done nil)))
+          (`(wildcard ,field)
+           ;; Collect field from every element in the list
+           (throw 'done
+                  (if (listp current)
+                      (mapconcat
+                       (lambda (item)
+                         (let ((v (lark-ai--resolve-path item field)))
+                           (cond
+                            ((null v) "")
+                            ((stringp v) v)
+                            ((numberp v) (number-to-string v))
+                            (t (json-encode v)))))
+                       current ",")
+                    nil)))
+          (`(field ,name)
+           (setq current
+                 (if (listp current)
+                     (alist-get (intern name) current)
+                   nil)))))
+      current)))
+
+(defun lark-ai--parse-path (path)
+  "Parse PATH into a list of segments.
+Returns list of (field NAME), (index N), or (wildcard REST)."
+  (let ((segments nil)
+        (remaining path))
+    (while (and remaining (not (string-empty-p remaining)))
+      (cond
+       ;; [*].rest — wildcard collect
+       ((string-match "^\\[\\*\\]\\.?" remaining)
+        (let ((rest (substring remaining (match-end 0))))
+          (push (list 'wildcard (if (string-empty-p rest) nil rest))
+                segments)
+          (setq remaining nil)))
+       ;; [N] — array index
+       ((string-match "^\\[\\([0-9]+\\)\\]\\.?" remaining)
+        (push (list 'index (string-to-number (match-string 1 remaining)))
+              segments)
+        (setq remaining (substring remaining (match-end 0))))
+       ;; field name (up to next . or [)
+       ((string-match "^\\([^.[]+\\)\\.?" remaining)
+        (push (list 'field (match-string 1 remaining)) segments)
+        (setq remaining (substring remaining (match-end 0))))
+       (t (setq remaining nil))))
+    (nreverse segments)))
+
 ;;;; Plan execution
 
 (defun lark-ai--execute-plan (steps callback)
@@ -483,18 +593,20 @@ Results is an alist of (index . parsed-json-or-string)."
                 (lark-ai--execute-next rest callback))))))))))
 
 (defun lark-ai--run-step (index cmd-args done-fn)
-  "Run lark-cli with CMD-ARGS, store result at INDEX, then call DONE-FN."
-  (lark-ai--update-step-status index 'running)
-  (lark-ai--progress-log "Step %d: lark-cli %s" index (string-join cmd-args " "))
-  (lark--run-command
-   cmd-args
-   (lambda (result)
-     (push (cons index result) lark-ai--step-results)
-     (lark-ai--update-step-status index 'done)
-     (lark-ai--progress-log "Step %d: done" index)
-     (funcall done-fn))
-   nil
-   :no-error t))
+  "Run lark-cli with CMD-ARGS, store result at INDEX, then call DONE-FN.
+$step-N references in CMD-ARGS are resolved from prior results."
+  (let ((resolved (lark-ai--interpolate-cmd cmd-args lark-ai--step-results)))
+    (lark-ai--update-step-status index 'running)
+    (lark-ai--progress-log "Step %d: lark-cli %s" index (string-join resolved " "))
+    (lark--run-command
+     resolved
+     (lambda (result)
+       (push (cons index result) lark-ai--step-results)
+       (lark-ai--update-step-status index 'done)
+       (lark-ai--progress-log "Step %d: done" index)
+       (funcall done-fn))
+     nil
+     :no-error t)))
 
 ;;;; LLM communication
 

@@ -123,6 +123,64 @@
       (should (= (length plan) 1))
       (should (plist-get (car plan) :side-effect)))))
 
+;;;; $step-N interpolation
+
+(ert-deftest lark-ai-test-interpolate-no-refs ()
+  "Args without $step-N are passed through unchanged."
+  (let ((result (lark-ai--interpolate-cmd '("calendar" "+agenda") nil)))
+    (should (equal result '("calendar" "+agenda")))))
+
+(ert-deftest lark-ai-test-interpolate-full-result ()
+  "$step-0 is replaced with the full JSON result."
+  (let* ((results '((0 . ((items . [])))))
+         (result (lark-ai--interpolate-cmd '("--data" "$step-0") results)))
+    (should (stringp (cadr result)))
+    (should (string-match-p "items" (cadr result)))))
+
+(ert-deftest lark-ai-test-interpolate-field ()
+  "$step-0.name resolves a top-level field."
+  (let* ((results '((0 . ((name . "Alice") (id . "u1")))))
+         (result (lark-ai--interpolate-cmd '("--name" "$step-0.name") results)))
+    (should (equal (cadr result) "Alice"))))
+
+(ert-deftest lark-ai-test-interpolate-nested-field ()
+  "$step-0.data.user.id resolves nested fields."
+  (let* ((results '((0 . ((data . ((user . ((id . "u42")))))))))
+         (result (lark-ai--interpolate-cmd '("--id" "$step-0.data.user.id") results)))
+    (should (equal (cadr result) "u42"))))
+
+(ert-deftest lark-ai-test-interpolate-array-index ()
+  "$step-0.items[0].id resolves array index."
+  (let* ((results '((0 . ((items . (((id . "a1")) ((id . "a2"))))))))
+         (result (lark-ai--interpolate-cmd '("--id" "$step-0.items[0].id") results)))
+    (should (equal (cadr result) "a1"))))
+
+(ert-deftest lark-ai-test-interpolate-wildcard ()
+  "$step-0.items[*].id collects from all elements."
+  (let* ((results '((0 . ((items . (((id . "a1")) ((id . "a2")) ((id . "a3"))))))))
+         (result (lark-ai--interpolate-cmd '("--ids" "$step-0.items[*].id") results)))
+    (should (equal (cadr result) "a1,a2,a3"))))
+
+(ert-deftest lark-ai-test-interpolate-missing-step ()
+  "$step-9 with no result keeps the placeholder."
+  (let* ((results '((0 . ((x . 1)))))
+         (result (lark-ai--interpolate-cmd '("--x" "$step-9.y") results)))
+    (should (equal (cadr result) "$step-9.y"))))
+
+(ert-deftest lark-ai-test-interpolate-multiple-refs ()
+  "Multiple $step refs in different args."
+  (let* ((results '((0 . ((id . "u1"))) (1 . ((id . "u2")))))
+         (result (lark-ai--interpolate-cmd
+                  '("--a" "$step-0.id" "--b" "$step-1.id") results)))
+    (should (equal (nth 1 result) "u1"))
+    (should (equal (nth 3 result) "u2"))))
+
+(ert-deftest lark-ai-test-interpolate-numeric-value ()
+  "Numeric values are converted to strings."
+  (let* ((results '((0 . ((count . 42)))))
+         (result (lark-ai--interpolate-cmd '("--n" "$step-0.count") results)))
+    (should (equal (cadr result) "42"))))
+
 ;;;; JSON extraction
 
 (ert-deftest lark-ai-test-extract-json-plain ()

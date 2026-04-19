@@ -208,7 +208,13 @@ Rules:
 - Only use lark-cli commands documented in the skills below.
 - Mark any create/update/delete/send operation as side_effect: true.
 - Use parallel_group to indicate steps that can run concurrently.
-- For multi-step workflows, later steps can reference earlier results — the executor handles this.
+- Later steps can reference earlier results using $step-N placeholders:
+  - $step-0 — the full JSON result of step 0 (as a string)
+  - $step-0.field — a top-level field from step 0's result
+  - $step-0.field.subfield — nested field access
+  - $step-0.items[0].id — array index then field
+  - $step-0.items[*].id — collect field from all array elements, joined by comma
+  Example: {\"command\": [\"calendar\", \"+create\", \"--attendee-ids\", \"$step-0.items[*].open_id\"]}
 - If the user's request is a simple question that needs no CLI calls, return a plan with a single synthesize step.
 - If document content is already provided in the context, do NOT add a fetch step — use the provided content directly in your synthesis.
 "
