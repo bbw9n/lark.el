@@ -114,14 +114,14 @@ Returns a list of step plists, or nil on parse failure."
                    :synthesis-instruction (alist-get 'synthesis_instruction step)))
            plan-data)))
     (error
-     (lark--log "Plan parse error: %s" (error-message-string err))
+     (lark-ai--progress-log "Plan parse error: %s" (error-message-string err))
      nil)))
 
 (defun lark-ai--extract-json (text)
   "Extract a JSON object from TEXT which may contain markdown fences."
   (let ((json-str text))
-    ;; Strip markdown code fences
-    (when (string-match "```\\(?:json\\)?\n?\\(\\(?:.\\|\n\\)*?\\)\n?```" json-str)
+    ;; Strip markdown code fences (handle no newline after lang tag)
+    (when (string-match "```[a-z]*[\n ]?\\(\\(?:.\\|\n\\)*?\\)[\n ]?```" json-str)
       (setq json-str (match-string 1 json-str)))
     ;; Find the outermost { ... }
     (when (string-match "\\({\\(?:.\\|\n\\)*}\\)" json-str)
@@ -469,6 +469,9 @@ Call CALLBACK with the response text."
         (inhibit-message t))
     (gptel-request user-message
                    :system system-prompt
+                   :stream nil
+                   :in-place nil
+                   :transforms nil
                    :callback (lambda (response info)
                                (if (stringp response)
                                    (funcall callback response)

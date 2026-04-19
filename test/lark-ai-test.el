@@ -136,6 +136,11 @@
   (let ((result (lark-ai--extract-json "Here is the plan:\n```json\n{\"plan\": [{\"command\": [\"test\"], \"description\": \"t\"}]}\n```\n")))
     (should (= (length (alist-get 'plan result)) 1))))
 
+(ert-deftest lark-ai-test-extract-json-fenced-no-newline ()
+  "Extract JSON when no newline between lang tag and content."
+  (let ((result (lark-ai--extract-json "```json{\"plan\": [{\"command\": null, \"description\": \"test\", \"synthesize\": true}]}```")))
+    (should (= (length (alist-get 'plan result)) 1))))
+
 ;;;; Context extraction
 
 (ert-deftest lark-ai-test-context-non-lark-buffer ()
