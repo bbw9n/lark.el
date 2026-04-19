@@ -151,12 +151,18 @@ Returns a plist with:
   "Extract context from a docs buffer."
   (let ((doc-token (and (boundp 'lark-docs--doc-token) lark-docs--doc-token))
         (results (and (boundp 'lark-docs--search-results) lark-docs--search-results)))
-    (list :domain "docs"
-          :buffer-type (if doc-token "doc-detail" "search-results")
-          :item (when doc-token (list :doc-token doc-token))
-          :summary (if doc-token
-                       (format "Viewing document %s" doc-token)
-                     (format "Doc search results: %d items" (length results))))))
+    (if doc-token
+        ;; Doc detail buffer — include content so the LLM doesn't re-fetch
+        (let ((content (buffer-substring-no-properties (point-min) (point-max))))
+          (list :domain "docs"
+                :buffer-type "doc-detail"
+                :item (list :doc-token doc-token)
+                :content content
+                :summary (format "Viewing document %s" doc-token)))
+      (list :domain "docs"
+            :buffer-type "search-results"
+            :item nil
+            :summary (format "Doc search results: %d items" (length results))))))
 
 (defun lark-ai-context--drive ()
   "Extract context from a drive buffer."
@@ -201,10 +207,16 @@ Returns a plist with:
   "Format current buffer context as a string for the LLM prompt."
   (let ((ctx (lark-ai-context)))
     (if (plist-get ctx :domain)
-        (format "Current context: %s (%s)\n%s"
-                (plist-get ctx :domain)
-                (plist-get ctx :buffer-type)
-                (plist-get ctx :summary))
+        (let ((base (format "Current context: %s (%s)\n%s"
+                            (plist-get ctx :domain)
+                            (plist-get ctx :buffer-type)
+                            (plist-get ctx :summary)))
+              (content (plist-get ctx :content)))
+          (if content
+              (format "%s\n\nThe document content is already available (no need to fetch it):\n\n%s"
+                      base
+                      (truncate-string-to-width content 8000 nil nil "…"))
+            base))
       "")))
 
 ;;;###autoload

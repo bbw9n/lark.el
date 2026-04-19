@@ -210,6 +210,7 @@ Rules:
 - Use parallel_group to indicate steps that can run concurrently.
 - For multi-step workflows, later steps can reference earlier results — the executor handles this.
 - If the user's request is a simple question that needs no CLI calls, return a plan with a single synthesize step.
+- If document content is already provided in the context, do NOT add a fetch step — use the provided content directly in your synthesis.
 "
           (format-time-string "%Y-%m-%dT%H:%M:%S%z")
           (format-time-string "%Z")
