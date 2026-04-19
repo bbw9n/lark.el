@@ -221,7 +221,7 @@ Status is `pending', `running', `done', or `skipped'.")
         (goto-char (point-min))))))
 
 (defun lark-ai--render-steps ()
-  "Insert the steps section into the current buffer (called within `lark-ai--render')."
+  "Insert the steps section into the current buffer."
   (let ((steps lark-ai-plan--steps)
         (phase lark-ai-plan--phase)
         (statuses lark-ai-plan--step-status))
