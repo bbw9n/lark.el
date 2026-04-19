@@ -72,8 +72,17 @@
   (let ((out (org-lark-test--convert
               "<lark-table rows=\"2\" cols=\"2\" header-row=\"true\">\n<lark-tr><lark-td>A</lark-td><lark-td>B</lark-td></lark-tr>\n<lark-tr><lark-td>x</lark-td><lark-td>y</lark-td></lark-tr>\n</lark-table>")))
     (should (string-match-p "| A | B |" out))
-    (should (string-match-p "|-" out))
+    (should (string-match-p "|---\\+---|" out))
     (should (string-match-p "| x | y |" out))))
+
+(ert-deftest org-lark-test-table-column-alignment ()
+  "Table columns should be padded to equal width."
+  (let ((out (org-lark-test--convert
+              "<lark-table header-row=\"true\">\n<lark-tr><lark-td>Name</lark-td><lark-td>X</lark-td></lark-tr>\n<lark-tr><lark-td>ab</lark-td><lark-td>cd</lark-td></lark-tr>\n</lark-table>")))
+    ;; "ab" should be padded to match "Name" width (4)
+    (should (string-match-p "| ab   | cd |" out))
+    ;; Separator should span full column widths
+    (should (string-match-p "|------\\+----" out))))
 
 (ert-deftest org-lark-test-self-closing-links ()
   (org-lark-test--with-pandoc-stub
@@ -211,6 +220,41 @@
     (should (string-match-p "\\+begin_lark_column" out))
     (should (string-match-p "\\*left\\*" out))
     (should (string-match-p "\\+end_lark_grid" out))))
+
+(ert-deftest org-lark-test-quote-stripped-in-table ()
+  "Quote/callout wrappers inside table cells are stripped."
+  (let ((out (org-lark-test--convert
+              "<lark-table header-row=\"true\">\n<lark-tr><lark-td>H</lark-td></lark-tr>\n<lark-tr><lark-td><quote-container>quoted text</quote-container></lark-td></lark-tr>\n</lark-table>")))
+    (should (string-match-p "quoted text" out))
+    (should-not (string-match-p "begin_quote" out))))
+
+(ert-deftest org-lark-test-grid-in-table-to-list ()
+  "A <lark-table> containing <grid> becomes a list, not an Org table."
+  (let ((out (org-lark-test--convert
+              (concat "<lark-table header-row=\"true\">"
+                      "<lark-tr><lark-td>Name</lark-td><lark-td>Layout</lark-td></lark-tr>"
+                      "<lark-tr><lark-td>Item</lark-td>"
+                      "<lark-td><grid><column>left</column><column>right</column></grid></lark-td>"
+                      "</lark-tr></lark-table>"))))
+    (should (string-match-p "^- " out))
+    (should-not (string-match-p "^| " out))
+    (should (string-match-p "left" out))
+    (should (string-match-p "right" out))))
+
+(ert-deftest org-lark-test-table-in-grid-to-list ()
+  "A <grid> containing <lark-table> becomes a list, not grid blocks."
+  (let ((out (org-lark-test--convert
+              (concat "<grid>"
+                      "<column><lark-table><lark-tr>"
+                      "<lark-td>A</lark-td><lark-td>B</lark-td>"
+                      "</lark-tr></lark-table></column>"
+                      "<column>text</column>"
+                      "</grid>"))))
+    (should (string-match-p "Column 1" out))
+    (should (string-match-p "Column 2" out))
+    (should-not (string-match-p "begin_lark_grid" out))
+    (should (string-match-p "A" out))
+    (should (string-match-p "B" out))))
 
 (ert-deftest org-lark-test-single-pandoc-call ()
   "Ensure Pandoc is invoked exactly once, not once per block."

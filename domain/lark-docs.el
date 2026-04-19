@@ -43,6 +43,15 @@
   :type 'string
   :group 'lark-docs)
 
+(defcustom lark-docs-cache-directory nil
+  "Directory for caching downloaded media assets.
+When nil, uses a subdirectory under `temporary-file-directory'.
+Set this to a persistent path (e.g., \"~/.cache/lark-docs/\") to
+avoid re-downloading images across sessions."
+  :type '(choice (const :tag "Temporary directory" nil)
+                 directory)
+  :group 'lark-docs)
+
 (defcustom lark-docs-render-mode 'org
   "How to render fetched document content.
 `org' renders via org-lark (Lark tags, code blocks, tables converted).
@@ -585,6 +594,10 @@ Optional OUTPUT is the local save path."
   "Return non-nil if documents should be rendered as Org."
   (eq lark-docs-render-mode 'org))
 
+(defun lark-docs--safe-dirname (s)
+  "Sanitize S for use as a directory name."
+  (replace-regexp-in-string "[^A-Za-z0-9._-]" "_" (or s "doc")))
+
 (defun lark-docs--sync-org-lark-config ()
   "Sync lark.el config into org-lark variables."
   (setq org-lark-cli-program lark-cli-executable))
@@ -605,25 +618,34 @@ Uses `org-lark-fetch' to get the markdown, then converts via
          (doc-id (or (alist-get 'doc_id fetched) doc)))
     (if (or (null markdown) (string-empty-p markdown))
         (message "Lark: document has no content")
-      (let* ((org-lark-download-media nil)
+      (let* ((cache-dir (expand-file-name
+                         (concat "lark-docs/" (lark-docs--safe-dirname doc-id))
+                         (or lark-docs-cache-directory
+                             (expand-file-name "lark.el/" temporary-file-directory))))
              (st (make-org-lark--state
-                  :output-file (expand-file-name "lark-doc.org" temporary-file-directory)
-                  :asset-dir (expand-file-name "lark-assets/" temporary-file-directory)))
+                  :output-file (expand-file-name "doc.org" cache-dir)
+                  :asset-dir (expand-file-name "assets/" cache-dir)))
              (org-content (org-lark--pipeline markdown fetched doc st)))
-        (lark-docs--display-org-buffer org-content title doc-id)))))
+        (lark-docs--display-org-buffer org-content title doc-id cache-dir)))))
 
-(defun lark-docs--display-org-buffer (org-content title token)
+(defun lark-docs--display-org-buffer (org-content title token &optional base-dir)
   "Display ORG-CONTENT in an org-mode buffer named after TITLE.
-TOKEN is stored as the doc token."
+TOKEN is stored as the doc token.  BASE-DIR, when non-nil, is set
+as `default-directory' so relative file links (images) resolve."
   (let ((buf (get-buffer-create (format "*Lark Doc: %s*" title))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert org-content))
       (org-mode)
+      (when base-dir
+        (setq-local default-directory (file-name-as-directory base-dir)))
       (setq-local lark-docs--doc-token token)
       (goto-char (point-min))
-      (setq header-line-format (format " Lark Doc (org): %s" title)))
+      (setq header-line-format (format " Lark Doc (org): %s" title))
+      ;; Display inline images if any were downloaded
+      (when (fboundp 'org-display-inline-images)
+        (org-display-inline-images)))
     (pop-to-buffer buf)))
 
 ;;;###autoload
