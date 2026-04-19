@@ -15,9 +15,8 @@
 ;; lark-ai-skills.el).  Buffer context (from lark-ai-context.el)
 ;; makes actions aware of what the user is looking at.
 ;;
-;; Three entry points:
+;; Two entry points:
 ;;   lark-ai-ask   — natural-language prompt (minibuffer)
-;;   lark-ai-chat  — conversational AI buffer
 ;;   lark-ai-act   — context-aware action at point
 ;;
 ;; LLM backends: gptel (preferred), or raw HTTP fallback.
@@ -71,9 +70,6 @@ If nil, reads from environment variable LARK_AI_API_KEY."
   :group 'lark-ai)
 
 ;;;; Internal state
-
-(defvar lark-ai--conversation nil
-  "Current conversation history as list of (:role ROLE :content TEXT).")
 
 (defvar lark-ai--last-plan nil
   "Last executed plan for debugging.")
@@ -685,99 +681,6 @@ Reads the current buffer context and prompts for an action."
     (let ((action (read-string
                    (format "Lark AI action (%s): " summary))))
       (lark-ai-ask (format "%s\n\nContext: %s" action summary)))))
-
-;;;###autoload
-(defun lark-ai-chat ()
-  "Open a conversational Lark AI chat buffer."
-  (interactive)
-  (let ((buf (get-buffer-create "*Lark AI Chat*")))
-    (with-current-buffer buf
-      (unless (derived-mode-p 'lark-ai-chat-mode)
-        (lark-ai-chat-mode)))
-    (pop-to-buffer buf)))
-
-;;;; Chat mode
-
-(defvar lark-ai-chat-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'lark-ai-chat-send)
-    map)
-  "Keymap for `lark-ai-chat-mode'.")
-
-(define-derived-mode lark-ai-chat-mode text-mode "Lark AI Chat"
-  "Major mode for conversational Lark AI interaction.
-Type your message and press \\[lark-ai-chat-send] to send."
-  (setq-local lark-ai--conversation nil)
-  (setq header-line-format
-        " Lark AI Chat — C-c C-c to send"))
-
-(defun lark-ai-chat-send ()
-  "Send the current input in the chat buffer to the LLM."
-  (interactive)
-  (let* ((input (string-trim (buffer-substring-no-properties
-                              (lark-ai-chat--input-start) (point-max))))
-         (skill-names (lark-ai-skills-select input))
-         (system-prompt (lark-ai-skills-build-system-prompt skill-names)))
-    (when (string-empty-p input)
-      (user-error "Empty message"))
-    ;; Mark input as sent
-    (goto-char (point-max))
-    (insert "\n\n")
-    (progn
-      (insert (propertize (format "You: %s\n" input) 'face 'bold)
-              (make-string 40 ?─) "\n")
-      (insert (propertize "AI: " 'face 'bold) "thinking...\n")
-      ;; Add to conversation
-      (push (list :role "user" :content input) lark-ai--conversation)
-      ;; Send
-      (let ((response-start (- (point) (length "thinking...\n"))))
-        (lark-ai--call-llm
-         system-prompt input
-         (lambda (response)
-           (with-current-buffer (get-buffer "*Lark AI Chat*")
-             (let ((inhibit-read-only t))
-               ;; Try to parse as plan
-               (let ((plan (lark-ai--parse-plan response)))
-                 (if plan
-                     (progn
-                       (delete-region response-start (point-max))
-                       (goto-char (point-max))
-                       (insert (propertize "AI: " 'face 'bold)
-                               "Generated a plan. Review it in the plan buffer.\n\n")
-                       (lark-ai--display-plan
-                        plan
-                        (lambda (steps)
-                          (lark-ai--execute-plan
-                           steps
-                           (lambda (results)
-                             (if (seq-find (lambda (s) (plist-get s :synthesize)) steps)
-                                 (lark-ai--synthesize
-                                  results steps system-prompt
-                                  (lambda (text)
-                                    (lark-ai-chat--append-response text)))
-                               (lark-ai-chat--append-response
-                                (pp-to-string results))))))))
-                   ;; Plain text response
-                   (delete-region response-start (point-max))
-                   (goto-char (point-max))
-                   (insert (propertize "AI: " 'face 'bold) response "\n\n")))
-               (push (list :role "assistant" :content response)
-                     lark-ai--conversation)))))))))
-
-(defun lark-ai-chat--input-start ()
-  "Return the start position of the current input area."
-  (save-excursion
-    (goto-char (point-max))
-    (if (re-search-backward "^─\\{10,\\}" nil t)
-        (progn (forward-line 1) (point))
-      (point-min))))
-
-(defun lark-ai-chat--append-response (text)
-  "Append TEXT as an AI response in the chat buffer."
-  (when-let ((buf (get-buffer "*Lark AI Chat*")))
-    (with-current-buffer buf
-      (goto-char (point-max))
-      (insert (propertize "AI: " 'face 'bold) text "\n\n"))))
 
 ;;;; Smart reply compose buffer
 

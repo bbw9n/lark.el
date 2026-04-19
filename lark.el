@@ -94,7 +94,6 @@ Either \"user\" or \"bot\"."
 (autoload 'lark-drive-dispatch "lark-drive" nil t)
 (autoload 'lark-drive-list "lark-drive" nil t)
 (autoload 'lark-ai-ask "lark-ai" nil t)
-(autoload 'lark-ai-chat "lark-ai" nil t)
 (autoload 'lark-ai-act "lark-ai" nil t)
 
 (defvar lark-prefix-map
@@ -109,7 +108,6 @@ Either \"user\" or \"bot\"."
     (define-key map (kbd "k") #'lark-contacts-dispatch)
     (define-key map (kbd "s") #'lark-auth-status)
     (define-key map (kbd "i") #'lark-ai-ask)
-    (define-key map (kbd "I") #'lark-ai-chat)
     (define-key map (kbd ".") #'lark-ai-act)
     map)
   "Keymap for Lark commands, intended to be bound under a prefix like C-c l.")

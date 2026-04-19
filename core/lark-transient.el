@@ -28,7 +28,6 @@
 
 ;; Autoloads for AI layer
 (autoload 'lark-ai-ask "lark-ai" nil t)
-(autoload 'lark-ai-chat "lark-ai" nil t)
 (autoload 'lark-ai-act "lark-ai" nil t)
 (autoload 'lark-ai-workflow-standup "lark-ai" nil t)
 (autoload 'lark-ai-workflow-meeting-summary "lark-ai" nil t)
@@ -55,7 +54,6 @@
    ("W" "Whiteboard" lark-whiteboard-dispatch)]
   ["AI"
    ("i" "Ask AI"       lark-ai-ask)
-   ("I" "AI chat"      lark-ai-chat)
    ("." "AI act"       lark-ai-act)]
   ["AI Workflows"
    ("1" "Standup report"    lark-ai-workflow-standup)
