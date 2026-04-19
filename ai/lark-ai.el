@@ -166,6 +166,12 @@ Status is `pending', `running', `done', or `skipped'.")
 (defvar-local lark-ai-plan--skills nil
   "Skill names loaded for the current session.")
 
+(defvar-local lark-ai-plan--log nil
+  "List of timestamped log entries (newest first).")
+
+(defvar-local lark-ai-plan--output nil
+  "Final output content string, or nil if not yet available.")
+
 (defconst lark-ai--buf-name "*Lark AI*"
   "Name of the unified AI buffer.")
 
@@ -178,16 +184,14 @@ Status is `pending', `running', `done', or `skipped'.")
     buf))
 
 (defun lark-ai--progress-log (fmt &rest args)
-  "Append a timestamped line to the log section of the AI buffer."
-  (let ((buf (lark-ai--get-buffer))
-        (line (format "[%s] %s\n"
-                      (format-time-string "%H:%M:%S")
-                      (apply #'format fmt args))))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (save-excursion
-          (goto-char (point-max))
-          (insert (propertize line 'face 'font-lock-comment-face)))))))
+  "Add a timestamped entry to the log and re-render."
+  (let ((entry (format "[%s] %s"
+                       (format-time-string "%H:%M:%S")
+                       (apply #'format fmt args))))
+    (when-let ((buf (get-buffer lark-ai--buf-name)))
+      (with-current-buffer buf
+        (push entry lark-ai-plan--log)
+        (lark-ai--render)))))
 
 ;;; Rendering — single function rebuilds the whole buffer
 
@@ -202,22 +206,33 @@ Status is `pending', `running', `done', or `skipped'.")
                 (make-string 50 ?─) "\n\n")
         ;; Prompt
         (when lark-ai-plan--prompt
-          (insert (propertize "Prompt: " 'face 'font-lock-keyword-face)
+          (insert (propertize "▶ " 'face 'font-lock-keyword-face)
                   lark-ai-plan--prompt "\n\n"))
-        ;; Skills
+        ;; Skills (compact)
         (when lark-ai-plan--skills
-          (insert (propertize "Skills: " 'face 'font-lock-keyword-face)
-                  (propertize (string-join lark-ai-plan--skills ", ")
+          (insert (propertize "Skills " 'face 'font-lock-comment-face)
+                  (propertize (string-join lark-ai-plan--skills " · ")
                               'face 'font-lock-comment-face)
-                  "\n\n"))
+                  "\n"))
+        ;; Log entries
+        (when lark-ai-plan--log
+          (dolist (entry (reverse lark-ai-plan--log))
+            (insert (propertize entry 'face 'font-lock-comment-face) "\n")))
+        (insert "\n")
         ;; Phase-specific content
         (pcase lark-ai-plan--phase
           ('loading
            (insert (propertize "Waiting for LLM response...\n"
                                'face 'font-lock-comment-face)))
           ((or 'review 'executing 'done)
-           (lark-ai--render-steps)
-           (insert "\n")))
+           (lark-ai--render-steps)))
+        ;; Output section
+        (when lark-ai-plan--output
+          (insert "\n" (make-string 50 ?─) "\n"
+                  (propertize "Output\n" 'face 'bold)
+                  (make-string 50 ?─) "\n\n")
+          (lark-ai--insert-highlighted lark-ai-plan--output)
+          (insert "\n"))
         (goto-char (point-min))))))
 
 (defun lark-ai--render-steps ()
@@ -230,7 +245,7 @@ Status is `pending', `running', `done', or `skipped'.")
              (pcase phase
                ('review    "Plan — confirm to execute")
                ('executing "Executing")
-               ('done      "Done")
+               ('done      "Complete")
                (_          ""))
              'face 'font-lock-keyword-face)
             "\n\n")
@@ -277,6 +292,46 @@ Status is `pending', `running', `done', or `skipped'.")
       ('executing
        (insert (propertize "Running..." 'face 'font-lock-comment-face) "\n")))))
 
+;;; Output highlighting
+
+(defun lark-ai--insert-highlighted (text)
+  "Insert TEXT with basic markdown highlighting."
+  (let ((start (point)))
+    (insert text)
+    (save-excursion
+      (goto-char start)
+      ;; Headers: # ## ### etc.
+      (while (re-search-forward "^\\(#{1,4}\\) +\\(.+\\)$" nil t)
+        (let ((level (length (match-string 1)))
+              (beg (match-beginning 0))
+              (end (match-end 0)))
+          (put-text-property beg end 'face
+                             (pcase level
+                               (1 'info-title-1)
+                               (2 'info-title-2)
+                               (3 'info-title-3)
+                               (_ 'info-title-4)))))
+      ;; Bold: **text**
+      (goto-char start)
+      (while (re-search-forward "\\*\\*\\([^*]+\\)\\*\\*" nil t)
+        (put-text-property (match-beginning 0) (match-end 0)
+                           'face 'bold))
+      ;; Inline code: `text`
+      (goto-char start)
+      (while (re-search-forward "`\\([^`\n]+\\)`" nil t)
+        (put-text-property (match-beginning 0) (match-end 0)
+                           'face 'font-lock-constant-face))
+      ;; Code blocks: ```...```
+      (goto-char start)
+      (while (re-search-forward "^```[a-z]*\n\\(\\(?:.\\|\n\\)*?\\)\n```$" nil t)
+        (put-text-property (match-beginning 0) (match-end 0)
+                           'face 'font-lock-string-face))
+      ;; List items: - item
+      (goto-char start)
+      (while (re-search-forward "^\\([ ]*\\)[-*] " nil t)
+        (put-text-property (match-beginning 0) (match-end 0)
+                           'face 'font-lock-keyword-face)))))
+
 ;;; Phase transitions
 
 (defun lark-ai--show-loading (prompt skill-names)
@@ -288,7 +343,9 @@ Status is `pending', `running', `done', or `skipped'.")
             lark-ai-plan--steps nil
             lark-ai-plan--callback nil
             lark-ai-plan--phase 'loading
-            lark-ai-plan--step-status nil)
+            lark-ai-plan--step-status nil
+            lark-ai-plan--log nil
+            lark-ai-plan--output nil)
       (lark-ai--render))
     (display-buffer buf)))
 
@@ -469,9 +526,6 @@ Call CALLBACK with the response text."
         (inhibit-message t))
     (gptel-request user-message
                    :system system-prompt
-                   :stream nil
-                   :in-place nil
-                   :transforms nil
                    :callback (lambda (response info)
                                (if (stringp response)
                                    (funcall callback response)
@@ -543,22 +597,18 @@ CALLBACK receives the synthesis text."
 ;;;; Output rendering
 
 (defun lark-ai--present (content &optional _buffer-name)
-  "Append CONTENT as the output section of the *Lark AI* buffer."
+  "Store CONTENT as output and re-render the *Lark AI* buffer."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (goto-char (point-max))
-        (insert "\n" (make-string 50 ?─) "\n"
-                (propertize "Output\n" 'face 'bold)
-                (make-string 50 ?─) "\n\n"
-                content "\n")))
+      (setq lark-ai-plan--output content)
+      (lark-ai--render))
     (pop-to-buffer buf)
     ;; Scroll to the output section
     (with-current-buffer buf
       (goto-char (point-max))
-      (re-search-backward "^Output$" nil t)
-      (forward-line 2)
-      (recenter 0))))
+      (when (re-search-backward "^Output$" nil t)
+        (forward-line 2)
+        (recenter 0)))))
 
 ;;;; Entry points
 
