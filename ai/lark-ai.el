@@ -878,16 +878,146 @@ executes it, and presents results."
 ;;;###autoload
 (defun lark-ai-act ()
   "Perform a context-aware AI action on the item at point.
-Reads the current buffer context and prompts for an action."
+Offers a menu of actions appropriate to the current domain and item,
+then executes the chosen action via `lark-ai-ask'."
   (interactive)
   (let* ((ctx (lark-ai-context))
          (domain (plist-get ctx :domain))
+         (item (plist-get ctx :item))
          (summary (plist-get ctx :summary)))
     (unless domain
       (user-error "Not in a Lark buffer"))
-    (let ((action (read-string
-                   (format "Lark AI action (%s): " summary))))
-      (lark-ai-ask (format "%s\n\nContext: %s" action summary)))))
+    (let* ((actions (lark-ai-act--actions-for domain item))
+           (choice (completing-read
+                    (format "Action (%s): " summary)
+                    (mapcar #'car actions)
+                    nil nil nil nil (caar actions)))
+           (template (alist-get choice actions nil nil #'equal))
+           (prompt (if template
+                       (lark-ai-act--expand-template template ctx)
+                     choice)))
+      (lark-ai-ask prompt))))
+
+(defun lark-ai-act--actions-for (domain item)
+  "Return alist of (LABEL . PROMPT-TEMPLATE) for DOMAIN and ITEM.
+Templates can use {domain}, {summary}, {id}, and {custom} prompt."
+  (let ((has-item (and item
+                       (cl-some (lambda (k) (plist-get item k))
+                                '(:event-id :message-id :task-id
+                                  :mail-id :doc-token :file-token
+                                  :chat-id :meeting-id :token)))))
+    (append
+     ;; Domain-specific actions
+     (pcase domain
+       ("calendar"
+        (append
+         '(("Show today's agenda" . "Show my agenda for today")
+           ("Check free slots" .
+            "Check my free time slots for today")
+           ("Suggest meeting time" .
+            "Suggest available meeting times this week"))
+         (when (plist-get item :event-id)
+           `(("Reschedule this event" .
+              ,(format "Reschedule event %s. Ask me for the new time."
+                       (plist-get item :event-id)))
+             ("Add attendee" .
+              ,(format "Add an attendee to event %s. Ask me who to add."
+                       (plist-get item :event-id)))
+             ("Cancel this event" .
+              ,(format "Cancel event %s."
+                       (plist-get item :event-id)))))))
+       ("im"
+        (append
+         '(("Search messages" .
+            "Search messages. Ask me for the keyword."))
+         (when (plist-get item :chat-id)
+           `(("Summarize this chat" .
+              ,(format "Summarize the recent messages in chat %s."
+                       (or (plist-get item :chat-name)
+                           (plist-get item :chat-id))))
+             ("Send a message" .
+              ,(format "Send a message to chat %s. Ask me what to say."
+                       (or (plist-get item :chat-name)
+                           (plist-get item :chat-id))))))
+         (when (plist-get item :message-id)
+           `(("Reply to this message" .
+              ,(format "Draft a reply to message %s in chat %s."
+                       (plist-get item :message-id)
+                       (or (plist-get item :chat-name)
+                           (plist-get item :chat-id))))))))
+       ("tasks"
+        (append
+         '(("Show my tasks" . "List my open tasks")
+           ("Create a task" .
+            "Create a new task. Ask me for the details."))
+         (when (plist-get item :task-id)
+           `(("Complete this task" .
+              ,(format "Mark task %s as completed."
+                       (plist-get item :task-id)))
+             ("Set due date" .
+              ,(format "Set a due date for task %s. Ask me for the date."
+                       (plist-get item :task-id)))
+             ("Add subtask" .
+              ,(format "Add a subtask to task %s. Ask me for the title."
+                       (plist-get item :task-id)))))))
+       ("mail"
+        (append
+         '(("Check inbox" . "Show my recent emails"))
+         (when (plist-get item :mail-id)
+           `(("Reply to this email" .
+              ,(format "Draft a reply to email %s."
+                       (plist-get item :mail-id)))
+             ("Forward this email" .
+              ,(format "Forward email %s. Ask me who to forward to."
+                       (plist-get item :mail-id)))))))
+       ("docs"
+        (append
+         (when (plist-get item :doc-token)
+           `(("Summarize this document" .
+              ,(format "Summarize document %s."
+                       (plist-get item :doc-token)))
+             ("Extract action items" .
+              ,(format "Extract all action items and TODOs from document %s."
+                       (plist-get item :doc-token)))
+             ("Find related docs" .
+              ,(format "Search for documents related to %s."
+                       (plist-get item :doc-token)))))
+         '(("Search docs" .
+            "Search documents. Ask me for the query."))))
+       ("drive"
+        (when (plist-get item :file-token)
+          `(("Download this file" .
+             ,(format "Download file %s."
+                      (plist-get item :file-token)))
+            ("Share this file" .
+             ,(format "Share file %s. Ask me who to share with."
+                      (plist-get item :file-token))))))
+       ("meetings"
+        (when (plist-get item :meeting-id)
+          `(("Get meeting notes" .
+             ,(format "Fetch meeting notes for meeting %s."
+                      (plist-get item :meeting-id)))
+            ("Summarize this meeting" .
+             ,(format "Summarize meeting %s."
+                      (plist-get item :meeting-id))))))
+       ("sheets"
+        `(("Read sheet data" .
+           ,(format "Read data from spreadsheet %s."
+                    (or (plist-get item :token) "this")))
+          ("Analyze sheet" .
+           ,(format "Analyze the data in spreadsheet %s."
+                    (or (plist-get item :token) "this")))))
+       (_ nil))
+     ;; Always available: free-form input
+     '(("Other..." . nil)))))
+
+(defun lark-ai-act--expand-template (template ctx)
+  "Expand TEMPLATE string with context CTX.
+If TEMPLATE is nil, prompt for free-form input."
+  (if (null template)
+      (read-string (format "Action (%s): "
+                           (plist-get ctx :summary)))
+    template))
 
 ;;;; Smart reply compose buffer
 
