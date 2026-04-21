@@ -323,48 +323,6 @@ Status is `pending', `running', `done', or `skipped'.")
       (setq lark-ai-plan--phase 'done)
       (lark-ai--refresh-plan-fragment))))
 
-;;; Phase transitions
-
-(defun lark-ai--show-loading (prompt skill-names)
-  "Initialize the AI buffer for a new session with PROMPT and SKILL-NAMES."
-  (let ((buf (lark-ai--get-buffer)))
-    (with-current-buffer buf
-      (setq lark-ai-plan--prompt prompt
-            lark-ai-plan--skills skill-names
-            lark-ai-plan--steps nil
-            lark-ai-plan--callback nil
-            lark-ai-plan--phase 'loading
-            lark-ai-plan--step-status nil
-            lark-ai-plan--log nil
-            lark-ai-plan--output nil)
-      (lark-ai--render))
-    (display-buffer buf)))
-
-(defun lark-ai--display-plan (steps callback)
-  "Show STEPS for review.  CALLBACK is called with confirmed steps."
-  (let ((buf (lark-ai--get-buffer)))
-    (with-current-buffer buf
-      (setq lark-ai-plan--steps steps
-            lark-ai-plan--callback callback
-            lark-ai-plan--phase 'review
-            lark-ai-plan--step-status
-            (mapcar (lambda (s) (cons (plist-get s :index) 'pending)) steps))
-      (lark-ai--render))
-    (pop-to-buffer buf)))
-
-(defun lark-ai--update-step-status (index status)
-  "Update step INDEX to STATUS and re-render."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (setf (alist-get index lark-ai-plan--step-status) status)
-      (lark-ai--render))))
-
-(defun lark-ai--mark-all-done ()
-  "Mark execution as done."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (setq lark-ai-plan--phase 'done)
-      (lark-ai--render))))
 
 ;;; Plan actions
 
