@@ -124,24 +124,13 @@ Returns a list of step plists, or nil on parse failure."
       (setq json-str (match-string 1 json-str)))
     (json-parse-string json-str :object-type 'alist :array-type 'list)))
 
-;;;; Unified AI buffer
+;;;; Fragment-based AI buffer
 ;;
-;; Everything happens in a single *Lark AI* buffer:
-;;   1. Skill loading — shows which skills were selected
-;;   2. Plan review  — shows the plan, user can confirm/edit/cancel
-;;   3. Execution    — shows live progress as steps complete
-;;   4. Output       — final result appended below the plan
+;; Uses lark-ai-ui.el for a fragment-based rendering model.
+;; Each section (prompt, skills, log, plan, output) is a named
+;; fragment that can be updated independently.
 
-(defvar lark-ai-plan-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "RET") #'lark-ai-plan-execute)
-    (define-key map (kbd "q")   #'lark-ai-plan-cancel)
-    (define-key map (kbd "x")   #'lark-ai-plan-remove-step)
-    map)
-  "Keymap for `lark-ai-plan-mode'.")
-
-(define-derived-mode lark-ai-plan-mode special-mode "Lark AI"
-  "Major mode for the unified Lark AI buffer.")
+(require 'lark-ai-ui)
 
 (defvar-local lark-ai-plan--steps nil
   "The plan steps in the current buffer.")
@@ -156,20 +145,20 @@ Returns a list of step plists, or nil on parse failure."
   "Alist of (index . status).
 Status is `pending', `running', `done', or `skipped'.")
 
-(defvar-local lark-ai-plan--prompt nil
-  "The user prompt for the current session.")
-
-(defvar-local lark-ai-plan--skills nil
-  "Skill names loaded for the current session.")
-
-(defvar-local lark-ai-plan--log nil
-  "List of timestamped log entries (newest first).")
-
-(defvar-local lark-ai-plan--output nil
-  "Final output content string, or nil if not yet available.")
-
 (defconst lark-ai--buf-name "*Lark AI*"
-  "Name of the unified AI buffer.")
+  "Name of the AI buffer.")
+
+(defvar lark-ai-plan-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map lark-ai-ui-mode-map)
+    (define-key map (kbd "RET") #'lark-ai-plan-execute)
+    (define-key map (kbd "q")   #'lark-ai-plan-cancel)
+    (define-key map (kbd "x")   #'lark-ai-plan-remove-step)
+    map)
+  "Keymap for the Lark AI buffer.")
+
+(define-derived-mode lark-ai-plan-mode lark-ai-ui-mode "Lark AI"
+  "Major mode for the Lark AI buffer.")
 
 (defun lark-ai--get-buffer ()
   "Get or create the AI buffer."
@@ -179,97 +168,123 @@ Status is `pending', `running', `done', or `skipped'.")
         (lark-ai-plan-mode)))
     buf))
 
+;;; Fragment IDs
+
+(defconst lark-ai--frag-header  "ai-header")
+(defconst lark-ai--frag-prompt  "ai-prompt")
+(defconst lark-ai--frag-skills  "ai-skills")
+(defconst lark-ai--frag-log     "ai-log")
+(defconst lark-ai--frag-plan    "ai-plan")
+(defconst lark-ai--frag-sep     "ai-sep")
+(defconst lark-ai--frag-output  "ai-output")
+
+;;; Progress log — appends to the log fragment
+
 (defun lark-ai--progress-log (fmt &rest args)
-  "Add a timestamped entry to the log and re-render."
-  (let ((entry (format "[%s] %s"
+  "Add a timestamped entry to the log fragment."
+  (let ((entry (format "[%s] %s\n"
                        (format-time-string "%H:%M:%S")
                        (apply #'format fmt args))))
     (when-let ((buf (get-buffer lark-ai--buf-name)))
       (with-current-buffer buf
-        (push entry lark-ai-plan--log)
-        (lark-ai--render)))))
+        (lark-ai-ui-append-fragment lark-ai--frag-log entry)))))
 
-;;; Rendering — single function rebuilds the whole buffer
+;;; Build the initial buffer layout
 
-(defun lark-ai--render ()
-  "Render the current state of the AI buffer."
+(defun lark-ai--show-loading (prompt skill-names)
+  "Initialize the AI buffer for a new session."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        ;; Header
-        (insert (propertize "Lark AI\n" 'face 'bold)
-                (make-string 50 ?─) "\n\n")
-        ;; Prompt
-        (when lark-ai-plan--prompt
-          (insert (propertize "▶ " 'face 'font-lock-keyword-face)
-                  lark-ai-plan--prompt "\n\n"))
-        ;; Skills (compact)
-        (when lark-ai-plan--skills
-          (insert (propertize "Skills " 'face 'font-lock-comment-face)
-                  (propertize (string-join lark-ai-plan--skills " · ")
-                              'face 'font-lock-comment-face)
-                  "\n"))
-        ;; Log entries
-        (when lark-ai-plan--log
-          (dolist (entry (reverse lark-ai-plan--log))
-            (insert (propertize entry 'face 'font-lock-comment-face) "\n")))
-        (insert "\n")
-        ;; Phase-specific content
-        (pcase lark-ai-plan--phase
-          ('loading
-           (insert (propertize "Waiting for LLM response...\n"
-                               'face 'font-lock-comment-face)))
-          ((or 'review 'executing 'done)
-           (lark-ai--render-steps)))
-        ;; Output section
-        (when lark-ai-plan--output
-          (insert "\n" (make-string 50 ?─) "\n"
-                  (propertize "Output\n" 'face 'bold)
-                  (make-string 50 ?─) "\n\n")
-          (lark-ai--insert-highlighted lark-ai-plan--output)
-          (insert "\n"))
-        (goto-char (point-min))))))
+      (setq lark-ai-plan--steps nil
+            lark-ai-plan--callback nil
+            lark-ai-plan--phase 'loading
+            lark-ai-plan--step-status nil)
+      (lark-ai-ui-clear)
+      ;; Header
+      (lark-ai-ui-insert-fragment
+       lark-ai--frag-header 'header "Lark AI" nil)
+      (lark-ai-ui-insert-separator "ai-sep-header")
+      ;; Prompt
+      (lark-ai-ui-insert-fragment
+       lark-ai--frag-prompt 'prompt
+       (concat "▶ " prompt) nil)
+      ;; Skills
+      (lark-ai-ui-insert-fragment
+       lark-ai--frag-skills 'skills
+       (concat "Skills: " (string-join skill-names " · "))
+       nil)
+      ;; Log (starts empty, entries appended)
+      (lark-ai-ui-insert-fragment
+       lark-ai--frag-log 'log nil "")
+      ;; Plan placeholder
+      (lark-ai-ui-insert-fragment
+       lark-ai--frag-plan 'plan nil
+       (propertize "Waiting for LLM response...\n"
+                   'face 'font-lock-comment-face)))
+    (display-buffer buf)))
 
-(defun lark-ai--render-steps ()
-  "Insert the steps section into the current buffer."
-  (let ((steps lark-ai-plan--steps)
-        (phase lark-ai-plan--phase)
-        (statuses lark-ai-plan--step-status))
-    ;; Phase label
-    (insert (propertize
-             (pcase phase
-               ('review    "Plan — confirm to execute")
-               ('executing "Executing")
-               ('done      "Complete")
-               (_          ""))
-             'face 'font-lock-keyword-face)
-            "\n\n")
-    ;; Steps
-    (dolist (step steps)
+;;; Plan display — update the plan fragment
+
+(defun lark-ai--display-plan (steps callback)
+  "Show STEPS for review.  CALLBACK called with confirmed steps."
+  (let ((buf (lark-ai--get-buffer)))
+    (with-current-buffer buf
+      (setq lark-ai-plan--steps steps
+            lark-ai-plan--callback callback
+            lark-ai-plan--phase 'review
+            lark-ai-plan--step-status
+            (mapcar (lambda (s) (cons (plist-get s :index) 'pending))
+                    steps))
+      (lark-ai--refresh-plan-fragment))
+    (pop-to-buffer buf)))
+
+(defun lark-ai--refresh-plan-fragment ()
+  "Rebuild the plan fragment from current state."
+  (let ((body (lark-ai--format-plan-body)))
+    (lark-ai-ui-update-fragment
+     lark-ai--frag-plan
+     (lark-ai--plan-label)
+     body)))
+
+(defun lark-ai--plan-label ()
+  "Return the plan section label for the current phase."
+  (pcase lark-ai-plan--phase
+    ('review    "Plan — confirm to execute")
+    ('executing "Executing")
+    ('done      "Complete")
+    (_          "Plan")))
+
+(defun lark-ai--format-plan-body ()
+  "Format the plan steps as a string for the plan fragment."
+  (with-temp-buffer
+    (dolist (step lark-ai-plan--steps)
       (let* ((idx (plist-get step :index))
              (desc (plist-get step :description))
              (cmd (plist-get step :command))
              (side-effect (plist-get step :side-effect))
              (synthesize (plist-get step :synthesize))
              (pg (plist-get step :parallel-group))
-             (status (alist-get idx statuses))
+             (status (alist-get idx lark-ai-plan--step-status))
              (indicator
               (pcase status
                 ('done    (propertize "✓" 'face 'success))
                 ('running (propertize "⟳" 'face 'warning))
-                ('skipped (propertize "✗" 'face 'font-lock-comment-face))
-                (_        (propertize "○" 'face 'font-lock-comment-face)))))
+                ('skipped (propertize "✗" 'face
+                                      'font-lock-comment-face))
+                (_        (propertize "○" 'face
+                                      'font-lock-comment-face)))))
         (insert "  " indicator " "
                 (propertize desc 'face
                             (pcase status
                               ('done 'font-lock-comment-face)
-                              (_ (if side-effect 'warning 'default))))
+                              (_ (if side-effect 'warning
+                                   'default))))
                 (if (and side-effect (not (eq status 'done)))
                     (propertize " ⚠ writes" 'face 'error)
                   "")
                 (if synthesize
-                    (propertize " (synthesis)" 'face 'font-lock-comment-face)
+                    (propertize " (synthesis)"
+                                'face 'font-lock-comment-face)
                   "")
                 (if pg (format " [group %d]" pg) "")
                 "\n")
@@ -278,55 +293,35 @@ Status is `pending', `running', `done', or `skipped'.")
                   (propertize (string-join cmd " ")
                               'face 'font-lock-string-face)
                   "\n"))))
-    ;; Footer actions
-    (insert "\n")
-    (pcase phase
+    ;; Footer
+    (pcase lark-ai-plan--phase
       ('review
-       (insert (propertize "RET" 'face 'bold) " Execute  "
+       (insert "\n"
+               (propertize "RET" 'face 'bold) " Execute  "
                (propertize "x" 'face 'bold) " Remove step  "
                (propertize "q" 'face 'bold) " Cancel\n"))
       ('executing
-       (insert (propertize "Running..." 'face 'font-lock-comment-face) "\n")))))
+       (insert "\n"
+               (propertize "Running..."
+                           'face 'font-lock-comment-face)
+               "\n")))
+    (buffer-string)))
 
-;;; Output highlighting
+;;; Step status updates — only refresh the plan fragment
 
-(defun lark-ai--insert-highlighted (text)
-  "Insert TEXT with basic markdown highlighting."
-  (let ((start (point)))
-    (insert text)
-    (save-excursion
-      (goto-char start)
-      ;; Headers: # ## ### etc.
-      (while (re-search-forward "^\\(#{1,4}\\) +\\(.+\\)$" nil t)
-        (let ((level (length (match-string 1)))
-              (beg (match-beginning 0))
-              (end (match-end 0)))
-          (put-text-property beg end 'face
-                             (pcase level
-                               (1 'info-title-1)
-                               (2 'info-title-2)
-                               (3 'info-title-3)
-                               (_ 'info-title-4)))))
-      ;; Bold: **text**
-      (goto-char start)
-      (while (re-search-forward "\\*\\*\\([^*]+\\)\\*\\*" nil t)
-        (put-text-property (match-beginning 0) (match-end 0)
-                           'face 'bold))
-      ;; Inline code: `text`
-      (goto-char start)
-      (while (re-search-forward "`\\([^`\n]+\\)`" nil t)
-        (put-text-property (match-beginning 0) (match-end 0)
-                           'face 'font-lock-constant-face))
-      ;; Code blocks: ```...```
-      (goto-char start)
-      (while (re-search-forward "^```[a-z]*\n\\(\\(?:.\\|\n\\)*?\\)\n```$" nil t)
-        (put-text-property (match-beginning 0) (match-end 0)
-                           'face 'font-lock-string-face))
-      ;; List items: - item
-      (goto-char start)
-      (while (re-search-forward "^\\([ ]*\\)[-*] " nil t)
-        (put-text-property (match-beginning 0) (match-end 0)
-                           'face 'font-lock-keyword-face)))))
+(defun lark-ai--update-step-status (index status)
+  "Update step INDEX to STATUS and refresh plan."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (setf (alist-get index lark-ai-plan--step-status) status)
+      (lark-ai--refresh-plan-fragment))))
+
+(defun lark-ai--mark-all-done ()
+  "Mark execution as done and refresh plan."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (setq lark-ai-plan--phase 'done)
+      (lark-ai--refresh-plan-fragment))))
 
 ;;; Phase transitions
 
@@ -683,14 +678,11 @@ Chunks are streamed into the *Lark AI* output section in real-time."
      (lark-ai--call-llm system-prompt user-message callback))))
 
 (defun lark-ai--call-gptel-stream (system-prompt user-message callback)
-  "Call LLM via gptel with streaming into the output section."
+  "Call LLM via gptel with streaming into the output fragment."
   (unless (require 'gptel nil t)
     (user-error "gptel is not installed"))
-  ;; Prepare the output section before streaming starts
-  (let ((buf (lark-ai--get-buffer)))
-    (with-current-buffer buf
-      (setq lark-ai-plan--output "")
-      (lark-ai--render)))
+  ;; Create the output fragment for streaming
+  (lark-ai--ensure-output-fragment)
   (let ((gptel-log-level nil)
         (inhibit-message t)
         (accumulated ""))
@@ -700,44 +692,22 @@ Chunks are streamed into the *Lark AI* output section in real-time."
                    :callback
                    (lambda (response _info)
                      (cond
-                      ;; String chunk: append to output
                       ((stringp response)
                        (setq accumulated
                              (concat accumulated response))
-                       (lark-ai--stream-append response))
-                      ;; t = stream finished
+                       ;; Append chunk with incremental highlighting
+                       (when-let ((buf (get-buffer lark-ai--buf-name)))
+                         (with-current-buffer buf
+                           (lark-ai-ui-append-fragment
+                            lark-ai--frag-output response))))
                       ((eq response t)
-                       (lark-ai--stream-finalize accumulated)
                        (funcall callback accumulated))
-                      ;; reasoning chunk: ignore
                       ((and (consp response)
                             (eq (car response) 'reasoning))
                        nil)
-                      ;; nil or error
                       (t
                        (lark-ai--progress-log
                         "LLM stream error")))))))
-
-(defun lark-ai--stream-append (chunk)
-  "Append CHUNK to the output section of the *Lark AI* buffer."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (save-excursion
-          (goto-char (point-max))
-          (insert chunk))))))
-
-(defun lark-ai--stream-finalize (full-text)
-  "Finalize streaming: store FULL-TEXT, re-render with highlights."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (setq lark-ai-plan--output full-text)
-      (lark-ai--render)
-      ;; Scroll to output
-      (goto-char (point-max))
-      (when (re-search-backward "^Output$" nil t)
-        (forward-line 2)
-        (recenter 0)))))
 
 ;;;; Synthesis (second LLM pass)
 
@@ -797,24 +767,37 @@ CALLBACK receives the synthesis text."
 
 ;;;; Output rendering
 
+(defun lark-ai--ensure-output-fragment ()
+  "Ensure the output fragment exists in the AI buffer."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (unless (lark-ai-ui--find-fragment lark-ai--frag-output)
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (lark-ai-ui-insert-separator lark-ai--frag-sep)
+          (lark-ai-ui-insert-fragment
+           lark-ai--frag-output 'output "Output" ""))))))
+
 (defun lark-ai--present (content &optional _buffer-name)
-  "Store CONTENT as output and re-render the *Lark AI* buffer."
+  "Display CONTENT in the output fragment."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
-      (setq lark-ai-plan--output content)
-      (lark-ai--render))
+      (lark-ai--ensure-output-fragment)
+      (lark-ai-ui-update-fragment
+       lark-ai--frag-output "Output" content))
     (pop-to-buffer buf)
-    ;; Scroll to the output section
     (lark-ai--scroll-to-output)))
 
 (defun lark-ai--scroll-to-output ()
-  "Scroll the AI buffer to the output section."
+  "Scroll the AI buffer to the output fragment."
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (with-current-buffer buf
-      (goto-char (point-max))
-      (when (re-search-backward "^Output$" nil t)
-        (forward-line 2)
-        (recenter 0)))))
+      (let ((region (lark-ai-ui--find-fragment
+                     lark-ai--frag-output)))
+        (when region
+          (goto-char (car region))
+          (forward-line 2)
+          (recenter 0))))))
 
 ;;;; Entry points
 
