@@ -842,12 +842,7 @@ then executes the chosen action via `lark-ai-ask'."
 (defun lark-ai-act--actions-for (domain item)
   "Return alist of (LABEL . PROMPT-TEMPLATE) for DOMAIN and ITEM.
 Templates can use {domain}, {summary}, {id}, and {custom} prompt."
-  (let ((has-item (and item
-                       (cl-some (lambda (k) (plist-get item k))
-                                '(:event-id :message-id :task-id
-                                  :mail-id :doc-token :file-token
-                                  :chat-id :meeting-id :token)))))
-    (append
+  (append
      ;; Domain-specific actions
      (pcase domain
        ("calendar"
@@ -950,7 +945,7 @@ Templates can use {domain}, {summary}, {id}, and {custom} prompt."
                     (or (plist-get item :token) "this")))))
        (_ nil))
      ;; Always available: free-form input
-     '(("Other..." . nil)))))
+     '(("Other..." . nil))))
 
 (defun lark-ai-act--expand-template (template ctx)
   "Expand TEMPLATE string with context CTX.
