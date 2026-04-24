@@ -78,17 +78,15 @@ ID is a unique string, TYPE is a symbol, LABEL is the
 header text, BODY is the content string."
   (lark-ai-ui--ensure-store)
   (puthash id (or body "") lark-ai-ui--content-store)
-  (let ((inhibit-read-only t)
-        (beg (point)))
+  (let ((inhibit-read-only t))
     ;; Label line
     (when label
-      (let ((label-beg (point)))
-        (insert (propertize label
-                            'face (lark-ai-ui--label-face type)
-                            'lark-ai-ui-id id
-                            'lark-ai-ui-type type
-                            'lark-ai-ui-section 'label))
-        (insert "\n")))
+      (insert (propertize label
+                          'face (lark-ai-ui--label-face type)
+                          'lark-ai-ui-id id
+                          'lark-ai-ui-type type
+                          'lark-ai-ui-section 'label)
+              "\n"))
     ;; Body
     (when (and body (not (string-empty-p body)))
       (let ((body-beg (point)))
@@ -100,8 +98,8 @@ header text, BODY is the content string."
     ;; Spacing
     (insert "\n")))
 
-(defun lark-ai-ui--insert-body (id type body)
-  "Insert BODY for fragment ID of TYPE with appropriate formatting."
+(defun lark-ai-ui--insert-body (_id type body)
+  "Insert BODY for fragment of TYPE with appropriate formatting."
   (pcase type
     ('output (lark-ai-ui--insert-markdown body))
     ('plan   (insert body))

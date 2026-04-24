@@ -29,6 +29,9 @@
 (require 'json)
 
 (defvar url-http-end-of-headers)
+(defvar url-request-method)
+(defvar url-request-extra-headers)
+(defvar url-request-data)
 
 ;; Forward declarations for IM module
 (defvar lark-im--chat-id)
@@ -335,7 +338,7 @@ Status is `pending', `running', `done', or `skipped'.")
         (callback lark-ai-plan--callback))
     (setq lark-ai-plan--phase 'executing
           lark-ai-plan--callback nil)
-    (lark-ai--render)
+    (lark-ai--refresh-plan-fragment)
     (when callback
       (funcall callback steps))))
 
@@ -344,7 +347,7 @@ Status is `pending', `running', `done', or `skipped'.")
   (interactive)
   (setq lark-ai-plan--phase 'done
         lark-ai-plan--callback nil)
-  (lark-ai--render)
+  (lark-ai--refresh-plan-fragment)
   (lark-ai--progress-log "Cancelled."))
 
 (defun lark-ai-plan-remove-step ()
@@ -361,7 +364,7 @@ Status is `pending', `running', `done', or `skipped'.")
       (setq lark-ai-plan--step-status
             (mapcar (lambda (s) (cons (plist-get s :index) 'pending))
                     lark-ai-plan--steps))
-      (lark-ai--render))))
+      (lark-ai--refresh-plan-fragment))))
 
 ;;;; $step-N interpolation
 
