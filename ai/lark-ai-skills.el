@@ -152,24 +152,30 @@ Results are cached in `lark-ai-skills--cache'."
   "Routing table: (REGEXP . SKILL-NAMES).
 Used to select relevant skills based on user prompt keywords.")
 
-(defun lark-ai-skills-select (prompt)
+(defun lark-ai-skills-select (prompt &optional context)
   "Select relevant skill names for the user PROMPT.
-Always includes lark-shared.  Returns a deduplicated list of skill names."
+CONTEXT is optional extra text (originating buffer summary, last
+plan commands, etc.) appended to the prompt before matching, so
+follow-ups stay on-topic when the new prompt itself is non-specific
+(\"tell me more\", \"summarize that\").
+Always includes lark-shared.  Never falls back to loading every
+domain skill — if no rule matches, only lark-shared is returned;
+callers that want continuity (e.g. follow-ups) should union the
+result with the previous turn's selection.
+Returns a deduplicated list of skill names."
   (lark-ai-skills--ensure-index)
-  (let ((prompt-down (downcase prompt))
-        (selected (list "lark-shared"))
-        (available (mapcar #'car lark-ai-skills--index)))
-    ;; Match against routing table
+  (let* ((match-text (downcase
+                      (concat prompt
+                              (when (and context
+                                         (not (string-empty-p context)))
+                                (concat "\n" context)))))
+         (selected (list "lark-shared"))
+         (available (mapcar #'car lark-ai-skills--index)))
     (dolist (rule lark-ai-skills--routing-table)
-      (when (string-match-p (car rule) prompt-down)
+      (when (string-match-p (car rule) match-text)
         (dolist (skill (cdr rule))
           (when (member skill available)
             (push skill selected)))))
-    ;; If nothing matched (besides lark-shared), load all domain skills
-    (when (= (length selected) 1)
-      (dolist (name available)
-        (unless (string-match-p "workflow\\|shared\\|skill-maker\\|openapi-explorer" name)
-          (push name selected))))
     (delete-dups (nreverse selected))))
 
 ;;;; System prompt assembly

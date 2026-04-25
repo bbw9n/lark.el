@@ -233,6 +233,12 @@ user was in when they started the conversation — without this,
 follow-ups read context from the `*Lark AI*' buffer itself,
 which has no domain.")
 
+(defvar-local lark-ai--skills nil
+  "Skills selected for the current conversation.
+Reused as the base set on follow-ups and unioned with any new
+matches from the latest prompt + last-plan, so domain stays
+sticky even when a follow-up prompt has no domain keywords.")
+
 (defconst lark-ai--buf-name "*Lark AI*"
   "Name of the AI buffer.")
 
@@ -1065,16 +1071,49 @@ executes it, and presents results."
                         (or lark-ai--context-string ""))
                     (lark-ai-context-format)))
          (history (with-current-buffer ai-buf lark-ai--history))
-         (skill-names (lark-ai-skills-select prompt))
+         (prev-skills (with-current-buffer ai-buf lark-ai--skills))
+         ;; Build the skill match-text from the originating buffer
+         ;; context plus the last plan's command heads + descriptions.
+         ;; This lets a non-specific follow-up (\"tell me more\") still
+         ;; match domain keywords carried over from the prior turn.
+         (last-plan-text
+          (when-let ((plan (with-current-buffer ai-buf lark-ai--last-plan)))
+            (mapconcat
+             (lambda (s)
+               (concat (or (when-let ((cmd (plist-get s :command)))
+                             (string-join cmd " "))
+                           "")
+                       " "
+                       (or (plist-get s :description) "")))
+             plan "\n")))
+         (match-text (mapconcat #'identity
+                                (delq nil (list (and (not (string-empty-p context))
+                                                     context)
+                                                last-plan-text))
+                                "\n"))
+         (matched-skills (lark-ai-skills-select prompt match-text))
+         ;; Default behaviour: reuse the previous turn's skills as the
+         ;; base set on follow-ups so domain continuity is preserved
+         ;; even when the new prompt + match-text picks nothing new.
+         ;; Fresh asks (from a real buffer) start clean.
+         (skill-names (delete-dups
+                       (if (and in-ai-buf prev-skills)
+                           (append prev-skills matched-skills)
+                         matched-skills)))
          (system-prompt (lark-ai-skills-build-system-prompt skill-names))
          (user-msg (lark-ai--build-user-message prompt context history)))
+    (lark-ai--debug-log
+     "SKILLS" "prev=%S matched=%S → final=%S"
+     prev-skills matched-skills skill-names)
     (lark-ai--show-loading prompt skill-names)
-    ;; Persist for follow-ups: system prompt always, originating
+    ;; Persist for follow-ups: system prompt always, selected skills
+    ;; always (so the next follow-up can reuse them), originating
     ;; context only when invoked from a real buffer (so a follow-up
     ;; doesn't overwrite the captured context with the empty AI-buffer
     ;; context).
     (with-current-buffer ai-buf
-      (setq lark-ai--system-prompt system-prompt)
+      (setq lark-ai--system-prompt system-prompt
+            lark-ai--skills skill-names)
       (unless in-ai-buf
         (setq lark-ai--context-string context)))
     (lark-ai--call-llm
