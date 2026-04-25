@@ -130,13 +130,14 @@ Returns a list of step plists, or nil on parse failure."
 ;;;; Fragment-based AI buffer
 ;;
 ;; Uses lark-ai-ui.el for a fragment-based rendering model.
-;; Each section (prompt, skills, log, plan, output) is a named
-;; fragment that can be updated independently.
+;; Each conversation turn gets its own set of fragments with a
+;; turn-number prefix.  Follow-up questions append new turns.
+;; An editable input area at the bottom allows inline follow-ups.
 
 (require 'lark-ai-ui)
 
 (defvar-local lark-ai-plan--steps nil
-  "The plan steps in the current buffer.")
+  "The plan steps for the current turn.")
 
 (defvar-local lark-ai-plan--callback nil
   "Callback to invoke when the plan is confirmed.")
@@ -148,6 +149,15 @@ Returns a list of step plists, or nil on parse failure."
   "Alist of (index . status).
 Status is `pending', `running', `done', or `skipped'.")
 
+(defvar-local lark-ai--turn 0
+  "Current conversation turn number.")
+
+(defvar-local lark-ai--history nil
+  "Conversation history as ((role . content) ...) for LLM context.")
+
+(defvar-local lark-ai--system-prompt nil
+  "System prompt for the current conversation.")
+
 (defconst lark-ai--buf-name "*Lark AI*"
   "Name of the AI buffer.")
 
@@ -157,8 +167,16 @@ Status is `pending', `running', `done', or `skipped'.")
     (define-key map (kbd "RET") #'lark-ai-plan-execute)
     (define-key map (kbd "q")   #'lark-ai-plan-cancel)
     (define-key map (kbd "x")   #'lark-ai-plan-remove-step)
+    (define-key map (kbd "C-c C-c") #'lark-ai-send-followup)
     map)
   "Keymap for the Lark AI buffer.")
+
+(defvar lark-ai-input-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map text-mode-map)
+    (define-key map (kbd "C-c C-c") #'lark-ai-send-followup)
+    map)
+  "Keymap for the editable input area.")
 
 (define-derived-mode lark-ai-plan-mode lark-ai-ui-mode "Lark AI"
   "Major mode for the Lark AI buffer.")
@@ -171,17 +189,13 @@ Status is `pending', `running', `done', or `skipped'.")
         (lark-ai-plan-mode)))
     buf))
 
-;;; Fragment IDs
+;;; Turn-scoped fragment IDs
 
-(defconst lark-ai--frag-header  "ai-header")
-(defconst lark-ai--frag-prompt  "ai-prompt")
-(defconst lark-ai--frag-skills  "ai-skills")
-(defconst lark-ai--frag-log     "ai-log")
-(defconst lark-ai--frag-plan    "ai-plan")
-(defconst lark-ai--frag-sep     "ai-sep")
-(defconst lark-ai--frag-output  "ai-output")
+(defun lark-ai--frag (suffix)
+  "Return fragment ID for SUFFIX in the current turn."
+  (format "t%d-%s" lark-ai--turn suffix))
 
-;;; Progress log — appends to the log fragment
+;;; Progress log — appends to the current turn's log fragment
 
 (defun lark-ai--progress-log (fmt &rest args)
   "Add a timestamped entry to the log fragment."
@@ -190,40 +204,129 @@ Status is `pending', `running', `done', or `skipped'.")
                        (apply #'format fmt args))))
     (when-let ((buf (get-buffer lark-ai--buf-name)))
       (with-current-buffer buf
-        (lark-ai-ui-append-fragment lark-ai--frag-log entry)))))
+        (lark-ai-ui-append-fragment
+         (lark-ai--frag "log") entry)))))
 
-;;; Build the initial buffer layout
+;;; Input area — editable region at the bottom
 
-(defun lark-ai--show-loading (prompt skill-names)
-  "Initialize the AI buffer for a new session."
+(defconst lark-ai--input-id "ai-input"
+  "Fragment ID for the input area.")
+
+(defun lark-ai--ensure-input-area ()
+  "Ensure an editable input area exists at the bottom."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
+      ;; Remove old input area if it exists
+      (let ((region (lark-ai-ui--find-fragment lark-ai--input-id)))
+        (when region
+          (let ((inhibit-read-only t))
+            (delete-region (car region) (cdr region)))))
+      ;; Insert new input area at the end
+      (let ((inhibit-read-only t))
+        (goto-char (point-max))
+        (insert "\n")
+        (lark-ai-ui-insert-separator "ai-input-sep")
+        (insert (propertize "Follow-up (C-c C-c to send):\n"
+                            'face 'font-lock-keyword-face
+                            'lark-ai-ui-id lark-ai--input-id
+                            'lark-ai-ui-section 'label
+                            'read-only t
+                            'rear-nonsticky '(read-only)))
+        (let ((input-start (point)))
+          (insert (propertize " "
+                              'lark-ai-ui-id lark-ai--input-id
+                              'lark-ai-ui-section 'body
+                              'rear-nonsticky '(read-only lark-ai-ui-id)))
+          ;; Make the input area editable
+          (put-text-property input-start (point)
+                             'keymap lark-ai-input-mode-map))
+        (goto-char (point-max))))))
+
+(defun lark-ai--get-input-text ()
+  "Return the text in the input area, trimmed."
+  (let ((region (lark-ai-ui--find-fragment lark-ai--input-id)))
+    (when region
+      (save-excursion
+        (goto-char (car region))
+        ;; Skip past the label line
+        (let ((body-start
+               (next-single-property-change
+                (car region) 'lark-ai-ui-section
+                nil (cdr region))))
+          (when body-start
+            (string-trim
+             (buffer-substring-no-properties
+              body-start (cdr region)))))))))
+
+(defun lark-ai-send-followup ()
+  "Send the text in the input area as a follow-up question."
+  (interactive)
+  (let ((input (lark-ai--get-input-text)))
+    (when (or (null input) (string-empty-p input))
+      (user-error "Empty input"))
+    ;; Clear input area before processing
+    (let ((region (lark-ai-ui--find-fragment lark-ai--input-id)))
+      (when region
+        (let ((inhibit-read-only t))
+          (delete-region (car region) (cdr region)))))
+    ;; Also remove the input separator
+    (let ((region (lark-ai-ui--find-fragment "ai-input-sep")))
+      (when region
+        (let ((inhibit-read-only t))
+          (delete-region (car region) (cdr region)))))
+    (lark-ai-ask input)))
+
+;;; Build a new turn's layout
+
+(defun lark-ai--show-loading (prompt skill-names)
+  "Start a new turn in the AI buffer."
+  (let ((buf (lark-ai--get-buffer)))
+    (with-current-buffer buf
+      ;; Remove input area from previous turn
+      (dolist (id (list lark-ai--input-id "ai-input-sep"))
+        (let ((region (lark-ai-ui--find-fragment id)))
+          (when region
+            (let ((inhibit-read-only t))
+              (delete-region (car region) (cdr region))))))
+      ;; Advance turn counter
+      (cl-incf lark-ai--turn)
       (setq lark-ai-plan--steps nil
             lark-ai-plan--callback nil
             lark-ai-plan--phase 'loading
             lark-ai-plan--step-status nil)
-      (lark-ai-ui-clear)
-      ;; Header
-      (lark-ai-ui-insert-fragment
-       lark-ai--frag-header 'header "Lark AI" nil)
-      (lark-ai-ui-insert-separator "ai-sep-header")
+      ;; On first turn, add header
+      (when (= lark-ai--turn 1)
+        (lark-ai-ui-clear)
+        (lark-ai-ui-insert-fragment "ai-header" 'header "Lark AI" nil)
+        (lark-ai-ui-insert-separator "ai-sep-header"))
+      ;; Turn separator (after first turn)
+      (when (> lark-ai--turn 1)
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (insert "\n")
+          (lark-ai-ui-insert-separator
+           (lark-ai--frag "turn-sep"))))
       ;; Prompt
-      (lark-ai-ui-insert-fragment
-       lark-ai--frag-prompt 'prompt
-       (concat "▶ " prompt) nil)
-      ;; Skills
-      (lark-ai-ui-insert-fragment
-       lark-ai--frag-skills 'skills
-       (concat "Skills: " (string-join skill-names " · "))
-       nil)
-      ;; Log (starts empty, entries appended)
-      (lark-ai-ui-insert-fragment
-       lark-ai--frag-log 'log nil "")
-      ;; Plan placeholder
-      (lark-ai-ui-insert-fragment
-       lark-ai--frag-plan 'plan nil
-       (propertize "Waiting for LLM response...\n"
-                   'face 'font-lock-comment-face)))
+      (let ((inhibit-read-only t))
+        (goto-char (point-max))
+        (lark-ai-ui-insert-fragment
+         (lark-ai--frag "prompt") 'prompt
+         (concat "▶ " prompt) nil)
+        ;; Skills
+        (lark-ai-ui-insert-fragment
+         (lark-ai--frag "skills") 'skills
+         (concat "Skills: " (string-join skill-names " · "))
+         nil)
+        ;; Log
+        (lark-ai-ui-insert-fragment
+         (lark-ai--frag "log") 'log nil "")
+        ;; Plan placeholder
+        (lark-ai-ui-insert-fragment
+         (lark-ai--frag "plan") 'plan nil
+         (propertize "Waiting for LLM response...\n"
+                     'face 'font-lock-comment-face)))
+      ;; Track conversation
+      (push (cons "user" prompt) lark-ai--history))
     (display-buffer buf)))
 
 ;;; Plan display — update the plan fragment
@@ -245,7 +348,7 @@ Status is `pending', `running', `done', or `skipped'.")
   "Rebuild the plan fragment from current state."
   (let ((body (lark-ai--format-plan-body)))
     (lark-ai-ui-update-fragment
-     lark-ai--frag-plan
+     (lark-ai--frag "plan")
      (lark-ai--plan-label)
      body)))
 
@@ -660,7 +763,7 @@ Chunks are streamed into the *Lark AI* output section in real-time."
                        (when-let ((buf (get-buffer lark-ai--buf-name)))
                          (with-current-buffer buf
                            (lark-ai-ui-append-fragment
-                            lark-ai--frag-output response))))
+                            (lark-ai--frag "output") response))))
                       ((eq response t)
                        (funcall callback accumulated))
                       ((and (consp response)
@@ -724,28 +827,39 @@ CALLBACK receives the synthesis text."
            "\n"))
          (user-msg (format "Here are the execution results:\n\n%s\n\nInstruction: %s\n\nRespond with plain text (not JSON). Use markdown formatting."
                            results-text instruction)))
-    (lark-ai--call-llm-stream system-prompt user-msg #'ignore)))
+    (lark-ai--call-llm-stream
+     system-prompt user-msg
+     (lambda (text)
+       (when-let ((buf (get-buffer lark-ai--buf-name)))
+         (with-current-buffer buf
+           (push (cons "assistant" text) lark-ai--history)
+           (lark-ai--ensure-input-area)))))))
 
 ;;;; Output rendering
 
 (defun lark-ai--ensure-output-fragment ()
-  "Ensure the output fragment exists in the AI buffer."
+  "Ensure the output fragment exists for the current turn."
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (with-current-buffer buf
-      (unless (lark-ai-ui--find-fragment lark-ai--frag-output)
-        (let ((inhibit-read-only t))
-          (goto-char (point-max))
-          (lark-ai-ui-insert-separator lark-ai--frag-sep)
-          (lark-ai-ui-insert-fragment
-           lark-ai--frag-output 'output "Output" ""))))))
+      (let ((out-id (lark-ai--frag "output")))
+        (unless (lark-ai-ui--find-fragment out-id)
+          (let ((inhibit-read-only t))
+            (goto-char (point-max))
+            (lark-ai-ui-insert-separator (lark-ai--frag "sep"))
+            (lark-ai-ui-insert-fragment
+             out-id 'output "Output" "")))))))
 
 (defun lark-ai--present (content &optional _buffer-name)
-  "Display CONTENT in the output fragment."
+  "Display CONTENT in the output fragment, then add input area."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
       (lark-ai--ensure-output-fragment)
       (lark-ai-ui-update-fragment
-       lark-ai--frag-output "Output" content))
+       (lark-ai--frag "output") "Output" content)
+      ;; Track assistant response in history
+      (push (cons "assistant" content) lark-ai--history)
+      ;; Add input area for follow-ups
+      (lark-ai--ensure-input-area))
     (pop-to-buffer buf)
     (lark-ai--scroll-to-output)))
 
@@ -754,7 +868,7 @@ CALLBACK receives the synthesis text."
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (with-current-buffer buf
       (let ((region (lark-ai-ui--find-fragment
-                     lark-ai--frag-output)))
+                     (lark-ai--frag "output"))))
         (when region
           (goto-char (car region))
           (forward-line 2)
@@ -775,6 +889,9 @@ executes it, and presents results."
                        prompt
                      (format "%s\n\n%s" prompt context))))
     (lark-ai--show-loading prompt skill-names)
+    ;; Store system prompt for follow-ups
+    (with-current-buffer (lark-ai--get-buffer)
+      (setq lark-ai--system-prompt system-prompt))
     (lark-ai--call-llm
      system-prompt user-msg
      (lambda (response)
@@ -793,7 +910,11 @@ executes it, and presents results."
                   system-prompt
                   (format "%s\n\n%s\nRespond with plain text using markdown."
                           prompt context)
-                  #'ignore))
+                  (lambda (text)
+                    (when-let ((buf (get-buffer lark-ai--buf-name)))
+                      (with-current-buffer buf
+                        (push (cons "assistant" text) lark-ai--history)
+                        (lark-ai--ensure-input-area))))))
              (lark-ai--display-plan
               plan
               (lambda (confirmed-steps)
