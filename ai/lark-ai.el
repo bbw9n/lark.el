@@ -158,6 +158,14 @@ Status is `pending', `running', `done', or `skipped'.")
 (defvar-local lark-ai--system-prompt nil
   "System prompt for the current conversation.")
 
+(defvar-local lark-ai--context-string nil
+  "Originating buffer context for the current conversation.
+Captured on a fresh `lark-ai-ask' (invoked from a non-AI buffer)
+and reused on follow-ups so the LLM keeps seeing the buffer the
+user was in when they started the conversation — without this,
+follow-ups read context from the `*Lark AI*' buffer itself,
+which has no domain.")
+
 (defconst lark-ai--buf-name "*Lark AI*"
   "Name of the AI buffer.")
 
@@ -891,22 +899,59 @@ CALLBACK receives the synthesis text."
 
 ;;;; Entry points
 
+(defun lark-ai--build-user-message (prompt context history)
+  "Build the LLM user message for PROMPT.
+CONTEXT is the originating-buffer context string (may be empty).
+HISTORY is `lark-ai--history' — a list of (ROLE . CONTENT) cons
+cells, newest first — and is included so the LLM sees prior
+turns in the same conversation."
+  (let (parts)
+    (when history
+      (push (concat
+             "Previous conversation:\n"
+             (mapconcat
+              (lambda (entry)
+                (format "%s: %s"
+                        (capitalize (car entry))
+                        (cdr entry)))
+              (reverse history)
+              "\n\n"))
+            parts))
+    (when (and context (not (string-empty-p context)))
+      (push context parts))
+    (push prompt parts)
+    (mapconcat #'identity (nreverse parts) "\n\n")))
+
 ;;;###autoload
 (defun lark-ai-ask (prompt)
   "Ask the Lark AI assistant to execute a natural-language PROMPT.
 Selects relevant lark-cli skills, sends to LLM, reviews the plan,
 executes it, and presents results."
   (interactive "sLark AI: ")
-  (let* ((context (lark-ai-context-format))
+  (let* ((ai-buf (lark-ai--get-buffer))
+         (in-ai-buf (eq (current-buffer) ai-buf))
+         ;; On a follow-up (we are in the AI buffer), reuse the
+         ;; originating context — the AI buffer itself has no domain,
+         ;; so re-extracting it would lose what the user was viewing
+         ;; when they started the conversation.  On a fresh ask from
+         ;; a real buffer, capture context from there.
+         (context (if in-ai-buf
+                      (with-current-buffer ai-buf
+                        (or lark-ai--context-string ""))
+                    (lark-ai-context-format)))
+         (history (with-current-buffer ai-buf lark-ai--history))
          (skill-names (lark-ai-skills-select prompt))
          (system-prompt (lark-ai-skills-build-system-prompt skill-names))
-         (user-msg (if (string-empty-p context)
-                       prompt
-                     (format "%s\n\n%s" prompt context))))
+         (user-msg (lark-ai--build-user-message prompt context history)))
     (lark-ai--show-loading prompt skill-names)
-    ;; Store system prompt for follow-ups
-    (with-current-buffer (lark-ai--get-buffer)
-      (setq lark-ai--system-prompt system-prompt))
+    ;; Persist for follow-ups: system prompt always, originating
+    ;; context only when invoked from a real buffer (so a follow-up
+    ;; doesn't overwrite the captured context with the empty AI-buffer
+    ;; context).
+    (with-current-buffer ai-buf
+      (setq lark-ai--system-prompt system-prompt)
+      (unless in-ai-buf
+        (setq lark-ai--context-string context)))
     (lark-ai--call-llm
      system-prompt user-msg
      (lambda (response)
@@ -923,8 +968,10 @@ executes it, and presents results."
                  (lark-ai--mark-all-done)
                  (lark-ai--call-llm-stream
                   system-prompt
-                  (format "%s\n\n%s\nRespond with plain text using markdown."
-                          prompt context)
+                  (lark-ai--build-user-message
+                   (concat prompt
+                           "\nRespond with plain text using markdown.")
+                   context history)
                   (lambda (text)
                     (when-let ((buf (get-buffer lark-ai--buf-name)))
                       (with-current-buffer buf
