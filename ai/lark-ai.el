@@ -1030,28 +1030,58 @@ CALLBACK receives the synthesis text."
 
 ;;;; Entry points
 
+(defcustom lark-ai-history-truncate-chars 800
+  "Maximum characters retained per prior assistant message in the
+follow-up prompt.  Long plan JSON or full document dumps from
+earlier turns are clipped to this length so they don't flood the
+LLM and bias it into re-running the previous plan."
+  :type 'integer
+  :group 'lark-ai)
+
 (defun lark-ai--build-user-message (prompt context history)
   "Build the LLM user message for PROMPT.
-CONTEXT is the originating-buffer context string (may be empty).
-HISTORY is `lark-ai--history' — a list of (ROLE . CONTENT) cons
-cells, newest first — and is included so the LLM sees prior
-turns in the same conversation."
-  (let (parts)
-    (when history
-      (push (concat
-             "Previous conversation:\n"
-             (mapconcat
-              (lambda (entry)
-                (format "%s: %s"
-                        (capitalize (car entry))
-                        (cdr entry)))
-              (reverse history)
-              "\n\n"))
-            parts))
+Uses a labelled, sectioned structure so the new question is the
+focus — prior turns and originating-buffer context are framed as
+background.  HISTORY is `lark-ai--history' (newest first); long
+assistant entries are truncated per `lark-ai-history-truncate-chars'
+to keep the previous plan JSON from biasing the LLM into repeating
+itself."
+  (let* ((clip
+          (lambda (text)
+            (if (> (length text) lark-ai-history-truncate-chars)
+                (concat (substring text 0 lark-ai-history-truncate-chars)
+                        "\n…[truncated]")
+              text)))
+         (history-block
+          (when history
+            (mapconcat
+             (lambda (entry)
+               (let ((role (car entry))
+                     (text (cdr entry)))
+                 (format "- %s: %s"
+                         (capitalize role)
+                         ;; User prompts are typically short — only
+                         ;; clip assistant content.
+                         (if (equal role "assistant")
+                             (funcall clip text)
+                           text))))
+             (reverse history)
+             "\n")))
+         (sections nil))
+    (when history-block
+      (push (concat "## Prior turns (background only)\n" history-block)
+            sections))
     (when (and context (not (string-empty-p context)))
-      (push context parts))
-    (push prompt parts)
-    (mapconcat #'identity (nreverse parts) "\n\n")))
+      (push (concat "## Originating buffer context\n" context)
+            sections))
+    (push (concat "## Current request\n" prompt
+                  (when history
+                    "\n\nAddress only the request above.  Do not\
+ repeat prior plan steps unless the user explicitly asks; if the\
+ question is a clarification or refinement of earlier results,\
+ answer it directly with a synthesis step instead of re-fetching."))
+          sections)
+    (mapconcat #'identity (nreverse sections) "\n\n")))
 
 ;;;###autoload
 (defun lark-ai-ask (prompt)
