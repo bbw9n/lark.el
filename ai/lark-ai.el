@@ -72,6 +72,59 @@ If nil, reads from environment variable LARK_AI_API_KEY."
   :type 'boolean
   :group 'lark-ai)
 
+(defcustom lark-ai-debug nil
+  "When non-nil, log LLM requests, responses, and plan parsing to
+the `*Lark AI Debug*' buffer.  Toggle interactively with
+`lark-ai-toggle-debug'."
+  :type 'boolean
+  :group 'lark-ai)
+
+;;;; Debug log
+
+(defconst lark-ai--debug-buf-name "*Lark AI Debug*"
+  "Name of the debug buffer.")
+
+(define-derived-mode lark-ai-debug-mode special-mode "Lark AI Debug"
+  "Major mode for the Lark AI debug log.")
+
+(defun lark-ai--debug-buffer ()
+  "Get or create the debug buffer."
+  (let ((buf (get-buffer-create lark-ai--debug-buf-name)))
+    (with-current-buffer buf
+      (unless (derived-mode-p 'lark-ai-debug-mode)
+        (lark-ai-debug-mode)))
+    buf))
+
+(defun lark-ai--debug-log (label fmt &rest args)
+  "Append a labelled entry to the debug buffer.
+LABEL is a short tag (e.g. \"REQUEST\", \"RESPONSE\").  FMT and
+ARGS are passed to `format'.  No-op when `lark-ai-debug' is nil."
+  (when lark-ai-debug
+    (let ((entry (apply #'format fmt args)))
+      (with-current-buffer (lark-ai--debug-buffer)
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (insert (format "\n=== [%s] %s ===\n%s\n"
+                          (format-time-string "%H:%M:%S.%3N")
+                          label entry)))))))
+
+;;;###autoload
+(defun lark-ai-toggle-debug ()
+  "Toggle Lark AI debug logging.
+When on, every LLM request/response and plan parse is logged to
+`*Lark AI Debug*'."
+  (interactive)
+  (setq lark-ai-debug (not lark-ai-debug))
+  (message "Lark AI debug: %s" (if lark-ai-debug "ON" "OFF"))
+  (when lark-ai-debug
+    (display-buffer (lark-ai--debug-buffer))))
+
+;;;###autoload
+(defun lark-ai-show-debug ()
+  "Pop up the Lark AI debug buffer."
+  (interactive)
+  (display-buffer (lark-ai--debug-buffer)))
+
 ;;;; Internal state
 
 (defvar lark-ai--last-plan nil
@@ -93,26 +146,40 @@ If nil, reads from environment variable LARK_AI_API_KEY."
 (defun lark-ai--parse-plan (json-string)
   "Parse a plan from the LLM's JSON-STRING response.
 Returns a list of step plists, or nil on parse failure."
+  (lark-ai--debug-log "PARSE-PLAN INPUT" "%s"
+                      (if (stringp json-string) json-string
+                        (format "%S" json-string)))
   (condition-case err
       (let* ((response (if (stringp json-string)
                            (lark-ai--extract-json json-string)
                          json-string))
-             (plan-data (alist-get 'plan response)))
-        (when (and plan-data (listp plan-data))
-          (seq-map-indexed
-           (lambda (step idx)
-             (list :index idx
-                   :command (let ((cmd (alist-get 'command step)))
-                              (when (and cmd (not (eq cmd :null)))
-                                (if (listp cmd) cmd (list cmd))))
-                   :description (or (alist-get 'description step) "")
-                   :side-effect (eq (alist-get 'side_effect step) t)
-                   :parallel-group (let ((pg (alist-get 'parallel_group step)))
-                                     (when (numberp pg) pg))
-                   :synthesize (eq (alist-get 'synthesize step) t)
-                   :synthesis-instruction (alist-get 'synthesis_instruction step)))
-           plan-data)))
+             (plan-data (alist-get 'plan response))
+             (steps
+              (when (and plan-data (listp plan-data))
+                (seq-map-indexed
+                 (lambda (step idx)
+                   (list :index idx
+                         :command (let ((cmd (alist-get 'command step)))
+                                    (when (and cmd (not (eq cmd :null)))
+                                      (if (listp cmd) cmd (list cmd))))
+                         :description (or (alist-get 'description step) "")
+                         :side-effect (eq (alist-get 'side_effect step) t)
+                         :parallel-group (let ((pg (alist-get 'parallel_group step)))
+                                           (when (numberp pg) pg))
+                         :synthesize (eq (alist-get 'synthesize step) t)
+                         :synthesis-instruction (alist-get 'synthesis_instruction step)))
+                 plan-data))))
+        (lark-ai--debug-log
+         "PARSE-PLAN RESULT"
+         "extracted-keys=%S plan-key-type=%s steps=%d"
+         (and (listp response) (mapcar #'car response))
+         (cond ((null plan-data) "missing")
+               ((listp plan-data) "list")
+               (t (format "%s" (type-of plan-data))))
+         (length steps))
+        steps)
     (error
+     (lark-ai--debug-log "PARSE-PLAN ERROR" "%s" (error-message-string err))
      (lark-ai--progress-log "Plan parse error: %s" (error-message-string err))
      nil)))
 
@@ -172,17 +239,36 @@ which has no domain.")
 (defvar lark-ai-plan-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map lark-ai-ui-mode-map)
+    (define-key map (kbd "C-c C-c") #'lark-ai-send-followup)
+    map)
+  "Keymap for the Lark AI buffer.
+Plan-review keys (RET / q / x) are not bound here — they live on
+`lark-ai-plan-keys-map' and are activated by a `keymap' text
+property on the plan fragment, so they only fire when point is
+on a plan step.  This keeps them out of the input area without
+needing to shadow them in `lark-ai-input-mode-map'.")
+
+(defvar lark-ai-plan-keys-map
+  (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'lark-ai-plan-execute)
     (define-key map (kbd "q")   #'lark-ai-plan-cancel)
     (define-key map (kbd "x")   #'lark-ai-plan-remove-step)
-    (define-key map (kbd "C-c C-c") #'lark-ai-send-followup)
     map)
-  "Keymap for the Lark AI buffer.")
+  "Plan-review bindings, attached as a `keymap' text property to
+the plan fragment by `lark-ai--refresh-plan-fragment'.  Scoped
+to the plan so plain typing in the follow-up input area below
+isn't intercepted.")
 
 (defvar lark-ai-input-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map text-mode-map)
     (define-key map (kbd "C-c C-c") #'lark-ai-send-followup)
+    ;; TAB still needs shadowing: `lark-ai-ui-mode-map' (the parent of
+    ;; `lark-ai-plan-mode-map') binds it to `lark-ai-ui-toggle-section',
+    ;; which would collapse the input fragment if pressed here.  The
+    ;; plan-review keys (RET/q/x) don't need shadows because they
+    ;; aren't on the buffer mode-map at all.
+    (define-key map (kbd "TAB") #'indent-for-tab-command)
     map)
   "Keymap for the editable input area.")
 
@@ -373,7 +459,15 @@ which has no domain.")
     (lark-ai-ui-update-fragment
      (lark-ai--frag "plan")
      (lark-ai--plan-label)
-     body)))
+     body)
+    ;; Scope plan-review keys (RET/q/x) to the plan fragment via a
+    ;; `keymap' text property — keeps them off the buffer mode-map
+    ;; so plain typing in the input area isn't intercepted.
+    (let ((region (lark-ai-ui--find-fragment (lark-ai--frag "plan"))))
+      (when region
+        (let ((inhibit-read-only t))
+          (put-text-property (car region) (cdr region)
+                             'keymap lark-ai-plan-keys-map))))))
 
 (defun lark-ai--plan-label ()
   "Return the plan section label for the current phase."
@@ -695,6 +789,9 @@ $step-N references in CMD-ARGS are resolved from prior results."
 (defun lark-ai--call-llm (system-prompt user-message callback)
   "Send SYSTEM-PROMPT and USER-MESSAGE to the LLM.
 Call CALLBACK with the response text."
+  (lark-ai--debug-log
+   "REQUEST" "backend=%s\n--- system ---\n%s\n--- user ---\n%s"
+   lark-ai-backend system-prompt user-message)
   (pcase lark-ai-backend
     ('gptel (lark-ai--call-gptel system-prompt user-message callback))
     ('http  (lark-ai--call-http system-prompt user-message callback))
@@ -717,9 +814,17 @@ Call CALLBACK with the response text."
     (gptel-request user-message
                    :system system-prompt
                    :callback (lambda (response info)
-                               (if (stringp response)
-                                   (funcall callback response)
-                                 (lark-ai--progress-log "LLM error: %S" info))))))
+                               (cond
+                                ((stringp response)
+                                 (lark-ai--debug-log
+                                  "RESPONSE (gptel)" "%s" response)
+                                 (funcall callback response))
+                                (t
+                                 (lark-ai--debug-log
+                                  "ERROR (gptel)"
+                                  "response=%S info=%S" response info)
+                                 (lark-ai--progress-log
+                                  "LLM error: %S" info)))))))
 
 ;; HTTP backend (OpenAI-compatible)
 (defun lark-ai--call-http (system-prompt user-message callback)
@@ -744,11 +849,16 @@ Call CALLBACK with the response text."
      url
      (lambda (status)
        (if (plist-get status :error)
-           (lark-ai--progress-log "HTTP error: %S" (plist-get status :error))
+           (progn
+             (lark-ai--debug-log
+              "ERROR (http)" "%S" (plist-get status :error))
+             (lark-ai--progress-log
+              "HTTP error: %S" (plist-get status :error)))
          (goto-char url-http-end-of-headers)
          (let* ((json-response (json-parse-buffer :object-type 'alist))
                 (content (lark--get-nested json-response
                                            'choices 0 'message 'content)))
+           (lark-ai--debug-log "RESPONSE (http)" "%s" (or content ""))
            (funcall callback (or content "")))))
      nil t t)))
 
@@ -770,29 +880,44 @@ Chunks are streamed into the *Lark AI* output section in real-time."
     (user-error "gptel is not installed"))
   ;; Create the output fragment for streaming
   (lark-ai--ensure-output-fragment)
+  (lark-ai--debug-log
+   "STREAM REQUEST" "--- system ---\n%s\n--- user ---\n%s"
+   system-prompt user-message)
   (let ((gptel-log-level nil)
         (inhibit-message t)
-        (accumulated ""))
+        (accumulated "")
+        (chunks 0))
     (gptel-request user-message
                    :system system-prompt
                    :stream t
                    :callback
-                   (lambda (response _info)
+                   (lambda (response info)
                      (cond
                       ((stringp response)
                        (setq accumulated
-                             (concat accumulated response))
+                             (concat accumulated response)
+                             chunks (1+ chunks))
+                       (lark-ai--debug-log
+                        "STREAM CHUNK"
+                        "#%d (%d chars): %s"
+                        chunks (length response) response)
                        ;; Append chunk with incremental highlighting
                        (when-let ((buf (get-buffer lark-ai--buf-name)))
                          (with-current-buffer buf
                            (lark-ai-ui-append-fragment
                             (lark-ai--frag "output") response))))
                       ((eq response t)
+                       (lark-ai--debug-log
+                        "STREAM DONE"
+                        "%d chunks, %d total chars\n--- accumulated ---\n%s"
+                        chunks (length accumulated) accumulated)
                        (funcall callback accumulated))
                       ((and (consp response)
                             (eq (car response) 'reasoning))
                        nil)
                       (t
+                       (lark-ai--debug-log
+                        "STREAM ERROR" "response=%S info=%S" response info)
                        (lark-ai--progress-log
                         "LLM stream error")))))))
 
@@ -956,6 +1081,12 @@ executes it, and presents results."
      system-prompt user-msg
      (lambda (response)
        (let ((plan (lark-ai--parse-plan response)))
+         (lark-ai--debug-log
+          "ASK BRANCH"
+          "plan=%s steps=%d all-synthesize=%s"
+          (if plan "parsed" "null")
+          (length plan)
+          (and plan (seq-every-p (lambda (s) (plist-get s :synthesize)) plan)))
          (if (null plan)
              (progn
                (lark-ai--progress-log "No structured plan — showing raw response")
