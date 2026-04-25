@@ -47,10 +47,15 @@
     map)
   "Keymap for `lark-ai-ui-mode'.")
 
-(define-derived-mode lark-ai-ui-mode special-mode "Lark AI"
-  "Major mode for the Lark AI fragment-based UI buffer."
+(define-derived-mode lark-ai-ui-mode fundamental-mode "Lark AI"
+  "Major mode for the Lark AI fragment-based UI buffer.
+Read-only protection is handled per-fragment via text properties,
+not `buffer-read-only', so the input area remains editable."
   (setq-local lark-ai-ui--content-store
-              (make-hash-table :test 'equal)))
+              (make-hash-table :test 'equal))
+  (setq buffer-read-only nil)
+  (setq truncate-lines nil)
+  (setq word-wrap t))
 
 ;;;; Low-level fragment operations
 
@@ -78,7 +83,8 @@ ID is a unique string, TYPE is a symbol, LABEL is the
 header text, BODY is the content string."
   (lark-ai-ui--ensure-store)
   (puthash id (or body "") lark-ai-ui--content-store)
-  (let ((inhibit-read-only t))
+  (let ((inhibit-read-only t)
+        (frag-beg (point)))
     ;; Label line
     (when label
       (insert (propertize label
@@ -96,7 +102,11 @@ header text, BODY is the content string."
         (put-text-property body-beg (point)
                            'lark-ai-ui-section 'body)))
     ;; Spacing
-    (insert "\n")))
+    (insert "\n")
+    ;; Mark entire fragment as read-only
+    (put-text-property frag-beg (point) 'read-only t)
+    (put-text-property frag-beg (point)
+                       'rear-nonsticky '(read-only))))
 
 (defun lark-ai-ui--insert-body (_id type body)
   "Insert BODY for fragment of TYPE with appropriate formatting."
@@ -152,7 +162,14 @@ Applies incremental markdown highlighting to the new text."
               (insert (propertize text 'lark-ai-ui-id id
                                   'lark-ai-ui-section 'body))
               ;; Incremental markdown highlighting
-              (lark-ai-ui--highlight-region ins-start (point)))))))))
+              (lark-ai-ui--highlight-region ins-start (point))
+              ;; Match other fragment insertions: appended text is
+              ;; read-only too, with the read-only stickiness limited
+              ;; so typing right after it (e.g. in the input area
+              ;; below) is still allowed.
+              (put-text-property ins-start (point) 'read-only t)
+              (put-text-property ins-start (point)
+                                 'rear-nonsticky '(read-only)))))))))
 
 (defun lark-ai-ui-clear ()
   "Clear all fragments from the buffer."
@@ -246,12 +263,16 @@ Applies incremental markdown highlighting to the new text."
 
 (defun lark-ai-ui-insert-separator (id)
   "Insert a visual separator with ID."
-  (let ((inhibit-read-only t))
+  (let ((inhibit-read-only t)
+        (beg (point)))
     (insert (propertize (make-string 50 ?─)
                         'face 'font-lock-comment-face
                         'lark-ai-ui-id id
                         'lark-ai-ui-type 'separator)
-            "\n")))
+            "\n")
+    (put-text-property beg (point) 'read-only t)
+    (put-text-property beg (point)
+                       'rear-nonsticky '(read-only))))
 
 (provide 'lark-ai-ui)
 ;;; lark-ai-ui.el ends here

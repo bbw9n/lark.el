@@ -217,30 +217,45 @@ Status is `pending', `running', `done', or `skipped'.")
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
       ;; Remove old input area if it exists
-      (let ((region (lark-ai-ui--find-fragment lark-ai--input-id)))
-        (when region
-          (let ((inhibit-read-only t))
-            (delete-region (car region) (cdr region)))))
+      (dolist (id (list lark-ai--input-id "ai-input-sep"))
+        (let ((region (lark-ai-ui--find-fragment id)))
+          (when region
+            (let ((inhibit-read-only t))
+              (delete-region (car region) (cdr region))))))
       ;; Insert new input area at the end
       (let ((inhibit-read-only t))
         (goto-char (point-max))
         (insert "\n")
         (lark-ai-ui-insert-separator "ai-input-sep")
-        (insert (propertize "Follow-up (C-c C-c to send):\n"
-                            'face 'font-lock-keyword-face
-                            'lark-ai-ui-id lark-ai--input-id
-                            'lark-ai-ui-section 'label
-                            'read-only t
-                            'rear-nonsticky '(read-only)))
-        (let ((input-start (point)))
-          (insert (propertize " "
+        ;; Label (read-only).  Make the label fully `rear-nonsticky'
+        ;; so a character typed at the start of the input body does
+        ;; NOT inherit `read-only', `face' or `lark-ai-ui-section=label'
+        ;; from the label.
+        (let ((label-beg (point)))
+          (insert (propertize "Follow-up (C-c C-c to send):\n"
+                              'face 'font-lock-keyword-face
                               'lark-ai-ui-id lark-ai--input-id
-                              'lark-ai-ui-section 'body
-                              'rear-nonsticky '(read-only lark-ai-ui-id)))
-          ;; Make the input area editable
+                              'lark-ai-ui-section 'label))
+          (put-text-property label-beg (point) 'read-only t)
+          (put-text-property label-beg (point) 'rear-nonsticky t))
+        ;; Editable input body — explicitly NOT `read-only'.  The
+        ;; trailing "\n" is `front-sticky' so characters typed before
+        ;; it inherit `lark-ai-ui-id', `lark-ai-ui-section=body' and
+        ;; the input keymap; without this the typed text would not be
+        ;; recognised by `lark-ai-ui--find-fragment' /
+        ;; `lark-ai--get-input-text', and RET / q / x from the buffer
+        ;; mode-map would shadow plain self-insertion.
+        (let ((input-start (point)))
+          (insert "\n")
           (put-text-property input-start (point)
-                             'keymap lark-ai-input-mode-map))
-        (goto-char (point-max))))))
+                             'lark-ai-ui-id lark-ai--input-id)
+          (put-text-property input-start (point)
+                             'lark-ai-ui-section 'body)
+          (put-text-property input-start (point)
+                             'keymap lark-ai-input-mode-map)
+          (put-text-property input-start (point) 'front-sticky t)
+          ;; Cursor here
+          (goto-char input-start))))))
 
 (defun lark-ai--get-input-text ()
   "Return the text in the input area, trimmed."
