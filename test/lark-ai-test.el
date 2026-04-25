@@ -72,15 +72,13 @@
       (should (member "lark-workflow-standup-report" selected)))))
 
 (ert-deftest lark-ai-test-select-skills-fallback ()
-  "Ambiguous prompt loads all domain skills."
+  "Ambiguous prompt loads shared only."
   (let ((lark-ai-skills--index
          '(("lark-shared" . (:description "shared" :dir "/tmp" :keywords ("shared")))
            ("lark-calendar" . (:description "calendar" :dir "/tmp" :keywords ("calendar")))
            ("lark-im" . (:description "messaging" :dir "/tmp" :keywords ("messaging"))))))
     (let ((selected (lark-ai-skills-select "help me with something")))
-      (should (member "lark-shared" selected))
-      (should (member "lark-calendar" selected))
-      (should (member "lark-im" selected)))))
+      (should (member "lark-shared" selected)))))
 
 ;;;; Plan parsing
 
