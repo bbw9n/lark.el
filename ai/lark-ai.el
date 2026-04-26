@@ -23,6 +23,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'lark-core)
 (require 'lark-ai-skills)
 (require 'lark-ai-context)
@@ -125,13 +126,40 @@ When on, every LLM request/response and plan parse is logged to
   (interactive)
   (display-buffer (lark-ai--debug-buffer)))
 
-;;;; Internal state
+;;;; Session state
+;;
+;; A single buffer-local struct holds all conversation state for the
+;; AI buffer.  Replaces the previous ~9 separate buffer-locals so that
+;; (a) the state machine is inspectable in one place, (b) `lark-ai-reset'
+;; can clear it atomically, and (c) abort can find the in-flight gptel
+;; request handle.
 
-(defvar lark-ai--last-plan nil
-  "Last executed plan for debugging.")
+(cl-defstruct lark-ai-session
+  (turn 0)                ; current conversation turn (1-indexed when active)
+  (phase 'idle)           ; idle | loading | review | executing | done
+  (history nil)           ; ((ROLE . CONTENT) ...) — newest first
+  (context "")            ; originating-buffer context string
+  (skills nil)            ; skill names selected for this conversation
+  (system-prompt nil)     ; full system prompt last sent
+  (last-plan nil)         ; last parsed plan (for skill match-text)
+  (steps nil)             ; current plan steps
+  (callback nil)          ; pending callback for plan-execute
+  (step-status nil)       ; alist (INDEX . STATUS) — pending/running/done/skipped
+  (step-results nil)      ; alist (INDEX . RESULT) from execution
+  (input-region-start nil) ; marker at start of the input region (separator)
+  (input-start nil))      ; marker at start of editable input body
 
-(defvar lark-ai--step-results nil
-  "Alist of (step-index . result) from plan execution.")
+(defvar-local lark-ai--session nil
+  "The `lark-ai-session' for this AI buffer.")
+
+(defun lark-ai--session ()
+  "Return the session for the AI buffer, creating it on first use.
+Always operates against the AI buffer, not the current buffer, so
+callers in user buffers (e.g. `lark-ai-ask' invoked from a doc)
+don't have to switch first."
+  (with-current-buffer (lark-ai--get-buffer)
+    (or lark-ai--session
+        (setq lark-ai--session (make-lark-ai-session)))))
 
 ;;;; Plan data structure
 
@@ -203,42 +231,6 @@ Returns a list of step plists, or nil on parse failure."
 
 (require 'lark-ai-ui)
 
-(defvar-local lark-ai-plan--steps nil
-  "The plan steps for the current turn.")
-
-(defvar-local lark-ai-plan--callback nil
-  "Callback to invoke when the plan is confirmed.")
-
-(defvar-local lark-ai-plan--phase nil
-  "Current phase: `loading', `review', `executing', or `done'.")
-
-(defvar-local lark-ai-plan--step-status nil
-  "Alist of (index . status).
-Status is `pending', `running', `done', or `skipped'.")
-
-(defvar-local lark-ai--turn 0
-  "Current conversation turn number.")
-
-(defvar-local lark-ai--history nil
-  "Conversation history as ((role . content) ...) for LLM context.")
-
-(defvar-local lark-ai--system-prompt nil
-  "System prompt for the current conversation.")
-
-(defvar-local lark-ai--context-string nil
-  "Originating buffer context for the current conversation.
-Captured on a fresh `lark-ai-ask' (invoked from a non-AI buffer)
-and reused on follow-ups so the LLM keeps seeing the buffer the
-user was in when they started the conversation — without this,
-follow-ups read context from the `*Lark AI*' buffer itself,
-which has no domain.")
-
-(defvar-local lark-ai--skills nil
-  "Skills selected for the current conversation.
-Reused as the base set on follow-ups and unioned with any new
-matches from the latest prompt + last-plan, so domain stays
-sticky even when a follow-up prompt has no domain keywords.")
-
 (defconst lark-ai--buf-name "*Lark AI*"
   "Name of the AI buffer.")
 
@@ -246,37 +238,30 @@ sticky even when a follow-up prompt has no domain keywords.")
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map lark-ai-ui-mode-map)
     (define-key map (kbd "C-c C-c") #'lark-ai-send-followup)
+    (define-key map (kbd "C-c C-k") #'lark-ai-abort)
+    (define-key map (kbd "C-c C-d") #'lark-ai-toggle-debug)
+    (define-key map (kbd "C-c C-l") #'lark-ai-reset)
     map)
   "Keymap for the Lark AI buffer.
-Plan-review keys (RET / q / x) are not bound here — they live on
-`lark-ai-plan-keys-map' and are activated by a `keymap' text
-property on the plan fragment, so they only fire when point is
-on a plan step.  This keeps them out of the input area without
-needing to shadow them in `lark-ai-input-mode-map'.")
+Intentionally minimal — only the C-c prefix bindings live here
+so that plain typing in the follow-up input area below isn't
+shadowed.  TAB → toggle-section is on `lark-ai-ui-fragment-map'
+(applied as a text property to each fragment), and the plan-review
+keys (RET/q/x) are on `lark-ai-plan-keys-map' (applied to the plan
+fragment only).")
 
 (defvar lark-ai-plan-keys-map
   (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map lark-ai-ui-fragment-map)
     (define-key map (kbd "RET") #'lark-ai-plan-execute)
     (define-key map (kbd "q")   #'lark-ai-plan-cancel)
     (define-key map (kbd "x")   #'lark-ai-plan-remove-step)
     map)
   "Plan-review bindings, attached as a `keymap' text property to
-the plan fragment by `lark-ai--refresh-plan-fragment'.  Scoped
-to the plan so plain typing in the follow-up input area below
-isn't intercepted.")
-
-(defvar lark-ai-input-mode-map
-  (let ((map (make-sparse-keymap)))
-    (set-keymap-parent map text-mode-map)
-    (define-key map (kbd "C-c C-c") #'lark-ai-send-followup)
-    ;; TAB still needs shadowing: `lark-ai-ui-mode-map' (the parent of
-    ;; `lark-ai-plan-mode-map') binds it to `lark-ai-ui-toggle-section',
-    ;; which would collapse the input fragment if pressed here.  The
-    ;; plan-review keys (RET/q/x) don't need shadows because they
-    ;; aren't on the buffer mode-map at all.
-    (define-key map (kbd "TAB") #'indent-for-tab-command)
-    map)
-  "Keymap for the editable input area.")
+the plan fragment by `lark-ai--refresh-plan-fragment'.  Inherits
+TAB from `lark-ai-ui-fragment-map' so toggling still works on the
+plan, and adds RET/q/x for review actions.  Scoped to the plan so
+plain typing in the follow-up input area below isn't intercepted.")
 
 (define-derived-mode lark-ai-plan-mode lark-ai-ui-mode "Lark AI"
   "Major mode for the Lark AI buffer.")
@@ -293,7 +278,7 @@ isn't intercepted.")
 
 (defun lark-ai--frag (suffix)
   "Return fragment ID for SUFFIX in the current turn."
-  (format "t%d-%s" lark-ai--turn suffix))
+  (format "t%d-%s" (lark-ai-session-turn (lark-ai--session)) suffix))
 
 ;;; Progress log — appends to the current turn's log fragment
 
@@ -307,71 +292,110 @@ isn't intercepted.")
         (lark-ai-ui-append-fragment
          (lark-ai--frag "log") entry)))))
 
-;;; Input area — editable region at the bottom
+;;; Session lifecycle commands
 
-(defconst lark-ai--input-id "ai-input"
-  "Fragment ID for the input area.")
+(declare-function gptel-abort "gptel" (&optional buf))
+
+;;;###autoload
+(defun lark-ai-abort ()
+  "Abort any in-flight LLM request and reset the session phase.
+Marks any running step as skipped so the plan fragment reflects
+reality.  Bound to \\[lark-ai-abort] in `lark-ai-plan-mode-map'."
+  (interactive)
+  (when (fboundp 'gptel-abort)
+    (ignore-errors (gptel-abort (lark-ai--get-buffer))))
+  (let ((session (lark-ai--session)))
+    (setf (lark-ai-session-phase session) 'idle
+          (lark-ai-session-callback session) nil)
+    ;; Mark anything still 'running as 'skipped so the plan view
+    ;; doesn't sit on a stale spinner.
+    (setf (lark-ai-session-step-status session)
+          (mapcar (lambda (kv)
+                    (cons (car kv)
+                          (if (eq (cdr kv) 'running) 'skipped (cdr kv))))
+                  (lark-ai-session-step-status session))))
+  (lark-ai--progress-log "Aborted by user.")
+  (lark-ai--refresh-plan-fragment)
+  (lark-ai--ensure-input-area)
+  (message "Lark AI: aborted"))
+
+;;;###autoload
+(defun lark-ai-reset ()
+  "Clear the AI buffer and start a fresh conversation.
+Aborts any in-flight request and discards all session state
+(history, context, skills, plan)."
+  (interactive)
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (when (fboundp 'gptel-abort)
+      (ignore-errors (gptel-abort buf)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer))
+      (setq lark-ai--session (make-lark-ai-session)))
+    (message "Lark AI: session reset")))
+
+;;; Input area — editable region at the bottom
+;;
+;; Boundary tracking is done with two markers stored on the session
+;; (`input-region-start' and `input-start').  This replaces the older
+;; approach of identifying the input via `lark-ai-ui-id' text properties
+;; on a body-sentinel "\n", which required a delicate front-sticky /
+;; rear-nonsticky dance to make typed characters inherit the right
+;; properties.  Markers are unambiguous and shrink/grow with edits.
+
+(defun lark-ai--clear-input-area ()
+  "Delete the existing input region (separator + label + body)."
+  (let* ((session (lark-ai--session))
+         (m (lark-ai-session-input-region-start session)))
+    (when (and m (marker-position m))
+      (let ((inhibit-read-only t))
+        (delete-region m (point-max))))
+    (setf (lark-ai-session-input-region-start session) nil
+          (lark-ai-session-input-start session) nil)))
 
 (defun lark-ai--ensure-input-area ()
-  "Ensure an editable input area exists at the bottom."
-  (let ((buf (lark-ai--get-buffer)))
+  "Insert the editable follow-up area at the bottom of the AI buffer.
+Records two markers on the session: `input-region-start' (start of
+the separator, used to delete the whole region) and `input-start'
+(start of editable text, used by `get-input-text')."
+  (let* ((buf (lark-ai--get-buffer))
+         (session (lark-ai--session)))
     (with-current-buffer buf
-      ;; Remove old input area if it exists
-      (dolist (id (list lark-ai--input-id "ai-input-sep"))
-        (let ((region (lark-ai-ui--find-fragment id)))
-          (when region
-            (let ((inhibit-read-only t))
-              (delete-region (car region) (cdr region))))))
-      ;; Insert new input area at the end
+      (lark-ai--clear-input-area)
       (let ((inhibit-read-only t))
         (goto-char (point-max))
         (insert "\n")
+        ;; Mark where the input region begins (everything from here
+        ;; to point-max is recreated each turn).
+        (setf (lark-ai-session-input-region-start session)
+              (copy-marker (point) nil))
         (lark-ai-ui-insert-separator "ai-input-sep")
-        ;; Label (read-only).  Make the label fully `rear-nonsticky'
-        ;; so a character typed at the start of the input body does
-        ;; NOT inherit `read-only', `face' or `lark-ai-ui-section=label'
-        ;; from the label.
+        ;; Read-only label.
         (let ((label-beg (point)))
-          (insert (propertize "Follow-up (C-c C-c to send):\n"
-                              'face 'font-lock-keyword-face
-                              'lark-ai-ui-id lark-ai--input-id
-                              'lark-ai-ui-section 'label))
+          (insert (propertize
+                   "Follow-up (C-c C-c send · C-c C-k abort · C-c C-l reset · C-c C-d debug):\n"
+                   'face 'font-lock-keyword-face))
           (put-text-property label-beg (point) 'read-only t)
-          (put-text-property label-beg (point) 'rear-nonsticky t))
-        ;; Editable input body — explicitly NOT `read-only'.  The
-        ;; trailing "\n" is `front-sticky' so characters typed before
-        ;; it inherit `lark-ai-ui-id', `lark-ai-ui-section=body' and
-        ;; the input keymap; without this the typed text would not be
-        ;; recognised by `lark-ai-ui--find-fragment' /
-        ;; `lark-ai--get-input-text', and RET / q / x from the buffer
-        ;; mode-map would shadow plain self-insertion.
-        (let ((input-start (point)))
-          (insert "\n")
-          (put-text-property input-start (point)
-                             'lark-ai-ui-id lark-ai--input-id)
-          (put-text-property input-start (point)
-                             'lark-ai-ui-section 'body)
-          (put-text-property input-start (point)
-                             'keymap lark-ai-input-mode-map)
-          (put-text-property input-start (point) 'front-sticky t)
-          ;; Cursor here
-          (goto-char input-start))))))
+          ;; The label is rear-nonsticky for `read-only' only — so the
+          ;; typed text just below isn't read-only, but other label
+          ;; properties (face/keymap) don't leak either way because we
+          ;; don't depend on inheritance for input identification.
+          (put-text-property label-beg (point)
+                             'rear-nonsticky '(read-only)))
+        ;; Mark where typed text starts.  Insertion-type nil keeps the
+        ;; marker at the same position when text is inserted at it,
+        ;; so it always points at the *start* of the user's input.
+        (setf (lark-ai-session-input-start session)
+              (copy-marker (point) nil))
+        (goto-char (lark-ai-session-input-start session))))))
 
 (defun lark-ai--get-input-text ()
-  "Return the text in the input area, trimmed."
-  (let ((region (lark-ai-ui--find-fragment lark-ai--input-id)))
-    (when region
-      (save-excursion
-        (goto-char (car region))
-        ;; Skip past the label line
-        (let ((body-start
-               (next-single-property-change
-                (car region) 'lark-ai-ui-section
-                nil (cdr region))))
-          (when body-start
-            (string-trim
-             (buffer-substring-no-properties
-              body-start (cdr region)))))))))
+  "Return the text typed in the input area, trimmed."
+  (when-let* ((session (lark-ai--session))
+              (m (lark-ai-session-input-start session))
+              (pos (marker-position m)))
+    (string-trim
+     (buffer-substring-no-properties pos (point-max)))))
 
 (defun lark-ai-send-followup ()
   "Send the text in the input area as a follow-up question."
@@ -379,43 +403,31 @@ isn't intercepted.")
   (let ((input (lark-ai--get-input-text)))
     (when (or (null input) (string-empty-p input))
       (user-error "Empty input"))
-    ;; Clear input area before processing
-    (let ((region (lark-ai-ui--find-fragment lark-ai--input-id)))
-      (when region
-        (let ((inhibit-read-only t))
-          (delete-region (car region) (cdr region)))))
-    ;; Also remove the input separator
-    (let ((region (lark-ai-ui--find-fragment "ai-input-sep")))
-      (when region
-        (let ((inhibit-read-only t))
-          (delete-region (car region) (cdr region)))))
+    (lark-ai--clear-input-area)
     (lark-ai-ask input)))
 
 ;;; Build a new turn's layout
 
 (defun lark-ai--show-loading (prompt skill-names)
   "Start a new turn in the AI buffer."
-  (let ((buf (lark-ai--get-buffer)))
+  (let* ((buf (lark-ai--get-buffer))
+         (session (lark-ai--session)))
     (with-current-buffer buf
-      ;; Remove input area from previous turn
-      (dolist (id (list lark-ai--input-id "ai-input-sep"))
-        (let ((region (lark-ai-ui--find-fragment id)))
-          (when region
-            (let ((inhibit-read-only t))
-              (delete-region (car region) (cdr region))))))
-      ;; Advance turn counter
-      (cl-incf lark-ai--turn)
-      (setq lark-ai-plan--steps nil
-            lark-ai-plan--callback nil
-            lark-ai-plan--phase 'loading
-            lark-ai-plan--step-status nil)
+      ;; Drop the previous input region, advance turn, reset per-turn
+      ;; plan state on the session.
+      (lark-ai--clear-input-area)
+      (cl-incf (lark-ai-session-turn session))
+      (setf (lark-ai-session-steps session) nil
+            (lark-ai-session-callback session) nil
+            (lark-ai-session-phase session) 'loading
+            (lark-ai-session-step-status session) nil)
       ;; On first turn, add header
-      (when (= lark-ai--turn 1)
+      (when (= (lark-ai-session-turn session) 1)
         (lark-ai-ui-clear)
         (lark-ai-ui-insert-fragment "ai-header" 'header "Lark AI" nil)
         (lark-ai-ui-insert-separator "ai-sep-header"))
       ;; Turn separator (after first turn)
-      (when (> lark-ai--turn 1)
+      (when (> (lark-ai-session-turn session) 1)
         (let ((inhibit-read-only t))
           (goto-char (point-max))
           (insert "\n")
@@ -441,19 +453,20 @@ isn't intercepted.")
          (propertize "Waiting for LLM response...\n"
                      'face 'font-lock-comment-face)))
       ;; Track conversation
-      (push (cons "user" prompt) lark-ai--history))
+      (push (cons "user" prompt) (lark-ai-session-history session)))
     (display-buffer buf)))
 
 ;;; Plan display — update the plan fragment
 
 (defun lark-ai--display-plan (steps callback)
   "Show STEPS for review.  CALLBACK called with confirmed steps."
-  (let ((buf (lark-ai--get-buffer)))
+  (let* ((buf (lark-ai--get-buffer))
+         (session (lark-ai--session)))
     (with-current-buffer buf
-      (setq lark-ai-plan--steps steps
-            lark-ai-plan--callback callback
-            lark-ai-plan--phase 'review
-            lark-ai-plan--step-status
+      (setf (lark-ai-session-steps session) steps
+            (lark-ai-session-callback session) callback
+            (lark-ai-session-phase session) 'review
+            (lark-ai-session-step-status session)
             (mapcar (lambda (s) (cons (plist-get s :index) 'pending))
                     steps))
       (lark-ai--refresh-plan-fragment))
@@ -469,7 +482,7 @@ isn't intercepted.")
     ;; Scope plan-review keys (RET/q/x) to the plan fragment via a
     ;; `keymap' text property — keeps them off the buffer mode-map
     ;; so plain typing in the input area isn't intercepted.
-    (let ((region (lark-ai-ui--find-fragment (lark-ai--frag "plan"))))
+    (let ((region (lark-ai-ui-find-fragment (lark-ai--frag "plan"))))
       (when region
         (let ((inhibit-read-only t))
           (put-text-property (car region) (cdr region)
@@ -477,64 +490,73 @@ isn't intercepted.")
 
 (defun lark-ai--plan-label ()
   "Return the plan section label for the current phase."
-  (pcase lark-ai-plan--phase
+  (pcase (lark-ai-session-phase (lark-ai--session))
     ('review    "Plan — confirm to execute")
     ('executing "Executing")
     ('done      "Complete")
     (_          "Plan")))
 
 (defun lark-ai--format-plan-body ()
-  "Format the plan steps as a string for the plan fragment."
-  (with-temp-buffer
-    (dolist (step lark-ai-plan--steps)
-      (let* ((idx (plist-get step :index))
-             (desc (plist-get step :description))
-             (cmd (plist-get step :command))
-             (side-effect (plist-get step :side-effect))
-             (synthesize (plist-get step :synthesize))
-             (pg (plist-get step :parallel-group))
-             (status (alist-get idx lark-ai-plan--step-status))
-             (indicator
-              (pcase status
-                ('done    (propertize "✓" 'face 'success))
-                ('running (propertize "⟳" 'face 'warning))
-                ('skipped (propertize "✗" 'face
-                                      'font-lock-comment-face))
-                (_        (propertize "○" 'face
-                                      'font-lock-comment-face)))))
-        (insert "  " indicator " "
-                (propertize desc 'face
-                            (pcase status
-                              ('done 'font-lock-comment-face)
-                              (_ (if side-effect 'warning
-                                   'default))))
-                (if (and side-effect (not (eq status 'done)))
-                    (propertize " ⚠ writes" 'face 'error)
-                  "")
-                (if synthesize
-                    (propertize " (synthesis)"
-                                'face 'font-lock-comment-face)
-                  "")
-                (if pg (format " [group %d]" pg) "")
-                "\n")
-        (when cmd
-          (insert "    "
-                  (propertize (string-join cmd " ")
-                              'face 'font-lock-string-face)
-                  "\n"))))
-    ;; Footer
-    (pcase lark-ai-plan--phase
-      ('review
-       (insert "\n"
-               (propertize "RET" 'face 'bold) " Execute  "
-               (propertize "x" 'face 'bold) " Remove step  "
-               (propertize "q" 'face 'bold) " Cancel\n"))
-      ('executing
-       (insert "\n"
-               (propertize "Running..."
-                           'face 'font-lock-comment-face)
-               "\n")))
-    (buffer-string)))
+  "Format the plan steps as a string for the plan fragment.
+Each step's line carries a `lark-ai-step-index' text property so
+`lark-ai-plan-remove-step' can pick the step under point without
+relying on line-number arithmetic."
+  (let ((session (lark-ai--session)))
+    (with-temp-buffer
+      (dolist (step (lark-ai-session-steps session))
+        (let* ((idx (plist-get step :index))
+               (desc (plist-get step :description))
+               (cmd (plist-get step :command))
+               (side-effect (plist-get step :side-effect))
+               (synthesize (plist-get step :synthesize))
+               (pg (plist-get step :parallel-group))
+               (status (alist-get idx (lark-ai-session-step-status session)))
+               (indicator
+                (pcase status
+                  ('done    (propertize "✓" 'face 'success))
+                  ('running (propertize "⟳" 'face 'warning))
+                  ('skipped (propertize "✗" 'face
+                                        'font-lock-comment-face))
+                  (_        (propertize "○" 'face
+                                        'font-lock-comment-face)))))
+          (let ((line-beg (point)))
+            (insert "  " indicator " "
+                    (propertize desc 'face
+                                (pcase status
+                                  ('done 'font-lock-comment-face)
+                                  (_ (if side-effect 'warning
+                                       'default))))
+                    (if (and side-effect (not (eq status 'done)))
+                        (propertize " ⚠ writes" 'face 'error)
+                      "")
+                    (if synthesize
+                        (propertize " (synthesis)"
+                                    'face 'font-lock-comment-face)
+                      "")
+                    (if pg (format " [group %d]" pg) "")
+                    "\n")
+            (when cmd
+              (insert "    "
+                      (propertize (string-join cmd " ")
+                                  'face 'font-lock-string-face)
+                      "\n"))
+            ;; Tag both lines (description + optional command) with
+            ;; the step's index so remove-step can dispatch by point.
+            (put-text-property line-beg (point)
+                               'lark-ai-step-index idx))))
+      ;; Footer
+      (pcase (lark-ai-session-phase session)
+        ('review
+         (insert "\n"
+                 (propertize "RET" 'face 'bold) " Execute  "
+                 (propertize "x" 'face 'bold) " Remove step  "
+                 (propertize "q" 'face 'bold) " Cancel\n"))
+        ('executing
+         (insert "\n"
+                 (propertize "Running..."
+                             'face 'font-lock-comment-face)
+                 "\n")))
+      (buffer-string))))
 
 ;;; Step status updates — only refresh the plan fragment
 
@@ -542,14 +564,15 @@ isn't intercepted.")
   "Update step INDEX to STATUS and refresh plan."
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (with-current-buffer buf
-      (setf (alist-get index lark-ai-plan--step-status) status)
+      (setf (alist-get index (lark-ai-session-step-status (lark-ai--session)))
+            status)
       (lark-ai--refresh-plan-fragment))))
 
 (defun lark-ai--mark-all-done ()
   "Mark execution as done and refresh plan."
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (with-current-buffer buf
-      (setq lark-ai-plan--phase 'done)
+      (setf (lark-ai-session-phase (lark-ai--session)) 'done)
       (lark-ai--refresh-plan-fragment))))
 
 
@@ -558,38 +581,44 @@ isn't intercepted.")
 (defun lark-ai-plan-execute ()
   "Execute the plan."
   (interactive)
-  (unless (eq lark-ai-plan--phase 'review)
-    (user-error "No plan to execute"))
-  (let ((steps lark-ai-plan--steps)
-        (callback lark-ai-plan--callback))
-    (setq lark-ai-plan--phase 'executing
-          lark-ai-plan--callback nil)
-    (lark-ai--refresh-plan-fragment)
-    (when callback
-      (funcall callback steps))))
+  (let ((session (lark-ai--session)))
+    (unless (eq (lark-ai-session-phase session) 'review)
+      (user-error "No plan to execute"))
+    (let ((steps (lark-ai-session-steps session))
+          (callback (lark-ai-session-callback session)))
+      (setf (lark-ai-session-phase session) 'executing
+            (lark-ai-session-callback session) nil)
+      (lark-ai--refresh-plan-fragment)
+      (when callback
+        (funcall callback steps)))))
 
 (defun lark-ai-plan-cancel ()
   "Cancel the plan."
   (interactive)
-  (setq lark-ai-plan--phase 'done
-        lark-ai-plan--callback nil)
+  (let ((session (lark-ai--session)))
+    (setf (lark-ai-session-phase session) 'done
+          (lark-ai-session-callback session) nil))
   (lark-ai--refresh-plan-fragment)
   (lark-ai--progress-log "Cancelled."))
 
 (defun lark-ai-plan-remove-step ()
-  "Remove the step closest to point."
+  "Remove the plan step at point.
+Reads the `lark-ai-step-index' text property attached by
+`lark-ai--format-plan-body', so the cursor can be anywhere on the
+step's description or command line."
   (interactive)
-  (unless (eq lark-ai-plan--phase 'review)
-    (user-error "Can only remove steps during review"))
-  (let* ((line (line-number-at-pos))
-         (idx (max 0 (/ (- line 8) 2))))
-    (when (and lark-ai-plan--steps (< idx (length lark-ai-plan--steps)))
-      (setq lark-ai-plan--steps
-            (append (seq-take lark-ai-plan--steps idx)
-                    (seq-drop lark-ai-plan--steps (1+ idx))))
-      (setq lark-ai-plan--step-status
+  (let ((session (lark-ai--session)))
+    (unless (eq (lark-ai-session-phase session) 'review)
+      (user-error "Can only remove steps during review"))
+    (let ((idx (get-text-property (point) 'lark-ai-step-index)))
+      (unless idx
+        (user-error "Place point on a plan step"))
+      (setf (lark-ai-session-steps session)
+            (seq-remove (lambda (s) (= (plist-get s :index) idx))
+                        (lark-ai-session-steps session)))
+      (setf (lark-ai-session-step-status session)
             (mapcar (lambda (s) (cons (plist-get s :index) 'pending))
-                    lark-ai-plan--steps))
+                    (lark-ai-session-steps session)))
       (lark-ai--refresh-plan-fragment))))
 
 ;;;; $step-N interpolation
@@ -704,10 +733,15 @@ Returns list of (field NAME), (index N), or (wildcard REST)."
 
 ;;;; Plan execution
 
+(defun lark-ai--push-result (idx result)
+  "Push (IDX . RESULT) onto the session's step-results."
+  (push (cons idx result)
+        (lark-ai-session-step-results (lark-ai--session))))
+
 (defun lark-ai--execute-plan (steps callback)
   "Execute STEPS sequentially/in-parallel, then call CALLBACK with all results.
 Results is an alist of (index . parsed-json-or-string)."
-  (setq lark-ai--step-results nil)
+  (setf (lark-ai-session-step-results (lark-ai--session)) nil)
   (let ((remaining (copy-sequence steps)))
     (lark-ai--execute-next remaining callback)))
 
@@ -715,7 +749,8 @@ Results is an alist of (index . parsed-json-or-string)."
   "Execute the next batch of REMAINING steps, then call CALLBACK."
   (if (null remaining)
       ;; All done
-      (funcall callback lark-ai--step-results)
+      (funcall callback
+               (lark-ai-session-step-results (lark-ai--session)))
     ;; Find the next parallel group
     (let* ((first (car remaining))
            (group (plist-get first :parallel-group))
@@ -741,7 +776,7 @@ Results is an alist of (index . parsed-json-or-string)."
             (cond
              ;; Synthesis step: defer to after we have results
              (synthesize
-              (push (cons idx :synthesize) lark-ai--step-results)
+              (lark-ai--push-result idx :synthesize)
               (setq pending (1- pending))
               (when (zerop pending)
                 (lark-ai--execute-next rest callback)))
@@ -754,7 +789,7 @@ Results is an alist of (index . parsed-json-or-string)."
                                        (setq pending (1- pending))
                                        (when (zerop pending)
                                          (lark-ai--execute-next rest callback))))
-                (push (cons idx '((skipped . t))) lark-ai--step-results)
+                (lark-ai--push-result idx '((skipped . t)))
                 (lark-ai--update-step-status idx 'skipped)
                 (lark-ai--progress-log "Step %d: skipped by user" idx)
                 (setq pending (1- pending))
@@ -769,7 +804,7 @@ Results is an alist of (index . parsed-json-or-string)."
                                      (lark-ai--execute-next rest callback)))))
              ;; No command and not synthesize: skip
              (t
-              (push (cons idx nil) lark-ai--step-results)
+              (lark-ai--push-result idx nil)
               (setq pending (1- pending))
               (when (zerop pending)
                 (lark-ai--execute-next rest callback))))))))))
@@ -777,13 +812,16 @@ Results is an alist of (index . parsed-json-or-string)."
 (defun lark-ai--run-step (index cmd-args done-fn)
   "Run lark-cli with CMD-ARGS, store result at INDEX, then call DONE-FN.
 $step-N references in CMD-ARGS are resolved from prior results."
-  (let ((resolved (lark-ai--interpolate-cmd cmd-args lark-ai--step-results)))
+  (let* ((session (lark-ai--session))
+         (resolved (lark-ai--interpolate-cmd
+                    cmd-args
+                    (lark-ai-session-step-results session))))
     (lark-ai--update-step-status index 'running)
     (lark-ai--progress-log "Step %d: lark-cli %s" index (string-join resolved " "))
     (lark--run-command
      resolved
      (lambda (result)
-       (push (cons index result) lark-ai--step-results)
+       (lark-ai--push-result index result)
        (lark-ai--update-step-status index 'done)
        (lark-ai--progress-log "Step %d: done" index)
        (funcall done-fn))
@@ -812,25 +850,28 @@ Call CALLBACK with the response text."
 (defvar gptel-log-level)
 
 (defun lark-ai--call-gptel (system-prompt user-message callback)
-  "Call the LLM via gptel."
+  "Call the LLM via gptel.
+Runs `gptel-request' inside the AI buffer so `gptel-abort'
+against that buffer can find and cancel the in-flight request."
   (unless (require 'gptel nil t)
     (user-error "gptel is not installed; install it or set `lark-ai-backend' to `http'"))
-  (let ((gptel-log-level nil)
-        (inhibit-message t))
-    (gptel-request user-message
-                   :system system-prompt
-                   :callback (lambda (response info)
-                               (cond
-                                ((stringp response)
-                                 (lark-ai--debug-log
-                                  "RESPONSE (gptel)" "%s" response)
-                                 (funcall callback response))
-                                (t
-                                 (lark-ai--debug-log
-                                  "ERROR (gptel)"
-                                  "response=%S info=%S" response info)
-                                 (lark-ai--progress-log
-                                  "LLM error: %S" info)))))))
+  (with-current-buffer (lark-ai--get-buffer)
+    (let ((gptel-log-level nil)
+          (inhibit-message t))
+      (gptel-request user-message
+                     :system system-prompt
+                     :callback (lambda (response info)
+                                 (cond
+                                  ((stringp response)
+                                   (lark-ai--debug-log
+                                    "RESPONSE (gptel)" "%s" response)
+                                   (funcall callback response))
+                                  (t
+                                   (lark-ai--debug-log
+                                    "ERROR (gptel)"
+                                    "response=%S info=%S" response info)
+                                   (lark-ai--progress-log
+                                    "LLM error: %S" info))))))))
 
 ;; HTTP backend (OpenAI-compatible)
 (defun lark-ai--call-http (system-prompt user-message callback)
@@ -881,7 +922,9 @@ Chunks are streamed into the *Lark AI* output section in real-time."
      (lark-ai--call-llm system-prompt user-message callback))))
 
 (defun lark-ai--call-gptel-stream (system-prompt user-message callback)
-  "Call LLM via gptel with streaming into the output fragment."
+  "Call LLM via gptel with streaming into the output fragment.
+Runs `gptel-request' inside the AI buffer so `gptel-abort' can
+find and cancel the in-flight stream."
   (unless (require 'gptel nil t)
     (user-error "gptel is not installed"))
   ;; Create the output fragment for streaming
@@ -893,7 +936,8 @@ Chunks are streamed into the *Lark AI* output section in real-time."
         (inhibit-message t)
         (accumulated "")
         (chunks 0))
-    (gptel-request user-message
+    (with-current-buffer (lark-ai--get-buffer)
+      (gptel-request user-message
                    :system system-prompt
                    :stream t
                    :callback
@@ -925,7 +969,7 @@ Chunks are streamed into the *Lark AI* output section in real-time."
                        (lark-ai--debug-log
                         "STREAM ERROR" "response=%S info=%S" response info)
                        (lark-ai--progress-log
-                        "LLM stream error")))))))
+                        "LLM stream error"))))))))
 
 ;;;; Synthesis (second LLM pass)
 
@@ -986,7 +1030,8 @@ CALLBACK receives the synthesis text."
      (lambda (text)
        (when-let ((buf (get-buffer lark-ai--buf-name)))
          (with-current-buffer buf
-           (push (cons "assistant" text) lark-ai--history)
+           (push (cons "assistant" text)
+                 (lark-ai-session-history (lark-ai--session)))
            (lark-ai--ensure-input-area)))))))
 
 ;;;; Output rendering
@@ -996,23 +1041,27 @@ CALLBACK receives the synthesis text."
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (with-current-buffer buf
       (let ((out-id (lark-ai--frag "output")))
-        (unless (lark-ai-ui--find-fragment out-id)
+        (unless (lark-ai-ui-find-fragment out-id)
           (let ((inhibit-read-only t))
             (goto-char (point-max))
             (lark-ai-ui-insert-separator (lark-ai--frag "sep"))
             (lark-ai-ui-insert-fragment
              out-id 'output "Output" "")))))))
 
-(defun lark-ai--present (content &optional _buffer-name)
-  "Display CONTENT in the output fragment, then add input area."
+(defun lark-ai--present (content &optional skip-history)
+  "Display CONTENT in the output fragment, then add input area.
+When SKIP-HISTORY is non-nil, do not push CONTENT into the
+conversation history — used for error fallbacks like
+parse-plan failure where the raw text would otherwise pollute
+future turns."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
       (lark-ai--ensure-output-fragment)
       (lark-ai-ui-update-fragment
        (lark-ai--frag "output") "Output" content)
-      ;; Track assistant response in history
-      (push (cons "assistant" content) lark-ai--history)
-      ;; Add input area for follow-ups
+      (unless skip-history
+        (push (cons "assistant" content)
+              (lark-ai-session-history (lark-ai--session))))
       (lark-ai--ensure-input-area))
     (pop-to-buffer buf)
     (lark-ai--scroll-to-output)))
@@ -1021,7 +1070,7 @@ CALLBACK receives the synthesis text."
   "Scroll the AI buffer to the output fragment."
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (with-current-buffer buf
-      (let ((region (lark-ai-ui--find-fragment
+      (let ((region (lark-ai-ui-find-fragment
                      (lark-ai--frag "output"))))
         (when region
           (goto-char (car region))
@@ -1042,7 +1091,7 @@ LLM and bias it into re-running the previous plan."
   "Build the LLM user message for PROMPT.
 Uses a labelled, sectioned structure so the new question is the
 focus — prior turns and originating-buffer context are framed as
-background.  HISTORY is `lark-ai--history' (newest first); long
+background.  HISTORY is the session history (newest first); long
 assistant entries are truncated per `lark-ai-history-truncate-chars'
 to keep the previous plan JSON from biasing the LLM into repeating
 itself."
@@ -1091,23 +1140,23 @@ executes it, and presents results."
   (interactive "sLark AI: ")
   (let* ((ai-buf (lark-ai--get-buffer))
          (in-ai-buf (eq (current-buffer) ai-buf))
+         (session (lark-ai--session))
          ;; On a follow-up (we are in the AI buffer), reuse the
          ;; originating context — the AI buffer itself has no domain,
          ;; so re-extracting it would lose what the user was viewing
          ;; when they started the conversation.  On a fresh ask from
          ;; a real buffer, capture context from there.
          (context (if in-ai-buf
-                      (with-current-buffer ai-buf
-                        (or lark-ai--context-string ""))
+                      (or (lark-ai-session-context session) "")
                     (lark-ai-context-format)))
-         (history (with-current-buffer ai-buf lark-ai--history))
-         (prev-skills (with-current-buffer ai-buf lark-ai--skills))
+         (history (lark-ai-session-history session))
+         (prev-skills (lark-ai-session-skills session))
          ;; Build the skill match-text from the originating buffer
          ;; context plus the last plan's command heads + descriptions.
          ;; This lets a non-specific follow-up (\"tell me more\") still
          ;; match domain keywords carried over from the prior turn.
          (last-plan-text
-          (when-let ((plan (with-current-buffer ai-buf lark-ai--last-plan)))
+          (when-let ((plan (lark-ai-session-last-plan session)))
             (mapconcat
              (lambda (s)
                (concat (or (when-let ((cmd (plist-get s :command)))
@@ -1136,16 +1185,13 @@ executes it, and presents results."
      "SKILLS" "prev=%S matched=%S → final=%S"
      prev-skills matched-skills skill-names)
     (lark-ai--show-loading prompt skill-names)
-    ;; Persist for follow-ups: system prompt always, selected skills
-    ;; always (so the next follow-up can reuse them), originating
-    ;; context only when invoked from a real buffer (so a follow-up
-    ;; doesn't overwrite the captured context with the empty AI-buffer
-    ;; context).
-    (with-current-buffer ai-buf
-      (setq lark-ai--system-prompt system-prompt
-            lark-ai--skills skill-names)
-      (unless in-ai-buf
-        (setq lark-ai--context-string context)))
+    ;; Persist for follow-ups.  Originating context is set only on a
+    ;; fresh ask (from a real buffer) so a follow-up doesn't overwrite
+    ;; the captured context with the empty AI-buffer context.
+    (setf (lark-ai-session-system-prompt session) system-prompt
+          (lark-ai-session-skills session) skill-names)
+    (unless in-ai-buf
+      (setf (lark-ai-session-context session) context))
     (lark-ai--call-llm
      system-prompt user-msg
      (lambda (response)
@@ -1158,10 +1204,21 @@ executes it, and presents results."
           (and plan (seq-every-p (lambda (s) (plist-get s :synthesize)) plan)))
          (if (null plan)
              (progn
-               (lark-ai--progress-log "No structured plan — showing raw response")
+               ;; Plan parse failed.  Surface a clear error to the
+               ;; user (raw response is still in *Lark AI Debug* if
+               ;; debug is on) and DO NOT push the raw text into
+               ;; history — partial JSON pollutes future turns.
+               (lark-ai--progress-log
+                "LLM did not return a parseable plan; see *Lark AI Debug*.")
                (lark-ai--mark-all-done)
-               (lark-ai--present response))
-           (setq lark-ai--last-plan plan)
+               (lark-ai--present
+                (concat
+                 (propertize "Could not parse a plan from the LLM response.\n"
+                             'face 'error)
+                 "Toggle `M-x lark-ai-toggle-debug' and re-ask to see the raw\
+ response, or rephrase the request.")
+                'skip-history))
+           (setf (lark-ai-session-last-plan session) plan)
            (if (seq-every-p (lambda (s) (plist-get s :synthesize)) plan)
                (progn
                  (lark-ai--progress-log "Pure synthesis — streaming")
@@ -1175,7 +1232,8 @@ executes it, and presents results."
                   (lambda (text)
                     (when-let ((buf (get-buffer lark-ai--buf-name)))
                       (with-current-buffer buf
-                        (push (cons "assistant" text) lark-ai--history)
+                        (push (cons "assistant" text)
+                              (lark-ai-session-history (lark-ai--session)))
                         (lark-ai--ensure-input-area))))))
              (lark-ai--display-plan
               plan

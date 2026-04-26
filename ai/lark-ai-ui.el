@@ -41,11 +41,21 @@
 
 ;;;; Buffer setup
 
-(defvar lark-ai-ui-mode-map
+(defvar lark-ai-ui-mode-map (make-sparse-keymap)
+  "Keymap for `lark-ai-ui-mode'.
+Intentionally minimal: per-fragment behaviour (TAB → toggle, plan
+keys, etc.) is attached as `keymap' text properties on the fragment
+itself, so the input area at the bottom can stay free of those
+bindings without needing to shadow them.")
+
+(defvar lark-ai-ui-fragment-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "TAB") #'lark-ai-ui-toggle-section)
     map)
-  "Keymap for `lark-ai-ui-mode'.")
+  "Keymap attached to every fragment via the `keymap' text property.
+By living on the fragment instead of the buffer mode-map, TAB only
+toggles when point is actually on a fragment — leaving the input
+area below free for plain self-insertion.")
 
 (define-derived-mode lark-ai-ui-mode fundamental-mode "Lark AI"
   "Major mode for the Lark AI fragment-based UI buffer.
@@ -59,7 +69,7 @@ not `buffer-read-only', so the input area remains editable."
 
 ;;;; Low-level fragment operations
 
-(defun lark-ai-ui--find-fragment (id)
+(defun lark-ai-ui-find-fragment (id)
   "Find the start and end positions of fragment ID.
 Returns (BEG . END) or nil."
   (save-excursion
@@ -103,10 +113,14 @@ header text, BODY is the content string."
                            'lark-ai-ui-section 'body)))
     ;; Spacing
     (insert "\n")
-    ;; Mark entire fragment as read-only
+    ;; Mark entire fragment as read-only and attach the fragment
+    ;; keymap (TAB → toggle).  Putting it as a text property here
+    ;; keeps it off the buffer mode-map, so the input area at the
+    ;; bottom doesn't need to shadow TAB.
     (put-text-property frag-beg (point) 'read-only t)
     (put-text-property frag-beg (point)
-                       'rear-nonsticky '(read-only))))
+                       'rear-nonsticky '(read-only))
+    (put-text-property frag-beg (point) 'keymap lark-ai-ui-fragment-map)))
 
 (defun lark-ai-ui--insert-body (_id type body)
   "Insert BODY for fragment of TYPE with appropriate formatting."
@@ -120,7 +134,7 @@ header text, BODY is the content string."
   "Replace the content of fragment ID.
 If LABEL is non-nil, update the label.  BODY replaces the body."
   (lark-ai-ui--ensure-store)
-  (let ((region (lark-ai-ui--find-fragment id)))
+  (let ((region (lark-ai-ui-find-fragment id)))
     (if region
         (let ((inhibit-read-only t))
           (when body
@@ -149,7 +163,7 @@ Applies incremental markdown highlighting to the new text."
          (new (concat old text)))
     (puthash id new lark-ai-ui--content-store)
     ;; Find the fragment's body end and append there
-    (let ((region (lark-ai-ui--find-fragment id)))
+    (let ((region (lark-ai-ui-find-fragment id)))
       (when region
         (let ((inhibit-read-only t))
           (save-excursion
@@ -164,12 +178,14 @@ Applies incremental markdown highlighting to the new text."
               ;; Incremental markdown highlighting
               (lark-ai-ui--highlight-region ins-start (point))
               ;; Match other fragment insertions: appended text is
-              ;; read-only too, with the read-only stickiness limited
-              ;; so typing right after it (e.g. in the input area
-              ;; below) is still allowed.
+              ;; read-only too (with rear-nonsticky so typing right
+              ;; after it is still allowed) and carries the fragment
+              ;; keymap so TAB toggles consistently.
               (put-text-property ins-start (point) 'read-only t)
               (put-text-property ins-start (point)
-                                 'rear-nonsticky '(read-only)))))))))
+                                 'rear-nonsticky '(read-only))
+              (put-text-property ins-start (point)
+                                 'keymap lark-ai-ui-fragment-map))))))))
 
 (defun lark-ai-ui-clear ()
   "Clear all fragments from the buffer."
@@ -185,7 +201,7 @@ Applies incremental markdown highlighting to the new text."
   (interactive)
   (let ((id (get-text-property (point) 'lark-ai-ui-id)))
     (when id
-      (let ((region (lark-ai-ui--find-fragment id)))
+      (let ((region (lark-ai-ui-find-fragment id)))
         (when region
           (save-excursion
             (goto-char (car region))
@@ -272,7 +288,8 @@ Applies incremental markdown highlighting to the new text."
             "\n")
     (put-text-property beg (point) 'read-only t)
     (put-text-property beg (point)
-                       'rear-nonsticky '(read-only))))
+                       'rear-nonsticky '(read-only))
+    (put-text-property beg (point) 'keymap lark-ai-ui-fragment-map)))
 
 (provide 'lark-ai-ui)
 ;;; lark-ai-ui.el ends here

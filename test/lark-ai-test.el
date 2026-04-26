@@ -318,5 +318,133 @@
     (should (string-match-p (format-time-string "%Y-%m-%d") preamble))
     (should (string-match-p "Response Format" preamble))))
 
+;;;; Skill selection — context-aware + no-fallback
+
+(ert-deftest lark-ai-test-select-skills-context-match ()
+  "Match via the optional CONTEXT arg when the prompt itself is generic."
+  (let ((lark-ai-skills--index
+         '(("lark-shared" . (:description "shared" :dir "/tmp" :keywords ("shared")))
+           ("lark-calendar" . (:description "calendar" :dir "/tmp" :keywords ("calendar")))
+           ("lark-task" . (:description "tasks" :dir "/tmp" :keywords ("tasks"))))))
+    (let ((selected (lark-ai-skills-select "tell me more"
+                                           "calendar +agenda Fetch agenda")))
+      (should (member "lark-shared" selected))
+      (should (member "lark-calendar" selected))
+      (should-not (member "lark-task" selected)))))
+
+(ert-deftest lark-ai-test-select-skills-no-fallback ()
+  "No regex match yields only lark-shared (no all-skills dump)."
+  (let ((lark-ai-skills--index
+         '(("lark-shared" . (:description "shared" :dir "/tmp" :keywords ("shared")))
+           ("lark-calendar" . (:description "calendar" :dir "/tmp" :keywords ("calendar")))
+           ("lark-im" . (:description "messaging" :dir "/tmp" :keywords ("messaging")))
+           ("lark-task" . (:description "tasks" :dir "/tmp" :keywords ("tasks"))))))
+    (let ((selected (lark-ai-skills-select "tell me more about that")))
+      (should (equal selected '("lark-shared")))
+      (should-not (member "lark-calendar" selected))
+      (should-not (member "lark-task" selected)))))
+
+;;;; build-user-message — structure, history truncation
+
+(ert-deftest lark-ai-test-build-user-message-no-history ()
+  "First-turn message: just `## Current request' + prompt."
+  (let ((msg (lark-ai--build-user-message "do the thing" "" nil)))
+    (should (string-match-p "## Current request" msg))
+    (should (string-match-p "do the thing" msg))
+    (should-not (string-match-p "## Prior turns" msg))
+    (should-not (string-match-p "## Originating buffer context" msg))
+    ;; No history means no anti-repeat trailer.
+    (should-not (string-match-p "Address only the request" msg))))
+
+(ert-deftest lark-ai-test-build-user-message-with-context ()
+  "Originating-buffer context appears in its own labelled section."
+  (let ((msg (lark-ai--build-user-message "x" "Viewing doc tok_42" nil)))
+    (should (string-match-p "## Originating buffer context" msg))
+    (should (string-match-p "Viewing doc tok_42" msg))))
+
+(ert-deftest lark-ai-test-build-user-message-with-history ()
+  "Prior turns rendered as a list with `## Prior turns' header."
+  (let* ((history '(("assistant" . "Here's the agenda")
+                    ("user" . "show agenda")))
+         (msg (lark-ai--build-user-message "tell me more" "" history)))
+    (should (string-match-p "## Prior turns" msg))
+    (should (string-match-p "User: show agenda" msg))
+    (should (string-match-p "Assistant: Here's the agenda" msg))
+    ;; Trailing anti-repeat instruction only when history is present.
+    (should (string-match-p "Address only the request" msg))))
+
+(ert-deftest lark-ai-test-build-user-message-truncates-assistant ()
+  "Long assistant text is clipped to `lark-ai-history-truncate-chars'."
+  (let* ((lark-ai-history-truncate-chars 50)
+         (long-text (make-string 200 ?a))
+         (history `(("assistant" . ,long-text)
+                    ("user" . "q")))
+         (msg (lark-ai--build-user-message "next" "" history)))
+    (should (string-match-p "…\\[truncated\\]" msg))
+    ;; Original 200-char string should not appear verbatim.
+    (should-not (string-match-p (regexp-quote long-text) msg))))
+
+(ert-deftest lark-ai-test-build-user-message-keeps-user-prompts ()
+  "User prompts are kept un-truncated even if very long."
+  (let* ((lark-ai-history-truncate-chars 20)
+         (long-user (make-string 100 ?u))
+         (history `(("assistant" . "ok")
+                    ("user" . ,long-user)))
+         (msg (lark-ai--build-user-message "x" "" history)))
+    (should (string-match-p (regexp-quote long-user) msg))))
+
+;;;; Session struct
+
+(ert-deftest lark-ai-test-session-defaults ()
+  "Fresh session has sensible defaults."
+  (let ((s (make-lark-ai-session)))
+    (should (= (lark-ai-session-turn s) 0))
+    (should (eq (lark-ai-session-phase s) 'idle))
+    (should (null (lark-ai-session-history s)))
+    (should (equal (lark-ai-session-context s) ""))
+    (should (null (lark-ai-session-skills s)))
+    (should (null (lark-ai-session-steps s)))
+    (should (null (lark-ai-session-input-start s)))
+    (should (null (lark-ai-session-input-region-start s)))))
+
+(ert-deftest lark-ai-test-session-setf ()
+  "Session slots are setf-able."
+  (let ((s (make-lark-ai-session)))
+    (setf (lark-ai-session-turn s) 3
+          (lark-ai-session-phase s) 'review
+          (lark-ai-session-skills s) '("lark-calendar"))
+    (should (= (lark-ai-session-turn s) 3))
+    (should (eq (lark-ai-session-phase s) 'review))
+    (should (equal (lark-ai-session-skills s) '("lark-calendar")))))
+
+;;;; Plan body — step-index text property for at-point removal
+
+(ert-deftest lark-ai-test-format-plan-body-step-index ()
+  "Each rendered step line carries its `lark-ai-step-index' index."
+  (let ((buf (get-buffer-create "*lark-ai-test-plan*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (lark-ai-plan-mode)
+          (let ((session (lark-ai--session)))
+            (setf (lark-ai-session-steps session)
+                  '((:index 0 :description "first"  :command ("a" "b"))
+                    (:index 1 :description "second" :command nil :synthesize t))
+                  (lark-ai-session-step-status session)
+                  '((0 . pending) (1 . pending))
+                  (lark-ai-session-phase session) 'review))
+          (let ((body (lark-ai--format-plan-body)))
+            ;; Body should mention both descriptions.
+            (should (string-match-p "first" body))
+            (should (string-match-p "second" body))
+            ;; Step-index property should be set on each step's chars.
+            (let ((found-0 nil) (found-1 nil))
+              (dotimes (i (length body))
+                (pcase (get-text-property i 'lark-ai-step-index body)
+                  (0 (setq found-0 t))
+                  (1 (setq found-1 t))))
+              (should found-0)
+              (should found-1))))
+      (kill-buffer buf))))
+
 (provide 'lark-ai-test)
 ;;; lark-ai-test.el ends here
