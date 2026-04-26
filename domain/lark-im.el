@@ -294,6 +294,36 @@ Each chat is displayed as a multi-line section.")
   "Lark Chat"
   "Major mode for viewing a Lark chat thread.")
 
+;;;; AI context providers
+
+(defun lark-im--ai-context-chat ()
+  "Return the AI context plist for a chat thread buffer."
+  (let ((chat-id lark-im--chat-id)
+        (chat-name lark-im--chat-name)
+        (msg-id (get-text-property (point) 'lark-message-id)))
+    (list :domain "im"
+          :buffer-type "chat"
+          :item (list :chat-id chat-id
+                      :chat-name chat-name
+                      :message-id msg-id)
+          :summary (format "Chat: %s%s"
+                           (or chat-name chat-id "unknown")
+                           (if msg-id
+                               (format ", cursor on message %s" msg-id)
+                             "")))))
+
+(defun lark-im--ai-context-chats ()
+  "Return the AI context plist for a chat list buffer."
+  (let ((chats lark-im--chats)
+        (chat-id (get-text-property (point) 'lark-chat-id)))
+    (list :domain "im"
+          :buffer-type "chat-list"
+          :item (when chat-id (list :chat-id chat-id))
+          :summary (format "Chat list with %d chats" (length chats)))))
+
+(put 'lark-im-chat-mode  'lark-ai-context-provider #'lark-im--ai-context-chat)
+(put 'lark-im-chats-mode 'lark-ai-context-provider #'lark-im--ai-context-chats)
+
 ;;;; Chat listing
 ;; CLI: im +chat-search [--query X]
 

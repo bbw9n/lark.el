@@ -209,6 +209,27 @@ Prefers guid (from +get-my-tasks), falls back to task_id / id."
   "Major mode for browsing Lark tasks.
 Each task is displayed as a multi-line section.")
 
+;;;; AI context provider — shared by both task list and agenda modes
+
+(defun lark-tasks--ai-context ()
+  "Return the AI context plist for a tasks buffer."
+  (let ((items lark-tasks--items)
+        (task-id (get-text-property (point) 'lark-task-id)))
+    (list :domain "tasks"
+          :buffer-type "task-list"
+          :item (when task-id
+                  (list :task-id task-id
+                        :task (seq-find (lambda (tk)
+                                          (equal (alist-get 'guid tk) task-id))
+                                        items)))
+          :summary (format "Task list with %d tasks%s"
+                           (length items)
+                           (if task-id
+                               (format ", cursor on task %s" task-id)
+                             "")))))
+
+(put 'lark-tasks-mode 'lark-ai-context-provider #'lark-tasks--ai-context)
+
 (defun lark-tasks--task-id-at-point ()
   "Return the task ID at point, or nil."
   (get-text-property (point) 'lark-task-id))
@@ -590,6 +611,9 @@ With prefix argument SHOW-COMPLETED, include completed tasks."
 (define-derived-mode lark-tasks-agenda-mode special-mode
   "Lark Agenda"
   "Major mode for the Lark Tasks org-agenda–style view.")
+
+(put 'lark-tasks-agenda-mode 'lark-ai-context-provider
+     #'lark-tasks--ai-context)
 
 (defvar-local lark-tasks-agenda--items nil
   "Cached tasks for the agenda buffer.")

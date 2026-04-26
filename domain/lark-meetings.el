@@ -125,6 +125,21 @@ Uses the first line of display_info, falling back to description."
   "Major mode for browsing Lark meeting search results.
 Each meeting is displayed as a multi-line section.")
 
+;;;; AI context provider
+
+(defun lark-meetings--ai-context ()
+  "Return the AI context plist for a meetings buffer."
+  (let ((items lark-meetings--items)
+        (meeting-id (get-text-property (point) 'lark-meeting-id)))
+    (list :domain "meetings"
+          :buffer-type "meeting-list"
+          :item (when meeting-id (list :meeting-id meeting-id))
+          :summary (format "Meeting list with %d meetings"
+                           (length items)))))
+
+(put 'lark-meetings-mode 'lark-ai-context-provider
+     #'lark-meetings--ai-context)
+
 (defun lark-meetings--meeting-id-at-point ()
   "Return the meeting ID at point, or nil."
   (get-text-property (point) 'lark-meeting-id))

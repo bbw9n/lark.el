@@ -191,6 +191,20 @@ When called interactively, displays the result in a detail buffer."
 (defvar-local lark-contact--users nil
   "Cached user list for the current buffer.")
 
+;;;; AI context provider
+
+(defun lark-contact--ai-context ()
+  "Return the AI context plist for a contact search buffer."
+  (let ((users lark-contact--users))
+    (list :domain "contacts"
+          :buffer-type "contact-search"
+          :item nil
+          :summary (format "Contact search results: %d users"
+                           (length users)))))
+
+(put 'lark-contact-search-mode 'lark-ai-context-provider
+     #'lark-contact--ai-context)
+
 (defun lark-contact--extract-users (data)
   "Extract user list from lark-cli response DATA."
   (or (lark--get-nested data 'data 'items)

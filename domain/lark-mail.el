@@ -155,6 +155,24 @@
 
 \\{lark-mail-mode-map}")
 
+;;;; AI context provider
+
+(defun lark-mail--ai-context ()
+  "Return the AI context plist for a mail buffer."
+  (let ((items lark-mail--items)
+        (mail-id lark-mail--mail-id)
+        (folder lark-mail--folder))
+    (list :domain "mail"
+          :buffer-type (if mail-id "mail-detail" "inbox")
+          :item (when mail-id (list :mail-id mail-id))
+          :summary (format "Mail %s%s"
+                           (or folder "inbox")
+                           (if mail-id
+                               (format ", viewing mail %s" mail-id)
+                             (format " with %d items" (length items)))))))
+
+(put 'lark-mail-mode 'lark-ai-context-provider #'lark-mail--ai-context)
+
 (defun lark-mail--id-at-point ()
   "Return the mail ID at point, or nil."
   (get-text-property (point) 'lark-mail-id))

@@ -191,6 +191,40 @@ Search results nest fields under result_meta; other responses don't."
   "Major mode for browsing Lark document search results.
 Each result is displayed as a multi-line section.")
 
+;;;; AI context provider
+;;
+;; Two entry points:
+;;   - search-results buffer (`lark-docs-search-mode') — registered
+;;     via the symbol property below.
+;;   - doc-detail buffer (any of org-mode/markdown-mode/special-mode,
+;;     identified by buffer name "*Lark Doc: ...*") — looked up by
+;;     `lark-ai-context' as a `fboundp'-checked soft fallback.
+
+(defun lark-docs--ai-context ()
+  "Return the AI context plist for a docs buffer.
+Branches on whether `lark-docs--doc-token' is bound (detail
+buffer) vs not (search-results buffer)."
+  (let ((doc-token (and (boundp 'lark-docs--doc-token)
+                        lark-docs--doc-token))
+        (results (and (boundp 'lark-docs--search-results)
+                      lark-docs--search-results)))
+    (if doc-token
+        ;; Detail buffer — include content so the LLM doesn't re-fetch.
+        (list :domain "docs"
+              :buffer-type "doc-detail"
+              :item (list :doc-token doc-token)
+              :content (buffer-substring-no-properties
+                        (point-min) (point-max))
+              :summary (format "Viewing document %s" doc-token))
+      (list :domain "docs"
+            :buffer-type "search-results"
+            :item nil
+            :summary (format "Doc search results: %d items"
+                             (length results))))))
+
+(put 'lark-docs-search-mode 'lark-ai-context-provider
+     #'lark-docs--ai-context)
+
 (defun lark-docs--doc-token-at-point ()
   "Return the document token at point, or nil."
   (get-text-property (point) 'lark-doc-token))

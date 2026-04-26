@@ -175,6 +175,34 @@ Handles the two response shapes from lark-cli:
   "Major mode for browsing Lark calendar events.
 Each event is displayed as a multi-line section.")
 
+;;;; AI context provider — lets `lark-ai-act' know what's at point
+;;
+;; Registered via the `lark-ai-context-provider' symbol property; the
+;; AI module looks it up by major mode without reaching into our
+;; buffer-locals.  No load-time dependency on `lark-ai-context'.
+
+(defun lark-calendar--ai-context ()
+  "Return the AI context plist for a calendar events buffer."
+  (let ((event-id (get-text-property (point) 'lark-event-id))
+        (events lark-calendar--events))
+    (list :domain "calendar"
+          :buffer-type "agenda"
+          :item (when event-id
+                  (list :event-id event-id
+                        :event (seq-find (lambda (e)
+                                           (equal (or (alist-get 'event_id e)
+                                                      (alist-get 'id e))
+                                                  event-id))
+                                         events)))
+          :summary (format "Calendar agenda with %d events%s"
+                           (length events)
+                           (if event-id
+                               (format ", cursor on event %s" event-id)
+                             "")))))
+
+(put 'lark-calendar-events-mode 'lark-ai-context-provider
+     #'lark-calendar--ai-context)
+
 (defun lark-calendar--rsvp-face (status)
   "Return a face for RSVP STATUS."
   (pcase status

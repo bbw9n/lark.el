@@ -152,6 +152,21 @@ Keybindings follow dired conventions where possible.")
 
 \\{lark-drive-mode-map}")
 
+;;;; AI context provider
+
+(defun lark-drive--ai-context ()
+  "Return the AI context plist for a drive buffer."
+  (let ((folder lark-drive--folder-token)
+        (files lark-drive--files)
+        (file-token (get-text-property (point) 'lark-file-token)))
+    (list :domain "drive"
+          :buffer-type "file-list"
+          :item (when file-token (list :file-token file-token))
+          :summary (format "Drive folder %s, %d files"
+                           (or folder "root") (length files)))))
+
+(put 'lark-drive-mode 'lark-ai-context-provider #'lark-drive--ai-context)
+
 ;;;; Text properties & navigation
 
 (defun lark-drive--file-at-point ()

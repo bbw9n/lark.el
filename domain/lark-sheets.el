@@ -240,6 +240,20 @@ Use \\[lark-sheets-write-table] to push changes back, or
 \\[lark-sheets-append-table] to append new rows."
   (setq-local buffer-read-only nil))
 
+;;;; AI context provider — shared by both info and table modes
+
+(defun lark-sheets--ai-context ()
+  "Return the AI context plist for a sheets buffer."
+  (let ((token lark-sheets--token)
+        (sheet-id lark-sheets--sheet-id))
+    (list :domain "sheets"
+          :buffer-type "spreadsheet"
+          :item (list :token token :sheet-id sheet-id)
+          :summary (format "Spreadsheet %s" (or token "unknown")))))
+
+(put 'lark-sheets-mode      'lark-ai-context-provider #'lark-sheets--ai-context)
+(put 'lark-sheets-info-mode 'lark-ai-context-provider #'lark-sheets--ai-context)
+
 ;;;###autoload
 (defun lark-sheets-read (ref range)
   "Read spreadsheet REF (token or URL) at RANGE and display as org table.

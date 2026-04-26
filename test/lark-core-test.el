@@ -162,6 +162,92 @@
    (lark--handle-error '((code . 403) (msg . "forbidden")))
    :type 'user-error))
 
+(ert-deftest lark-test-handle-error-ok-true-passes ()
+  "ok=t (success) passes through untouched."
+  (let ((resp '((ok . t) (data . ((items . nil))))))
+    (should (equal (lark--handle-error resp) resp))))
+
+(ert-deftest lark-test-handle-error-ok-false-signals ()
+  "ok=:false envelope signals user-error with the embedded message."
+  (let ((resp '((ok . :false)
+                (error . ((type . "auth")
+                          (message . "not authenticated"))))))
+    (should-error (lark--handle-error resp) :type 'user-error)
+    ;; Confirm the message reaches the signal payload.
+    (condition-case err (lark--handle-error resp)
+      (user-error
+       (should (string-match-p "not authenticated"
+                               (error-message-string err)))
+       (should (string-match-p "auth" (error-message-string err)))))))
+
+(ert-deftest lark-test-handle-error-ok-false-string-error ()
+  "ok=:false with a string error (rather than alist) still signals."
+  (let ((resp '((ok . :false) (error . "boom"))))
+    (should-error (lark--handle-error resp) :type 'user-error)))
+
+(ert-deftest lark-test-handle-error-no-ok-key-untouched ()
+  "Responses without an ok key are still subject to the code check
+only — a bare {data: ...} without ok or code passes through."
+  (let ((resp '((data . ((items . nil))))))
+    (should (equal (lark--handle-error resp) resp))))
+
+;;;; Auth gate tests — `lark--ensure-auth-for'
+
+(ert-deftest lark-test-ensure-auth-calls-for-non-auth-cmd ()
+  "Non-auth commands trigger `lark-auth-ensure'."
+  (let ((called 0))
+    (cl-letf (((symbol-function 'lark-auth-ensure)
+               (lambda () (cl-incf called) t)))
+      (lark--ensure-auth-for '("calendar" "+agenda") nil)
+      (should (= called 1)))))
+
+(ert-deftest lark-test-ensure-auth-skips-auth-cmd ()
+  "Auth subcommands skip the gate to avoid infinite recursion."
+  (let ((called 0))
+    (cl-letf (((symbol-function 'lark-auth-ensure)
+               (lambda () (cl-incf called) t)))
+      (lark--ensure-auth-for '("auth" "status") nil)
+      (lark--ensure-auth-for '("auth" "login") '(:literal t))
+      (should (= called 0)))))
+
+(ert-deftest lark-test-ensure-auth-skips-when-no-auth-check ()
+  "`:no-auth-check' bypasses the gate."
+  (let ((called 0))
+    (cl-letf (((symbol-function 'lark-auth-ensure)
+               (lambda () (cl-incf called) t)))
+      (lark--ensure-auth-for '("calendar" "+agenda")
+                             '(:no-auth-check t))
+      (should (= called 0)))))
+
+(ert-deftest lark-test-ensure-auth-no-op-when-unbound ()
+  "When `lark-auth-ensure' isn't defined, the gate is a silent
+no-op — `lark-core' must load and run with no hard dependency on
+`lark-auth'.  This test runs against a clean environment where
+the only other tests that touch the symbol use `cl-letf', which
+restores it to unbound on exit."
+  ;; Defensive: if a previous test or load chain has bound the
+  ;; symbol, temporarily unbind it for this case.
+  (let ((had-it (fboundp 'lark-auth-ensure))
+        (saved (and (fboundp 'lark-auth-ensure)
+                    (symbol-function 'lark-auth-ensure))))
+    (unwind-protect
+        (progn
+          (when had-it (fmakunbound 'lark-auth-ensure))
+          (should-not (fboundp 'lark-auth-ensure))
+          ;; No error, returns nil.
+          (should-not (lark--ensure-auth-for
+                       '("calendar" "+agenda") nil)))
+      (when had-it (fset 'lark-auth-ensure saved)))))
+
+(ert-deftest lark-test-ensure-auth-propagates-user-error ()
+  "When `lark-auth-ensure' signals (user declined login), the gate
+unwinds the caller — `lark--run-command' never reaches `make-process'."
+  (cl-letf (((symbol-function 'lark-auth-ensure)
+             (lambda () (user-error "Lark authentication required"))))
+    (should-error
+     (lark--ensure-auth-for '("calendar" "+agenda") nil)
+     :type 'user-error)))
+
 ;;;; lark--get-nested tests
 
 (ert-deftest lark-test-get-nested ()

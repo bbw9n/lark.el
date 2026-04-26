@@ -16,6 +16,10 @@
 (require 'lark-ai-context)
 (require 'lark-ai)
 (require 'lark-im)
+;; Required for the doc-detail context tests — `lark-ai-context'
+;; resolves the buffer-name fallback via `fboundp', so the docs
+;; module must be loaded for the soft reference to find its provider.
+(require 'lark-docs)
 
 ;;;; Skill frontmatter parsing
 
@@ -205,6 +209,49 @@
     (let ((ctx (lark-ai-context)))
       (should (null (plist-get ctx :domain)))
       (should (equal (plist-get ctx :buffer-type) "other")))))
+
+(ert-deftest lark-ai-test-context-provider-dispatch ()
+  "A registered `lark-ai-context-provider' on a mode is invoked."
+  (define-derived-mode lark-ai-test--probe-mode special-mode "Probe")
+  (put 'lark-ai-test--probe-mode 'lark-ai-context-provider
+       (lambda ()
+         (list :domain "probe" :buffer-type "test"
+               :item nil :summary "probed")))
+  (unwind-protect
+      (with-temp-buffer
+        (lark-ai-test--probe-mode)
+        (let ((ctx (lark-ai-context)))
+          (should (equal (plist-get ctx :domain) "probe"))
+          (should (equal (plist-get ctx :buffer-type) "test"))
+          (should (equal (plist-get ctx :summary) "probed"))))
+    (put 'lark-ai-test--probe-mode 'lark-ai-context-provider nil)))
+
+(ert-deftest lark-ai-test-context-provider-walks-parents ()
+  "Provider lookup walks the `derived-mode-parent' chain."
+  (define-derived-mode lark-ai-test--parent-mode special-mode "Parent")
+  (define-derived-mode lark-ai-test--child-mode lark-ai-test--parent-mode "Child")
+  (put 'lark-ai-test--parent-mode 'lark-ai-context-provider
+       (lambda () (list :domain "parent" :buffer-type "x"
+                        :item nil :summary "from parent")))
+  (unwind-protect
+      (with-temp-buffer
+        (lark-ai-test--child-mode)
+        (let ((ctx (lark-ai-context)))
+          (should (equal (plist-get ctx :domain) "parent"))
+          (should (equal (plist-get ctx :summary) "from parent"))))
+    (put 'lark-ai-test--parent-mode 'lark-ai-context-provider nil)))
+
+(ert-deftest lark-ai-test-context-register-helper ()
+  "`lark-ai-context-register' is a thin wrapper over the symbol property."
+  (define-derived-mode lark-ai-test--reg-mode special-mode "Reg")
+  (lark-ai-context-register 'lark-ai-test--reg-mode
+                            (lambda () (list :domain "reg"
+                                             :buffer-type "t"
+                                             :item nil :summary "")))
+  (unwind-protect
+      (should (eq (get 'lark-ai-test--reg-mode 'lark-ai-context-provider)
+                  (get 'lark-ai-test--reg-mode 'lark-ai-context-provider)))
+    (put 'lark-ai-test--reg-mode 'lark-ai-context-provider nil)))
 
 (ert-deftest lark-ai-test-context-doc-detail-org ()
   "Doc detail buffer in org-mode is recognized by buffer name."
