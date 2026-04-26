@@ -135,13 +135,55 @@ Debug lines from the CLI (e.g. `[vc +recording] ...') are stripped first."
 (defun lark--handle-error (response)
   "Check RESPONSE for errors and signal `user-error' if found.
 RESPONSE should be an alist parsed from lark-cli JSON output.
-Returns RESPONSE if no error is detected."
+Returns RESPONSE if no error is detected.
+
+Recognises two error envelopes:
+- Lark API style: {code: N, msg: STR, data: ...} — signals when
+  code is non-zero and not nil.
+- lark-cli wrapper style: {ok: :false, error: {message, type}, ...}
+  — signals when `ok' is the JSON false sentinel.  Without this
+  branch an auth-failed or rejected request looks identical to a
+  successful empty result, and the callback silently receives nil."
   (when (and response (listp response))
     (let ((code (alist-get 'code response))
-          (msg (alist-get 'msg response)))
-      (when (and code (not (eq code 0)))
-        (user-error "Lark API error (code %s): %s" code (or msg "unknown error")))))
+          (msg (alist-get 'msg response))
+          (ok-key (assq 'ok response)))
+      (cond
+       ;; Lark API error: code != 0
+       ((and code (not (eq code 0)))
+        (user-error "Lark API error (code %s): %s"
+                    code (or msg "unknown error")))
+       ;; CLI wrapper error: explicit ok = false
+       ((and ok-key (eq (cdr ok-key) :false))
+        (let* ((err (alist-get 'error response))
+               (emsg (or (and (listp err) (alist-get 'message err))
+                         (and (stringp err) err)))
+               (etype (and (listp err) (alist-get 'type err))))
+          (user-error "Lark CLI error%s: %s"
+                      (if etype (format " (%s)" etype) "")
+                      (or emsg "unknown error")))))))
   response)
+
+;;;; Auth gate
+;;
+;; `lark--run-command' and `lark--run-command-sync' route through
+;; `lark--ensure-auth-for' before spawning so that an unauthenticated
+;; user gets a clear prompt instead of a silent CLI failure.  The
+;; helper is a soft dependency on `lark-auth' (via `fboundp'); core
+;; stays loadable on its own.
+
+(defun lark--ensure-auth-for (cmd-args keys)
+  "Run the auth gate before spawning a lark-cli call.
+Calls `lark-auth-ensure' when it is defined.  Skipped when:
+- CMD-ARGS starts with \"auth\" (the gate itself runs lark-cli to
+  probe status, so calling the gate would recurse infinitely), or
+- KEYS contains `:no-auth-check' with a non-nil value (escape hatch
+  for callers that want to bypass — currently used by the gate's
+  own status probe)."
+  (unless (or (equal (car cmd-args) "auth")
+              (plist-get keys :no-auth-check))
+    (when (fboundp 'lark-auth-ensure)
+      (lark-auth-ensure))))
 
 ;;;; Async process execution
 
@@ -152,12 +194,14 @@ CMD-ARGS is a list of positional arguments (e.g., (\"calendar\" \"+agenda\")).
 CALLBACK is called with the parsed JSON result on success.
 EXTRA-ARGS is a plist of keyword arguments.
 KEYS are keyword arguments:
-  :format   - output format (default: `lark-default-format')
-  :raw      - if non-nil, pass raw string to callback instead of parsed JSON
-  :no-error - if non-nil, don't signal errors from the response
-  :literal  - if non-nil, use CMD-ARGS as-is (skip --format/--as/--dry-run)
+  :format         - output format (default: `lark-default-format')
+  :raw            - pass raw string to callback instead of parsed JSON
+  :no-error       - don't signal errors from the response
+  :literal        - use CMD-ARGS as-is (skip --format/--as/--dry-run)
+  :no-auth-check  - skip the `lark-auth-ensure' gate (rarely needed)
 
 Returns the process object."
+  (lark--ensure-auth-for cmd-args keys)
   (let* ((format (plist-get keys :format))
          (raw (plist-get keys :raw))
          (no-error (plist-get keys :no-error))
@@ -206,10 +250,12 @@ Returns the process object."
 CMD-ARGS is a list of positional arguments.
 EXTRA-ARGS is a plist of keyword arguments.
 KEYS are keyword arguments:
-  :format   - output format (default: `lark-default-format')
-  :raw      - if non-nil, return raw string instead of parsed JSON
-  :no-error - if non-nil, don't signal errors from the response
-  :literal  - if non-nil, use CMD-ARGS as-is (skip --format/--as/--dry-run)"
+  :format         - output format (default: `lark-default-format')
+  :raw            - return raw string instead of parsed JSON
+  :no-error       - don't signal errors from the response
+  :literal        - use CMD-ARGS as-is (skip --format/--as/--dry-run)
+  :no-auth-check  - skip the `lark-auth-ensure' gate (rarely needed)"
+  (lark--ensure-auth-for cmd-args keys)
   (let* ((format (plist-get keys :format))
          (raw (plist-get keys :raw))
          (no-error (plist-get keys :no-error))

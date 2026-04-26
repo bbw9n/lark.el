@@ -69,12 +69,20 @@
 
 (defun lark-auth-ensure ()
   "Ensure the user is authenticated, prompting login if needed.
-Returns non-nil if authenticated."
+Returns t when authentication is already in place.  Signals a
+`user-error' otherwise — both when the user declines the login
+prompt and when login was just kicked off (the device-code flow
+completes asynchronously, so the in-flight command can't proceed
+yet).  Callers therefore never need to check the return value:
+either control flows past the call (authed) or unwinds with a
+clear message."
   (unless lark-auth--authenticated-p
     (lark-auth--check-sync))
   (unless lark-auth--authenticated-p
     (if (yes-or-no-p "Not authenticated with Lark.  Login now? ")
-        (lark-auth-login)
+        (progn
+          (lark-auth-login)
+          (user-error "Lark: complete the login flow in your browser, then re-run the command"))
       (user-error "Lark authentication required")))
   lark-auth--authenticated-p)
 
