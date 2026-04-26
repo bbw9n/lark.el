@@ -911,24 +911,38 @@ against that buffer can find and cancel the in-flight request."
 
 ;;; Streaming LLM calls
 
-(defun lark-ai--call-llm-stream (system-prompt user-message callback)
+(defun lark-ai--call-llm-stream (system-prompt user-message callback
+                                                &optional chunk-handler)
   "Send to LLM with streaming, calling CALLBACK with full text when done.
-Chunks are streamed into the *Lark AI* output section in real-time."
+If CHUNK-HANDLER is non-nil, it is called as (CHUNK-HANDLER CHUNK)
+on each streamed chunk and the default behaviour of appending
+chunks to the output fragment is skipped — used by the planning
+call to stream raw JSON into the log fragment instead.
+HTTP backend has no streaming, so the fallback is a single
+non-streaming call (CHUNK-HANDLER is not invoked)."
   (pcase lark-ai-backend
     ('gptel
-     (lark-ai--call-gptel-stream system-prompt user-message callback))
+     (lark-ai--call-gptel-stream system-prompt user-message
+                                 callback chunk-handler))
     (_
      ;; Fallback: non-streaming
      (lark-ai--call-llm system-prompt user-message callback))))
 
-(defun lark-ai--call-gptel-stream (system-prompt user-message callback)
-  "Call LLM via gptel with streaming into the output fragment.
+(defun lark-ai--call-gptel-stream (system-prompt user-message callback
+                                                  &optional chunk-handler)
+  "Call LLM via gptel with streaming.
+When CHUNK-HANDLER is nil, chunks are appended to the output
+fragment (synthesis path).  When non-nil, CHUNK-HANDLER is
+invoked with each chunk and the output fragment is left
+untouched — the planning path uses this to stream raw JSON into
+the log fragment.
 Runs `gptel-request' inside the AI buffer so `gptel-abort' can
 find and cancel the in-flight stream."
   (unless (require 'gptel nil t)
     (user-error "gptel is not installed"))
-  ;; Create the output fragment for streaming
-  (lark-ai--ensure-output-fragment)
+  ;; Only create the output fragment for the default (synthesis) path.
+  (unless chunk-handler
+    (lark-ai--ensure-output-fragment))
   (lark-ai--debug-log
    "STREAM REQUEST" "--- system ---\n%s\n--- user ---\n%s"
    system-prompt user-message)
@@ -951,11 +965,12 @@ find and cancel the in-flight stream."
                         "STREAM CHUNK"
                         "#%d (%d chars): %s"
                         chunks (length response) response)
-                       ;; Append chunk with incremental highlighting
                        (when-let ((buf (get-buffer lark-ai--buf-name)))
                          (with-current-buffer buf
-                           (lark-ai-ui-append-fragment
-                            (lark-ai--frag "output") response))))
+                           (if chunk-handler
+                               (funcall chunk-handler response)
+                             (lark-ai-ui-append-fragment
+                              (lark-ai--frag "output") response)))))
                       ((eq response t)
                        (lark-ai--debug-log
                         "STREAM DONE"
@@ -1199,9 +1214,16 @@ executes it, and presents results."
           (lark-ai-session-skills session) skill-names)
     (unless in-ai-buf
       (setf (lark-ai-session-context session) context))
-    (lark-ai--call-llm
+    ;; Stream the planning call into the *log* fragment so the user
+    ;; sees tokens land instead of staring at "Waiting for LLM
+    ;; response...".  HTTP backend silently falls through to a
+    ;; non-streaming call inside `lark-ai--call-llm-stream'.
+    (lark-ai--progress-log "← LLM planning (streaming)…")
+    (lark-ai--call-llm-stream
      system-prompt user-msg
      (lambda (response)
+       (lark-ai--progress-log "← LLM planning done (%d chars)"
+                              (length response))
        (let ((plan (lark-ai--parse-plan response)))
          (lark-ai--debug-log
           "ASK BRANCH"
@@ -1269,7 +1291,14 @@ executes it, and presents results."
                                  (if (cdr pair) (pp-to-string (cdr pair)) "(no data)")))
                        (sort (copy-sequence results)
                              (lambda (a b) (< (car a) (car b))))
-                       "\n\n"))))))))))))))
+                       "\n\n")))))))))))
+     ;; Chunk handler — stream raw planning JSON into the log
+     ;; fragment so the user sees the model generating.  Wrapped
+     ;; in the comment face to blend with progress lines.
+     (lambda (chunk)
+       (lark-ai-ui-append-fragment
+        (lark-ai--frag "log")
+        (propertize chunk 'face 'font-lock-comment-face))))))
 
 ;;;###autoload
 (defun lark-ai-act ()
