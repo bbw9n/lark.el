@@ -318,6 +318,39 @@
     (should (string-match-p (format-time-string "%Y-%m-%d") preamble))
     (should (string-match-p "Response Format" preamble))))
 
+(ert-deftest lark-ai-test-planning-prompt-mandates-json ()
+  "Planning prompt keeps the JSON-plan mandate."
+  (let* ((lark-ai-skills--index nil)
+         (lark-ai-skills--cache (make-hash-table :test 'equal))
+         (prompt (lark-ai-skills-build-system-prompt nil)))
+    (should (string-match-p "MUST respond with a JSON" prompt))
+    (should (string-match-p "synthesis_instruction" prompt))))
+
+(ert-deftest lark-ai-test-synthesis-prompt-no-json-mandate ()
+  "Synthesis prompt strips the JSON-plan mandate so the model
+emits prose instead of another plan."
+  (let* ((lark-ai-skills--index nil)
+         (lark-ai-skills--cache (make-hash-table :test 'equal))
+         (prompt (lark-ai-skills-build-synthesis-prompt nil)))
+    ;; No JSON-plan rules
+    (should-not (string-match-p "MUST respond with a JSON" prompt))
+    (should-not (string-match-p "parallel_group" prompt))
+    (should-not (string-match-p "synthesis_instruction" prompt))
+    ;; But still identity + an explicit prose directive
+    (should (string-match-p "Lark/Feishu assistant" prompt))
+    (should (string-match-p "markdown prose" prompt))))
+
+(ert-deftest lark-ai-test-synthesis-prompt-includes-skills ()
+  "Synthesis prompt still appends selected skill bodies."
+  (let* ((lark-ai-skills--index
+          '(("lark-shared" . (:description "shared" :dir "/tmp"
+                              :keywords ("shared")))))
+         (lark-ai-skills--cache (make-hash-table :test 'equal)))
+    (puthash "lark-shared" "SKILL_BODY_MARKER" lark-ai-skills--cache)
+    (let ((prompt (lark-ai-skills-build-synthesis-prompt '("lark-shared"))))
+      (should (string-match-p "## Skill: lark-shared" prompt))
+      (should (string-match-p "SKILL_BODY_MARKER" prompt)))))
+
 ;;;; Skill selection — context-aware + no-fallback
 
 (ert-deftest lark-ai-test-select-skills-context-match ()

@@ -180,17 +180,26 @@ Returns a deduplicated list of skill names."
 
 ;;;; System prompt assembly
 
-(defun lark-ai-skills--preamble ()
-  "Build the preamble section of the system prompt.
-Includes current date/time, identity, and instructions."
+(defun lark-ai-skills--identity-preamble ()
+  "Identity, time, and persona shared by planning and synthesis prompts.
+Excludes any output-format rules so it is safe to reuse on the
+synthesis pass, where the model must produce prose, not JSON."
   (format "You are a Lark/Feishu assistant integrated into Emacs.
 You help the user by planning and executing lark-cli commands.
 
 Current date/time: %s
 Timezone: %s
 Default identity: %s
+"
+          (format-time-string "%Y-%m-%dT%H:%M:%S%z")
+          (format-time-string "%Z")
+          (or lark-default-identity "user")))
 
-## Response Format
+(defun lark-ai-skills--planning-rules ()
+  "Output-format rules that mandate JSON plans.
+Only included in the planning system prompt — never in the
+synthesis prompt, since that pass must emit markdown prose."
+  "## Response Format
 
 You MUST respond with a JSON object containing a plan — a list of steps to execute.
 Each step is an object with these fields:
@@ -223,20 +232,57 @@ Rules:
   Example: {\"command\": [\"calendar\", \"+create\", \"--attendee-ids\", \"$step-0.items[*].open_id\"]}
 - If the user's request is a simple question that needs no CLI calls, return a plan with a single synthesize step.
 - If document content is already provided in the context, do NOT add a fetch step — use the provided content directly in your synthesis.
-"
-          (format-time-string "%Y-%m-%dT%H:%M:%S%z")
-          (format-time-string "%Z")
-          (or lark-default-identity "user")))
+")
 
-(defun lark-ai-skills-build-system-prompt (skill-names)
-  "Build the full system prompt from SKILL-NAMES.
-Concatenates the preamble with the content of each selected skill."
-  (let ((parts (list (lark-ai-skills--preamble))))
+(defun lark-ai-skills--synthesis-rules ()
+  "Output-format rules for the synthesis pass.
+Tells the model to answer in markdown prose, explicitly
+overriding any planning instructions it may have seen earlier in
+the conversation."
+  "## Response Format
+
+Respond with markdown prose — NOT JSON, NOT a plan.  The planning
+phase is finished; you are now writing the user-facing answer.
+Use the skills below as reference for facts and capabilities, but
+do not emit a JSON plan and do not propose further steps.
+")
+
+(defun lark-ai-skills--preamble ()
+  "Backwards-compatible alias for the planning preamble.
+Kept so older callers continue to work; new code should call
+`lark-ai-skills-build-system-prompt' or
+`lark-ai-skills-build-synthesis-prompt' directly."
+  (concat (lark-ai-skills--identity-preamble)
+          "\n"
+          (lark-ai-skills--planning-rules)))
+
+(defun lark-ai-skills--assemble (preamble skill-names)
+  "Concatenate PREAMBLE with the content of each skill in SKILL-NAMES."
+  (let ((parts (list preamble)))
     (dolist (name skill-names)
       (let ((content (lark-ai-skills-load name)))
         (when content
           (push (format "\n---\n## Skill: %s\n\n%s" name content) parts))))
     (mapconcat #'identity (nreverse parts) "\n")))
+
+(defun lark-ai-skills-build-system-prompt (skill-names)
+  "Build the planning system prompt from SKILL-NAMES.
+Includes the JSON-plan response-format mandate."
+  (lark-ai-skills--assemble
+   (concat (lark-ai-skills--identity-preamble)
+           "\n"
+           (lark-ai-skills--planning-rules))
+   skill-names))
+
+(defun lark-ai-skills-build-synthesis-prompt (skill-names)
+  "Build the synthesis system prompt from SKILL-NAMES.
+Identity + skills only — no JSON-plan mandate, so the model is
+free to answer in markdown prose during the synthesis pass."
+  (lark-ai-skills--assemble
+   (concat (lark-ai-skills--identity-preamble)
+           "\n"
+           (lark-ai-skills--synthesis-rules))
+   skill-names))
 
 (provide 'lark-ai-skills)
 ;;; lark-ai-skills.el ends here

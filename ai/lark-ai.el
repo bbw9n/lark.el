@@ -975,8 +975,10 @@ find and cancel the in-flight stream."
 
 (defun lark-ai--synthesize (results plan system-prompt callback)
   "Send execution RESULTS back to the LLM for synthesis.
-PLAN is the original plan, SYSTEM-PROMPT the skill context.
-CALLBACK receives the synthesis text."
+PLAN is the original plan.  SYSTEM-PROMPT must be the synthesis
+prompt (see `lark-ai-skills-build-synthesis-prompt') — passing
+the planning prompt here makes the model emit another JSON plan
+instead of the prose answer.  CALLBACK receives the synthesis text."
   ;; Find the synthesis step
   (let* ((synth-step (seq-find (lambda (s) (plist-get s :synthesize)) plan))
          (instruction (or (and synth-step
@@ -1004,7 +1006,8 @@ CALLBACK receives the synthesis text."
     (lark-ai--call-llm system-prompt user-msg callback)))
 
 (defun lark-ai--synthesize-stream (results plan system-prompt)
-  "Like `lark-ai--synthesize' but streams the output."
+  "Like `lark-ai--synthesize' but streams the output.
+SYSTEM-PROMPT must be the synthesis prompt (no JSON mandate)."
   (let* ((synth-step (seq-find (lambda (s) (plist-get s :synthesize)) plan))
          (instruction (or (and synth-step
                                (plist-get synth-step :synthesis-instruction))
@@ -1180,6 +1183,10 @@ executes it, and presents results."
                            (append prev-skills matched-skills)
                          matched-skills)))
          (system-prompt (lark-ai-skills-build-system-prompt skill-names))
+         ;; Synthesis pass uses a different system prompt (no JSON
+         ;; mandate) so the model produces prose.  Built once here
+         ;; from the same skill set so both passes share context.
+         (synth-prompt (lark-ai-skills-build-synthesis-prompt skill-names))
          (user-msg (lark-ai--build-user-message prompt context history)))
     (lark-ai--debug-log
      "SKILLS" "prev=%S matched=%S → final=%S"
@@ -1223,8 +1230,11 @@ executes it, and presents results."
                (progn
                  (lark-ai--progress-log "Pure synthesis — streaming")
                  (lark-ai--mark-all-done)
+                 ;; Synth-prompt (no JSON mandate) — otherwise the
+                 ;; model would emit another plan JSON instead of the
+                 ;; user-facing prose answer.
                  (lark-ai--call-llm-stream
-                  system-prompt
+                  synth-prompt
                   (lark-ai--build-user-message
                    (concat prompt
                            "\nRespond with plain text using markdown.")
@@ -1247,8 +1257,9 @@ executes it, and presents results."
                        (progn
                          (lark-ai--progress-log "Synthesizing results...")
                          (lark-ai--mark-all-done)
+                         ;; Synth-prompt here too — same reason.
                          (lark-ai--synthesize-stream
-                          results confirmed-steps system-prompt))
+                          results confirmed-steps synth-prompt))
                      (lark-ai--mark-all-done)
                      (lark-ai--present
                       (mapconcat
@@ -1528,7 +1539,9 @@ to draft a reply, and opens a compose buffer for editing before send."
          (msg-id (plist-get ctx :message-id))
          (thread-text (plist-get ctx :thread-text))
          (skill-names (lark-ai-skills-select "reply message chat"))
-         (system-prompt (lark-ai-skills-build-system-prompt skill-names))
+         ;; Prose draft, not a plan — use the synthesis prompt so the
+         ;; system message doesn't fight the user message's "no JSON".
+         (system-prompt (lark-ai-skills-build-synthesis-prompt skill-names))
          (user-msg (format "Draft a concise, natural reply to the message marked with >>> in this chat thread. Output ONLY the reply text, nothing else — no JSON, no plan, no explanation.\n\nChat: %s\n\n%s"
                            (or chat-name chat-id)
                            thread-text)))
