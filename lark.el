@@ -5,7 +5,7 @@
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; URL: https://github.com/bbw9n/lark.el
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+;; Package-Requires: ((emacs "28.1") (org-lark "0.2"))
 ;; Keywords: comm, tools, agent
 
 ;; This file is free software; you can redistribute it and/or modify

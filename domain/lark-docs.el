@@ -621,8 +621,9 @@ Optional OUTPUT is the local save path."
        (message "Lark: whiteboard updated")))))
 
 ;;;; org-lark integration
-;; org-lark is bundled with lark.el and provides Lark Markdown → Org
-;; conversion (Lark tags, code blocks, tables, media download).
+;; org-lark is an external MELPA dependency that provides Lark
+;; Markdown → Org conversion (Lark tags, code blocks, tables, media
+;; download).
 
 (defun lark-docs--use-org-p ()
   "Return non-nil if documents should be rendered as Org."

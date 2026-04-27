@@ -19,9 +19,20 @@ jobs:
         with:
           version: ${{ matrix.emacs-version }}
 
+      - name: Install org-lark from MELPA
+        run: |
+          emacs --batch \
+            --eval "(require 'package)" \
+            --eval "(add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\"))" \
+            --eval "(package-initialize)" \
+            --eval "(package-refresh-contents)" \
+            --eval "(package-install 'org-lark)"
+
       - name: Byte-compile
         run: |
           emacs --batch -L . -L core -L domain -L ai \
+            --eval "(require 'package)" \
+            --eval "(package-initialize)" \
             --eval "(setq byte-compile-error-on-warn t)" \
             -f batch-byte-compile \
             core/lark-core.el \
@@ -45,6 +56,8 @@ jobs:
       - name: Run tests
         run: |
           emacs --batch -L . -L core -L domain -L ai -L test \
+            --eval "(require 'package)" \
+            --eval "(package-initialize)" \
             -l lark-core-test \
             -l lark-calendar-test \
             -l lark-tasks-test \
