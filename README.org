@@ -10,6 +10,8 @@ browsing, org-table spreadsheets, and async execution throughout.
 
 - Emacs 28.1+ (for built-in =transient=)
 - [[https://github.com/larksuite/cli][lark-cli]] installed and on your =PATH=
+- [[https://github.com/bbw9n/org-lark][org-lark]] (available on MELPA) — used by the Docs domain to convert
+  Lark Markdown to Org
 
 ** Installing lark-cli
 
