@@ -640,28 +640,39 @@ Optional OUTPUT is the local save path."
 ;;;###autoload
 (defun lark-docs-fetch-as-org (doc)
   "Fetch a Lark document DOC and display it in org-mode.
-Uses `org-lark-fetch' to get the markdown, then converts via
-`org-lark--pipeline' and displays in an org-mode buffer."
+Runs asynchronously: fetch, pandoc conversion and media downloads
+all happen in background processes so Emacs stays responsive."
   (interactive "sDocument URL or token: ")
   (when (string-empty-p doc)
     (user-error "Document URL or token is required"))
   (lark-docs--sync-org-lark-config)
   (message "Lark: fetching document as org...")
-  (let* ((fetched (org-lark-fetch doc))
-         (markdown (alist-get 'markdown fetched))
-         (title (or (alist-get 'title fetched) doc))
-         (doc-id (or (alist-get 'doc_id fetched) doc)))
-    (if (or (null markdown) (string-empty-p markdown))
-        (message "Lark: document has no content")
-      (let* ((cache-dir (expand-file-name
-                         (concat "lark-docs/" (lark-docs--safe-dirname doc-id))
-                         (or lark-docs-cache-directory
-                             (expand-file-name "lark.el/" temporary-file-directory))))
-             (st (make-org-lark--state
-                  :output-file (expand-file-name "doc.org" cache-dir)
-                  :asset-dir (expand-file-name "assets/" cache-dir)))
-             (org-content (org-lark--pipeline markdown fetched doc st)))
-        (lark-docs--display-org-buffer org-content title doc-id cache-dir)))))
+  (org-lark-fetch-async
+   doc
+   (lambda (err fetched)
+     (cond
+      (err (message "Lark: fetch failed: %s" err))
+      (t
+       (let ((markdown (alist-get 'markdown fetched))
+             (title (or (alist-get 'title fetched) doc))
+             (doc-id (or (alist-get 'doc_id fetched) doc)))
+         (if (or (null markdown) (string-empty-p markdown))
+             (message "Lark: document has no content")
+           (let* ((cache-dir (expand-file-name
+                              (concat "lark-docs/" (lark-docs--safe-dirname doc-id))
+                              (or lark-docs-cache-directory
+                                  (expand-file-name "lark.el/" temporary-file-directory))))
+                  (st (make-org-lark--state
+                       :output-file (expand-file-name "doc.org" cache-dir)
+                       :asset-dir (expand-file-name "assets/" cache-dir))))
+             (message "Lark: converting to org...")
+             (org-lark--pipeline-async
+              markdown fetched doc st
+              (lambda (err2 org-content)
+                (cond
+                 (err2 (message "Lark: conversion failed: %s" err2))
+                 (t (lark-docs--display-org-buffer
+                     org-content title doc-id cache-dir)))))))))))))
 
 (defun lark-docs--display-org-buffer (org-content title token &optional base-dir)
   "Display ORG-CONTENT in an org-mode buffer named after TITLE.
@@ -686,13 +697,20 @@ as `default-directory' so relative file links (images) resolve."
 ;;;###autoload
 (defun lark-docs-export-org (doc output-file)
   "Export Lark document DOC to OUTPUT-FILE as Org.
-Delegates to `org-lark-export' which handles media download."
+Delegates to `org-lark-export-async' which handles fetch, pandoc
+conversion, and media download in background processes."
   (interactive
    (list (read-string "Document URL or token: "
                       (when lark-docs--doc-token lark-docs--doc-token))
          (read-file-name "Write Org file: " nil nil nil "lark-export.org")))
   (lark-docs--sync-org-lark-config)
-  (org-lark-export doc output-file))
+  (message "Lark: exporting document...")
+  (org-lark-export-async
+   doc output-file
+   (lambda (err path)
+     (cond
+      (err (message "Lark: export failed: %s" err))
+      (t (message "Lark: exported to %s" path))))))
 
 (defun lark-docs-toggle-render-mode ()
   "Toggle between org and markdown render modes."
