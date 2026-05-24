@@ -49,6 +49,16 @@
 (defvar-local lark-im--messages nil
   "Cached messages for the current buffer.")
 
+(defvar-local lark-im--page-token nil
+  "Next-page token for fetching older messages in the current chat buffer.
+nil means either no older page is known yet, or no more older messages.")
+
+(defvar-local lark-im--has-more nil
+  "Non-nil if more older messages can be fetched in the current chat buffer.")
+
+(defvar-local lark-im--loading-older nil
+  "Non-nil while an older-messages fetch is in flight.")
+
 (defvar-local lark-im--chats nil
   "Cached chat list for the current buffer.")
 
@@ -197,23 +207,53 @@ Truncates to \"YYYY-MM-DD HH:MM\" for display."
       (alist-get 'type msg)
       "text"))
 
-(defun lark-im--extract-messages (data)
-  "Extract message list from lark-cli response DATA."
+(defun lark-im--messages-container (data)
+  "Return the alist that holds messages plus pagination metadata in DATA.
+Falls back to nil when DATA is not a recognized response shape."
   (cond
-   ((and (listp data) (alist-get 'items data))
-    (alist-get 'items data))
-   ((and (listp data) (alist-get 'messages data))
-    (alist-get 'messages data))
+   ((and (listp data) (or (alist-get 'items data)
+                          (alist-get 'messages data)
+                          (assq 'has_more data)
+                          (assq 'page_token data)))
+    data)
    ((and (listp data) (alist-get 'data data))
     (let ((inner (alist-get 'data data)))
-      (or (alist-get 'items inner)
-          (alist-get 'messages inner)
-          (and (listp inner) inner))))
-   ((and (listp data) (listp (car data))
-         (or (alist-get 'message_id (car data))
-             (alist-get 'sender_name (car data))))
-    data)
+      (and (listp inner) inner)))
    (t nil)))
+
+(defun lark-im--extract-messages (data)
+  "Extract message list from lark-cli response DATA."
+  (let ((c (lark-im--messages-container data)))
+    (cond
+     ((and c (alist-get 'items c)) (alist-get 'items c))
+     ((and c (alist-get 'messages c)) (alist-get 'messages c))
+     ((and (listp data) (listp (car-safe data))
+           (or (alist-get 'message_id (car data))
+               (alist-get 'sender_name (car data))))
+      data)
+     ((and c (listp c) (not (assq 'has_more c)) (not (assq 'page_token c)))
+      c)
+     (t nil))))
+
+(defun lark-im--truthy-p (v)
+  "Return non-nil if V is a truthy JSON value (t, \"true\", non-zero)."
+  (cond
+   ((eq v t) t)
+   ((or (null v) (eq v :false) (eq v :null)) nil)
+   ((stringp v) (not (member v '("" "false" "False" "FALSE" "0"))))
+   ((numberp v) (not (zerop v)))
+   (t t)))
+
+(defun lark-im--extract-has-more (data)
+  "Return non-nil if DATA indicates more pages are available."
+  (let ((c (lark-im--messages-container data)))
+    (and c (lark-im--truthy-p (alist-get 'has_more c)))))
+
+(defun lark-im--extract-page-token (data)
+  "Return the next-page token from DATA, or nil if absent."
+  (let* ((c (lark-im--messages-container data))
+         (v (and c (alist-get 'page_token c))))
+    (and (stringp v) (not (string-empty-p v)) v)))
 
 ;;;; Chat list mode
 
@@ -285,14 +325,27 @@ Each chat is displayed as a multi-line section.")
     (define-key map (kbd "R")   #'lark-ai-workflow-reply)
     (define-key map (kbd "s")   #'lark-im-send)
     (define-key map (kbd "e")   #'lark-im-react)
+    (define-key map (kbd "o")   #'lark-im-load-older)
     (define-key map (kbd "q")   #'quit-window)
     (define-key map (kbd "?")   #'lark-im-dispatch)
     map)
   "Keymap for `lark-im-chat-mode'.")
 
+(defun lark-im--maybe-autoload-older (window _start)
+  "Auto-fetch older messages when WINDOW has scrolled to the top.
+Hook attached to `window-scroll-functions' in chat buffers."
+  (when (and lark-im--chat-id
+             lark-im--has-more
+             (not lark-im--loading-older)
+             lark-im--page-token
+             (= (window-start window) (point-min)))
+    (lark-im-load-older)))
+
 (define-derived-mode lark-im-chat-mode special-mode
   "Lark Chat"
-  "Major mode for viewing a Lark chat thread.")
+  "Major mode for viewing a Lark chat thread."
+  (add-hook 'window-scroll-functions
+            #'lark-im--maybe-autoload-older nil t))
 
 ;;;; AI context providers
 
@@ -381,14 +434,17 @@ When called interactively, prompt for a search query."
 
 ;;;###autoload
 (defun lark-im-messages (chat-id &optional chat-name)
-  "Show message history for CHAT-ID (optionally with CHAT-NAME)."
+  "Show the latest message history for CHAT-ID (optionally with CHAT-NAME).
+Fetches the most recent `lark-im-message-limit' messages and displays
+them in chronological order (oldest at top, newest at bottom).  Older
+messages can be loaded one page at a time with `lark-im-load-older'."
   (interactive "sChat ID: ")
   (message "Lark: fetching messages...")
   (lark--run-command
    (list "im" "+chat-messages-list"
          "--chat-id" chat-id
          "--page-size" lark-im-message-limit
-         "--sort" "asc")
+         "--sort" "desc")
    (lambda (data)
      (lark-im--display-messages data chat-id (or chat-name chat-id)))))
 
@@ -398,27 +454,134 @@ When called interactively, prompt for a search query."
   (when lark-im--chat-id
     (lark-im-messages lark-im--chat-id lark-im--chat-name)))
 
+(defun lark-im--render-header (chat-name has-more)
+  "Insert the chat header for CHAT-NAME at point.
+When HAS-MORE is non-nil, include a hint about loading older messages."
+  (insert (propertize chat-name 'face 'bold) "\n"
+          (make-string (min 60 (max 20 (length chat-name))) ?─) "\n")
+  (when has-more
+    (insert (propertize "[press o to load older messages]"
+                        'face 'font-lock-comment-face)
+            "\n"))
+  (insert "\n"))
+
 (defun lark-im--display-messages (data chat-id chat-name)
-  "Display message history DATA for CHAT-ID with CHAT-NAME."
-  (let* ((messages (lark-im--extract-messages data))
+  "Display the latest message history DATA for CHAT-ID with CHAT-NAME.
+DATA is expected to be desc-sorted (newest first); messages are reversed
+so they render chronologically with the newest at the bottom."
+  (let* ((raw (lark-im--extract-messages data))
+         (messages (reverse raw))
+         (has-more (lark-im--extract-has-more data))
+         (page-token (lark-im--extract-page-token data))
          (buf (get-buffer-create (format "*Lark Chat: %s*" chat-name))))
     (with-current-buffer buf
       (lark-im-chat-mode)
       (setq lark-im--chat-id chat-id
             lark-im--chat-name chat-name
-            lark-im--messages messages)
+            lark-im--messages messages
+            lark-im--has-more has-more
+            lark-im--page-token page-token
+            lark-im--loading-older nil)
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (propertize chat-name 'face 'bold) "\n"
-                (make-string (min 60 (max 20 (length chat-name))) ?─) "\n\n")
+        (lark-im--render-header chat-name has-more)
         (if (null messages)
             (insert "(no messages)\n")
           (dolist (msg messages)
             (lark-im--insert-message msg)))
         (goto-char (point-max)))
       (setq header-line-format
-            (format " Lark Chat: %s — %d message(s)" chat-name (length messages))))
+            (format " Lark Chat: %s — %d message(s)%s"
+                    chat-name (length messages)
+                    (if has-more " (older available, press o)" ""))))
     (pop-to-buffer buf)))
+
+(defun lark-im--header-end ()
+  "Return buffer position just after the chat header block."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((p (point-min)))
+      (while (and (not (eobp))
+                  (not (get-text-property (point) 'lark-message-id)))
+        (forward-line 1)
+        (setq p (point)))
+      p)))
+
+(defun lark-im--prepend-older (data)
+  "Insert older messages from DATA at the top of the current chat buffer."
+  (let* ((raw (lark-im--extract-messages data))
+         (older (reverse raw))
+         (has-more (lark-im--extract-has-more data))
+         (page-token (lark-im--extract-page-token data))
+         (anchor (or (get-text-property (point) 'lark-message-id)
+                     (save-excursion
+                       (goto-char (lark-im--header-end))
+                       (get-text-property (point) 'lark-message-id))))
+         (window-line (and anchor
+                           (count-screen-lines (window-start) (point)))))
+    (setq lark-im--has-more has-more
+          lark-im--page-token page-token
+          lark-im--loading-older nil
+          lark-im--messages (append older lark-im--messages))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char (point-min))
+        (let ((hend (lark-im--header-end)))
+          (delete-region (point-min) hend))
+        (goto-char (point-min))
+        (lark-im--render-header lark-im--chat-name has-more)
+        (dolist (msg older)
+          (lark-im--insert-message msg))))
+    (setq header-line-format
+          (format " Lark Chat: %s — %d message(s)%s"
+                  lark-im--chat-name
+                  (length lark-im--messages)
+                  (if has-more " (older available, press o)" "")))
+    (when anchor
+      (let (found)
+        (save-excursion
+          (goto-char (point-min))
+          (while (and (not found) (not (eobp)))
+            (if (equal (get-text-property (point) 'lark-message-id) anchor)
+                (setq found (point))
+              (goto-char (or (next-single-property-change
+                              (point) 'lark-message-id)
+                             (point-max))))))
+        (when found
+          (goto-char found)
+          (when window-line
+            (recenter window-line)))))
+    (message "Lark: loaded %d older message(s)%s"
+             (length older)
+             (if has-more "" "; no more older messages"))))
+
+(defun lark-im-load-older ()
+  "Fetch one more page of older messages and prepend them to the buffer."
+  (interactive)
+  (unless lark-im--chat-id
+    (user-error "Not in a chat buffer"))
+  (cond
+   (lark-im--loading-older
+    (message "Lark: already loading older messages…"))
+   ((not lark-im--has-more)
+    (user-error "No more older messages"))
+   ((not lark-im--page-token)
+    (user-error "No pagination token available; try refreshing with g"))
+   (t
+    (setq lark-im--loading-older t)
+    (message "Lark: loading older messages…")
+    (let ((buf (current-buffer)))
+      (lark--run-command
+       (list "im" "+chat-messages-list"
+             "--chat-id" lark-im--chat-id
+             "--page-size" lark-im-message-limit
+             "--sort" "desc"
+             "--page-token" lark-im--page-token)
+       (lambda (data)
+         (if (buffer-live-p buf)
+             (with-current-buffer buf
+               (lark-im--prepend-older data))
+           (message "Lark: chat buffer was closed"))))))))
 
 (defun lark-im--insert-message (msg)
   "Insert a formatted MSG into the current buffer."
@@ -670,6 +833,7 @@ Dispatches to appropriate handler based on event type."
    ("r" "Reply"         lark-im-reply)
    ("R" "AI smart reply" lark-ai-workflow-reply)
    ("e" "React"         lark-im-react)
+   ("o" "Load older"    lark-im-load-older)
    ("g" "Refresh"       lark-im-chat-refresh)])
 
 (provide 'lark-im)
