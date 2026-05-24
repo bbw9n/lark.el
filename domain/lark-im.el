@@ -350,19 +350,32 @@ Hook attached to `window-scroll-functions' in chat buffers."
 ;;;; AI context providers
 
 (defun lark-im--ai-context-chat ()
-  "Return the AI context plist for a chat thread buffer."
-  (let ((chat-id lark-im--chat-id)
-        (chat-name lark-im--chat-name)
-        (msg-id (get-text-property (point) 'lark-message-id)))
+  "Return the AI context plist for a chat thread buffer.
+Includes the rendered chat transcript as :content so the LLM can
+work from what's already on screen instead of re-fetching via
+the CLI."
+  (let* ((chat-id lark-im--chat-id)
+         (chat-name lark-im--chat-name)
+         (msg-id (get-text-property (point) 'lark-message-id))
+         (msg-count (length lark-im--messages))
+         (has-more lark-im--has-more)
+         (content (buffer-substring-no-properties (point-min) (point-max))))
     (list :domain "im"
           :buffer-type "chat"
           :item (list :chat-id chat-id
                       :chat-name chat-name
-                      :message-id msg-id)
-          :summary (format "Chat: %s%s"
+                      :message-id msg-id
+                      :message-count msg-count
+                      :has-older has-more)
+          :content content
+          :summary (format "Chat: %s — %d message(s) loaded%s%s"
                            (or chat-name chat-id "unknown")
+                           msg-count
+                           (if has-more
+                               " (older messages exist but are not loaded)"
+                             "")
                            (if msg-id
-                               (format ", cursor on message %s" msg-id)
+                               (format "; cursor on message %s" msg-id)
                              "")))))
 
 (defun lark-im--ai-context-chats ()
