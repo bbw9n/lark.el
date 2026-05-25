@@ -399,6 +399,40 @@ emits prose instead of another plan."
       (should (string-match-p "## Skill: lark-shared" prompt))
       (should (string-match-p "SKILL_BODY_MARKER" prompt)))))
 
+(ert-deftest lark-ai-test-skills-content-truncated ()
+  "Only the top `lark-ai-skills-content-lines' of a skill are embedded."
+  (let* ((lark-ai-skills--index
+          '(("lark-shared" . (:description "shared" :dir "/tmp"
+                              :keywords ("shared")))))
+         (lark-ai-skills--cache (make-hash-table :test 'equal))
+         (lark-ai-skills-content-lines 10))
+    (puthash "lark-shared"
+             (mapconcat #'number-to-string (number-sequence 1 30) "\n")
+             lark-ai-skills--cache)
+    (let ((prompt (lark-ai-skills-build-system-prompt '("lark-shared"))))
+      (should (string-match-p "\n10" prompt))
+      (should-not (string-match-p "\n11" prompt)))))
+
+(ert-deftest lark-ai-test-skills-content-full-when-nil ()
+  "A nil line limit embeds the entire skill body."
+  (let* ((lark-ai-skills--index
+          '(("lark-shared" . (:description "shared" :dir "/tmp"
+                              :keywords ("shared")))))
+         (lark-ai-skills--cache (make-hash-table :test 'equal))
+         (lark-ai-skills-content-lines nil))
+    (puthash "lark-shared"
+             (mapconcat #'number-to-string (number-sequence 1 30) "\n")
+             lark-ai-skills--cache)
+    (let ((prompt (lark-ai-skills-build-system-prompt '("lark-shared"))))
+      (should (string-match-p "\n30" prompt)))))
+
+(ert-deftest lark-ai-test-head-lines ()
+  "`lark-ai-skills--head-lines' keeps N lines, or all when N is nil."
+  (let ((txt "a\nb\nc\nd"))
+    (should (equal (lark-ai-skills--head-lines txt 2) "a\nb"))
+    (should (equal (lark-ai-skills--head-lines txt 10) "a\nb\nc\nd"))
+    (should (equal (lark-ai-skills--head-lines txt nil) "a\nb\nc\nd"))))
+
 ;;;; Skill selection — context-aware + no-fallback
 
 (ert-deftest lark-ai-test-select-skills-context-match ()

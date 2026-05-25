@@ -44,6 +44,15 @@ Each skill lives in a subdirectory (e.g., lark-calendar/SKILL.md)."
                  (const :tag "Keyword routing" keyword))
   :group 'lark-ai)
 
+(defcustom lark-ai-skills-content-lines 10
+  "How many leading lines of each SKILL.md to embed in the system prompt.
+Only the top N lines of a skill's markdown are included — enough for
+the model to know the skill's purpose without bloating the prompt with
+the full file.  Set to nil to embed the entire file."
+  :type '(choice (const :tag "Full file" nil)
+                 (integer :tag "Top N lines"))
+  :group 'lark-ai)
+
 ;;;; Internal state
 
 (defvar lark-ai-skills--index nil
@@ -316,13 +325,27 @@ Kept so older callers continue to work; new code should call
           "\n"
           (lark-ai-skills--planning-rules)))
 
+(defun lark-ai-skills--head-lines (text n)
+  "Return the first N lines of TEXT.  When N is nil, return TEXT unchanged."
+  (if (null n)
+      text
+    (mapconcat #'identity
+               (seq-take (split-string text "\n") n)
+               "\n")))
+
 (defun lark-ai-skills--assemble (preamble skill-names)
-  "Concatenate PREAMBLE with the content of each skill in SKILL-NAMES."
+  "Concatenate PREAMBLE with each skill in SKILL-NAMES.
+Each skill contributes only its leading `lark-ai-skills-content-lines'
+lines (the whole file when that is nil)."
   (let ((parts (list preamble)))
     (dolist (name skill-names)
       (let ((content (lark-ai-skills-load name)))
         (when content
-          (push (format "\n---\n## Skill: %s\n\n%s" name content) parts))))
+          (push (format "\n---\n## Skill: %s\n\n%s"
+                        name
+                        (lark-ai-skills--head-lines
+                         content lark-ai-skills-content-lines))
+                parts))))
     (mapconcat #'identity (nreverse parts) "\n")))
 
 (defun lark-ai-skills-build-system-prompt (skill-names)
