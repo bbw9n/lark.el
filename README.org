@@ -629,6 +629,7 @@ All options are under =M-x customize-group RET lark=.
 | =lark-ai-backend=          | =gptel=        | LLM backend (=gptel= or =http=)      |
 | =lark-ai-model=            | =nil=          | Model ID (nil uses backend default)   |
 | =lark-ai-skills-directory= | =~/.agents/skills/= | Path to lark-cli SKILL.md files |
+| =lark-ai-skill-routing=    | =llm=          | Skill picker: =llm= (ask the model) or =keyword= |
 | =lark-ai-confirm-side-effects= | =t=        | Confirm before write operations       |
 | =lark-ai-http-endpoint=    | =nil=          | URL for the =http= backend            |
 | =lark-ai-http-api-key=     | =nil=          | API key (or set =LARK_AI_API_KEY=)    |

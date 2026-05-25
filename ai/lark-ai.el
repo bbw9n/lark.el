@@ -579,8 +579,9 @@ future turns."
 ;;;###autoload
 (defun lark-ai-ask (prompt)
   "Ask the Lark AI assistant to execute a natural-language PROMPT.
-Selects relevant lark-cli skills, sends to LLM, reviews the plan,
-executes it, and presents results."
+Identifies relevant lark-cli skills (via the LLM by default — see
+`lark-ai-skill-routing'), sends to LLM, reviews the plan, executes
+it, and presents results."
   (interactive "sLark AI: ")
   (let* ((ai-buf (lark-ai--get-buffer))
          (in-ai-buf (eq (current-buffer) ai-buf))
@@ -613,33 +614,75 @@ executes it, and presents results."
                                 (delq nil (list (and (not (string-empty-p context))
                                                      context)
                                                 last-plan-text))
-                                "\n"))
-         (matched-skills (lark-ai-skills-select prompt match-text))
-         ;; Default behaviour: reuse the previous turn's skills as the
-         ;; base set on follow-ups so domain continuity is preserved
-         ;; even when the new prompt + match-text picks nothing new.
-         ;; Fresh asks (from a real buffer) start clean.
-         (skill-names (delete-dups
-                       (if (and in-ai-buf prev-skills)
-                           (append prev-skills matched-skills)
-                         matched-skills)))
-         (system-prompt (lark-ai-skills-build-system-prompt skill-names))
+                                "\n")))
+    ;; Persist originating context now (fresh ask only) so a follow-up
+    ;; doesn't overwrite it with the empty AI-buffer context.
+    (unless in-ai-buf
+      (setf (lark-ai-session-context session) context))
+    ;; Open the turn UI immediately; the skills line is filled in once
+    ;; routing resolves (it may require an async LLM call).
+    (lark-ai--show-loading prompt nil)
+    ;; Step 1: identify which skills the request needs, then plan.
+    (lark-ai--select-skills
+     prompt match-text
+     (lambda (matched-skills)
+       ;; Reuse the previous turn's skills as the base set on follow-ups
+       ;; so domain continuity is preserved even when this turn picks
+       ;; nothing new.  Fresh asks (from a real buffer) start clean.
+       (let ((skill-names (delete-dups
+                           (if (and in-ai-buf prev-skills)
+                               (append prev-skills matched-skills)
+                             matched-skills))))
+         (lark-ai--debug-log
+          "SKILLS" "prev=%S matched=%S → final=%S"
+          prev-skills matched-skills skill-names)
+         (lark-ai-ui-update-fragment
+          (lark-ai--frag "skills")
+          (concat "Skills: " (string-join skill-names " · ")))
+         (lark-ai--run-planning prompt context history session skill-names))))))
+
+(defun lark-ai--select-skills (prompt context callback)
+  "Identify relevant skills for PROMPT, then call CALLBACK with the list.
+CONTEXT is extra match text (originating buffer + last plan).  When
+`lark-ai-skill-routing' is `llm', ask the LLM to pick skills from the
+catalogue and fall back to keyword routing if it returns nothing
+usable; otherwise use keyword routing directly.  CALLBACK always
+receives a deduplicated list that includes lark-shared."
+  (if (eq lark-ai-skill-routing 'keyword)
+      (funcall callback (lark-ai-skills-select prompt context))
+    (lark-ai--progress-log "Identifying relevant skills…")
+    (let ((router-prompt (lark-ai-skills-build-router-prompt))
+          (user-msg (concat "User request:\n" prompt
+                            (when (and context (not (string-empty-p context)))
+                              (concat "\n\nContext:\n" context)))))
+      (lark-ai--call-llm
+       router-prompt user-msg
+       (lambda (response)
+         (let* ((data (ignore-errors (lark-ai--extract-json response)))
+                (raw (and (listp data) (alist-get 'skills data)))
+                (names (cond ((listp raw) raw)
+                             ((vectorp raw) (append raw nil))
+                             (t nil)))
+                (valid (lark-ai-skills--validate-selection names)))
+           (lark-ai--debug-log "SKILL ROUTER" "llm=%S → valid=%S" names valid)
+           (funcall callback
+                    (if valid
+                        (delete-dups (cons "lark-shared" valid))
+                      ;; LLM gave nothing usable — keyword fallback.
+                      (lark-ai-skills-select prompt context)))))))))
+
+(defun lark-ai--run-planning (prompt context history session skill-names)
+  "Build the planning prompt from SKILL-NAMES and run plan→execute.
+PROMPT, CONTEXT, HISTORY and SESSION carry the turn state.  This is
+the second half of `lark-ai-ask', invoked once skills are selected."
+  (let* ((system-prompt (lark-ai-skills-build-system-prompt skill-names))
          ;; Synthesis pass uses a different system prompt (no JSON
          ;; mandate) so the model produces prose.  Built once here
          ;; from the same skill set so both passes share context.
          (synth-prompt (lark-ai-skills-build-synthesis-prompt skill-names))
          (user-msg (lark-ai--build-user-message prompt context history)))
-    (lark-ai--debug-log
-     "SKILLS" "prev=%S matched=%S → final=%S"
-     prev-skills matched-skills skill-names)
-    (lark-ai--show-loading prompt skill-names)
-    ;; Persist for follow-ups.  Originating context is set only on a
-    ;; fresh ask (from a real buffer) so a follow-up doesn't overwrite
-    ;; the captured context with the empty AI-buffer context.
     (setf (lark-ai-session-system-prompt session) system-prompt
           (lark-ai-session-skills session) skill-names)
-    (unless in-ai-buf
-      (setf (lark-ai-session-context session) context))
     ;; Stream the planning call into the *log* fragment so the user
     ;; sees tokens land instead of staring at "Waiting for LLM
     ;; response...".  HTTP backend silently falls through to a

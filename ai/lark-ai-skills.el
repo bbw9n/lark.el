@@ -32,6 +32,18 @@ Each skill lives in a subdirectory (e.g., lark-calendar/SKILL.md)."
   :type 'directory
   :group 'lark-ai)
 
+(defcustom lark-ai-skill-routing 'llm
+  "How `lark-ai-ask' decides which skills to load for a request.
+- `llm'     — ask the LLM to pick relevant skills from the catalogue
+              of skill names + descriptions, then load only those.
+              Falls back to keyword routing if the LLM returns nothing
+              usable.
+- `keyword' — match the prompt against the hardcoded
+              `lark-ai-skills--routing-table' (the legacy behaviour)."
+  :type '(choice (const :tag "LLM router" llm)
+                 (const :tag "Keyword routing" keyword))
+  :group 'lark-ai)
+
 ;;;; Internal state
 
 (defvar lark-ai-skills--index nil
@@ -177,6 +189,54 @@ Returns a deduplicated list of skill names."
           (when (member skill available)
             (push skill selected)))))
     (delete-dups (nreverse selected))))
+
+;;;; LLM-based skill selection
+;;
+;; Primary router (`lark-ai-skill-routing' = `llm'): instead of matching
+;; the prompt against the hardcoded `lark-ai-skills--routing-table', show
+;; the LLM the catalogue of available skills (name + description) and let
+;; it pick the relevant ones.  These helpers are pure — the actual async
+;; LLM call and the keyword fallback live in `lark-ai.el'.
+
+(defun lark-ai-skills--catalog ()
+  "Return a text catalogue of available skills for the LLM router.
+One line per indexed skill: \"- NAME: DESCRIPTION\"."
+  (lark-ai-skills--ensure-index)
+  (mapconcat
+   (lambda (entry)
+     (format "- %s: %s"
+             (car entry)
+             (or (plist-get (cdr entry) :description) "")))
+   lark-ai-skills--index
+   "\n"))
+
+(defun lark-ai-skills-build-router-prompt ()
+  "Build the system prompt that asks the LLM to pick relevant skills.
+The model sees the skill catalogue and must reply with a JSON object
+of the form {\"skills\": [NAME, ...]}."
+  (concat
+   "You are a skill router for a Lark/Feishu assistant integrated into Emacs.\n"
+   "Given the user's request (and any context), decide which skills are\n"
+   "needed to fulfil it.  Choose only from the catalogue below, by exact\n"
+   "name.  Prefer the smallest set that covers the request — include a\n"
+   "skill only when it is clearly relevant.  Returning an empty list is\n"
+   "fine when no domain skill applies.\n\n"
+   "## Available skills\n"
+   (lark-ai-skills--catalog)
+   "\n\n## Response format\n"
+   "Respond with ONLY a JSON object, no prose, no markdown fences:\n"
+   "{\"skills\": [\"lark-calendar\", \"lark-task\"]}"))
+
+(defun lark-ai-skills--validate-selection (names)
+  "Filter NAMES to skill names present in the index.
+NAMES is a list of strings (e.g. the LLM router's picks).  Returns a
+deduplicated list preserving order, with unknown names (hallucinated
+or misspelled) dropped.  Returns nil when nothing valid remains."
+  (lark-ai-skills--ensure-index)
+  (let ((available (mapcar #'car lark-ai-skills--index)))
+    (delete-dups
+     (seq-filter (lambda (n) (and (stringp n) (member n available)))
+                 (if (listp names) names (list names))))))
 
 ;;;; System prompt assembly
 

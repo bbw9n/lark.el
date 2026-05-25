@@ -7,6 +7,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 
 (let ((root (expand-file-name ".." (file-name-directory (or load-file-name (buffer-file-name))))))
   (dolist (sub '("." "core" "ui" "domain" "ai"))
@@ -423,6 +424,93 @@ emits prose instead of another plan."
       (should (equal selected '("lark-shared")))
       (should-not (member "lark-calendar" selected))
       (should-not (member "lark-task" selected)))))
+
+;;;; LLM-based skill routing
+
+(defconst lark-ai-test--router-index
+  '(("lark-shared" . (:description "shared base" :dir "/tmp" :keywords ("shared")))
+    ("lark-calendar" . (:description "calendar agenda events" :dir "/tmp" :keywords ("calendar")))
+    ("lark-im" . (:description "messaging chat send" :dir "/tmp" :keywords ("chat")))
+    ("lark-task" . (:description "tasks todo" :dir "/tmp" :keywords ("task"))))
+  "Minimal skill index used by router tests.")
+
+(ert-deftest lark-ai-test-skills-catalog ()
+  "Catalog lists one `- name: description' line per indexed skill."
+  (let ((lark-ai-skills--index lark-ai-test--router-index))
+    (let ((cat (lark-ai-skills--catalog)))
+      (should (string-match-p "^- lark-calendar: calendar agenda events$"
+                              (concat "\n" cat "\n")))
+      (should (string-match-p "- lark-shared: shared base" cat)))))
+
+(ert-deftest lark-ai-test-skills-router-prompt ()
+  "Router prompt embeds the catalog and the JSON response format."
+  (let ((lark-ai-skills--index lark-ai-test--router-index))
+    (let ((p (lark-ai-skills-build-router-prompt)))
+      (should (string-match-p "lark-calendar: calendar agenda events" p))
+      (should (string-match-p "\"skills\"" p)))))
+
+(ert-deftest lark-ai-test-validate-selection ()
+  "Validation keeps known names, drops unknown/non-string, dedups."
+  (let ((lark-ai-skills--index lark-ai-test--router-index))
+    (should (equal (lark-ai-skills--validate-selection '("lark-calendar" "lark-task"))
+                   '("lark-calendar" "lark-task")))
+    (should (equal (lark-ai-skills--validate-selection '("lark-calendar" "lark-NOPE"))
+                   '("lark-calendar")))
+    (should (equal (lark-ai-skills--validate-selection '("lark-im" "lark-im"))
+                   '("lark-im")))
+    (should (equal (lark-ai-skills--validate-selection '(42 "lark-task"))
+                   '("lark-task")))
+    (should (null (lark-ai-skills--validate-selection nil)))))
+
+(ert-deftest lark-ai-test-select-skills-llm-clean ()
+  "LLM router pick is validated and prefixed with lark-shared."
+  (let ((lark-ai-skills--index lark-ai-test--router-index)
+        result)
+    (cl-letf (((symbol-function 'lark-ai--progress-log) #'ignore)
+              ((symbol-function 'lark-ai--call-llm)
+               (lambda (_sys _user cb) (funcall cb "{\"skills\": [\"lark-calendar\"]}"))))
+      (lark-ai--select-skills "show agenda" ""
+                              (lambda (sel) (setq result sel))))
+    (should (member "lark-shared" result))
+    (should (member "lark-calendar" result))
+    (should-not (member "lark-im" result))))
+
+(ert-deftest lark-ai-test-select-skills-llm-garbage-falls-back ()
+  "Unparseable router output falls back to keyword routing."
+  (let ((lark-ai-skills--index lark-ai-test--router-index)
+        result)
+    (cl-letf (((symbol-function 'lark-ai--progress-log) #'ignore)
+              ((symbol-function 'lark-ai--call-llm)
+               (lambda (_sys _user cb) (funcall cb "sorry, I cannot help"))))
+      (lark-ai--select-skills "send a chat message" ""
+                              (lambda (sel) (setq result sel))))
+    ;; Keyword table maps chat/message/send → lark-im.
+    (should (member "lark-shared" result))
+    (should (member "lark-im" result))))
+
+(ert-deftest lark-ai-test-select-skills-llm-hallucination-falls-back ()
+  "All-unknown picks validate to nil, triggering keyword fallback."
+  (let ((lark-ai-skills--index lark-ai-test--router-index)
+        result)
+    (cl-letf (((symbol-function 'lark-ai--progress-log) #'ignore)
+              ((symbol-function 'lark-ai--call-llm)
+               (lambda (_sys _user cb) (funcall cb "{\"skills\": [\"lark-bogus\"]}"))))
+      (lark-ai--select-skills "do something vague" ""
+                              (lambda (sel) (setq result sel))))
+    ;; No keyword match either → only lark-shared.
+    (should (equal result '("lark-shared")))))
+
+(ert-deftest lark-ai-test-select-skills-keyword-mode-skips-llm ()
+  "With `lark-ai-skill-routing' = keyword, the LLM is never called."
+  (let ((lark-ai-skills--index lark-ai-test--router-index)
+        (lark-ai-skill-routing 'keyword)
+        result)
+    (cl-letf (((symbol-function 'lark-ai--call-llm)
+               (lambda (&rest _) (error "LLM must not be called in keyword mode"))))
+      (lark-ai--select-skills "calendar agenda" ""
+                              (lambda (sel) (setq result sel))))
+    (should (member "lark-shared" result))
+    (should (member "lark-calendar" result))))
 
 ;;;; build-user-message — structure, history truncation
 
