@@ -187,6 +187,34 @@ Calls `lark-auth-ensure' when it is defined.  Skipped when:
 
 ;;;; Async process execution
 
+(defun lark--dispatch-result (exit-code output event no-error raw callback on-error)
+  "Route a finished process to CALLBACK or ON-ERROR.
+EXIT-CODE is the process exit status, OUTPUT the accumulated stdout,
+and EVENT the sentinel event string.
+
+On a non-zero (or non-integer/abnormal) EXIT-CODE: optionally `message'
+the error unless NO-ERROR, then call ON-ERROR with (EXIT-CODE MESSAGE)
+when given.  ON-ERROR runs regardless of NO-ERROR so callers can react
+to a failure instead of stalling — CALLBACK only fires on success.
+
+On a zero EXIT-CODE: parse OUTPUT (unless RAW), run `lark--handle-error'
+unless RAW or NO-ERROR, then call CALLBACK with the result."
+  (cond
+   ((not (and (integerp exit-code) (zerop exit-code)))
+    (let ((msg (or (and output
+                        (not (string-empty-p (string-trim output)))
+                        (string-trim output))
+                   (string-trim (or event "")))))
+      (unless no-error
+        (message "Lark CLI error (exit %s): %s" exit-code msg))
+      (when on-error
+        (funcall on-error exit-code msg))))
+   (callback
+    (let ((result (if raw output (lark--parse-json output))))
+      (unless (or raw no-error)
+        (lark--handle-error result))
+      (funcall callback result)))))
+
 (defun lark--run-command (cmd-args callback &optional extra-args &rest keys)
   "Run a lark-cli command asynchronously.
 
@@ -199,6 +227,14 @@ KEYS are keyword arguments:
   :no-error       - don't signal errors from the response
   :literal        - use CMD-ARGS as-is (skip --format/--as/--dry-run)
   :no-auth-check  - skip the `lark-auth-ensure' gate (rarely needed)
+  :on-error       - function called as (EXIT-CODE MESSAGE) when the
+                    process exits non-zero or is killed by :timeout.
+                    Runs regardless of :no-error.  Lets callers react to
+                    failures instead of stalling because CALLBACK (which
+                    only fires on success) never runs.
+  :timeout        - seconds; if the process is still alive after this, it
+                    is killed (routing through :on-error) so a hung CLI
+                    can't stall the caller forever.
 
 Returns the process object."
   (lark--ensure-auth-for cmd-args keys)
@@ -206,11 +242,13 @@ Returns the process object."
          (raw (plist-get keys :raw))
          (no-error (plist-get keys :no-error))
          (literal (plist-get keys :literal))
+         (on-error (plist-get keys :on-error))
+         (timeout (plist-get keys :timeout))
          (full-args (if literal cmd-args
                       (lark--build-command cmd-args extra-args format)))
          (exe (lark--executable))
          (proc-name (format "lark-%s" (string-join cmd-args "-")))
-         proc)
+         proc timer)
     (lark--log "Running: %s %s" exe (string-join full-args " "))
     (setq proc
           (make-process
@@ -226,20 +264,21 @@ Returns the process object."
                        (unwind-protect
                            (let ((output (alist-get proc lark--process-output-alist))
                                  (exit-code (process-exit-status proc)))
+                             (when (timerp timer) (cancel-timer timer))
                              (lark--log "Process %s exited (%s): %s"
                                         (process-name proc) exit-code
                                         (string-trim event))
-                             (cond
-                              ((not (zerop exit-code))
-                               (let ((msg (or (and output (string-trim output)) event)))
-                                 (unless no-error
-                                   (message "Lark CLI error (exit %d): %s" exit-code msg))))
-                              (callback
-                               (let ((result (if raw output (lark--parse-json output))))
-                                 (unless (or raw no-error)
-                                   (lark--handle-error result))
-                                 (funcall callback result)))))
+                             (lark--dispatch-result
+                              exit-code output event no-error raw callback on-error))
                          (setf (alist-get proc lark--process-output-alist nil t) nil)))))
+    (when (and timeout (numberp timeout) (> timeout 0))
+      (setq timer
+            (run-with-timer
+             timeout nil
+             (lambda ()
+               (when (process-live-p proc)
+                 (lark--log "Killing %s after %ss timeout" proc-name timeout)
+                 (kill-process proc))))))
     proc))
 
 ;;;; Sync process execution

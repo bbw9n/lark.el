@@ -352,6 +352,7 @@ relying on line-number arithmetic."
                 (pcase status
                   ('done    (propertize "✓" 'face 'success))
                   ('running (propertize "⟳" 'face 'warning))
+                  ('error   (propertize "✗" 'face 'error))
                   ('skipped (propertize "✗" 'face
                                         'font-lock-comment-face))
                   (_        (propertize "○" 'face

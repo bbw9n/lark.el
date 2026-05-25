@@ -399,32 +399,37 @@ emits prose instead of another plan."
       (should (string-match-p "## Skill: lark-shared" prompt))
       (should (string-match-p "SKILL_BODY_MARKER" prompt)))))
 
-(ert-deftest lark-ai-test-skills-content-truncated ()
-  "Only the top `lark-ai-skills-content-lines' of a skill are embedded."
+(ert-deftest lark-ai-test-skills-prompt-embeds-full-body ()
+  "The system prompt embeds the FULL skill body, regardless of log limit."
   (let* ((lark-ai-skills--index
           '(("lark-shared" . (:description "shared" :dir "/tmp"
                               :keywords ("shared")))))
          (lark-ai-skills--cache (make-hash-table :test 'equal))
-         (lark-ai-skills-content-lines 10))
+         (lark-ai-skills-log-lines 10))
     (puthash "lark-shared"
              (mapconcat #'number-to-string (number-sequence 1 30) "\n")
              lark-ai-skills--cache)
     (let ((prompt (lark-ai-skills-build-system-prompt '("lark-shared"))))
-      (should (string-match-p "\n10" prompt))
-      (should-not (string-match-p "\n11" prompt)))))
-
-(ert-deftest lark-ai-test-skills-content-full-when-nil ()
-  "A nil line limit embeds the entire skill body."
-  (let* ((lark-ai-skills--index
-          '(("lark-shared" . (:description "shared" :dir "/tmp"
-                              :keywords ("shared")))))
-         (lark-ai-skills--cache (make-hash-table :test 'equal))
-         (lark-ai-skills-content-lines nil))
-    (puthash "lark-shared"
-             (mapconcat #'number-to-string (number-sequence 1 30) "\n")
-             lark-ai-skills--cache)
-    (let ((prompt (lark-ai-skills-build-system-prompt '("lark-shared"))))
+      ;; Line 30 must survive — the log limit must not truncate the prompt.
       (should (string-match-p "\n30" prompt)))))
+
+(ert-deftest lark-ai-test-skills-abbreviate-for-log ()
+  "Log abbreviation keeps a skill's header + top N lines, drops the rest."
+  (let* ((lark-ai-skills-log-lines 3)
+         (text (concat "PREAMBLE LINE\n## Skill: foo\na\nb\nc\nd\ne")))
+    (let ((out (lark-ai-skills-abbreviate-for-log text)))
+      (should (string-match-p "PREAMBLE LINE" out))   ; preamble intact
+      (should (string-match-p "## Skill: foo" out))   ; header kept
+      (should (string-match-p "\na\n" out))           ; first body line kept
+      (should (string-match-p "\nc" out))             ; Nth body line kept
+      (should-not (string-match-p "\nd" out))         ; beyond N dropped
+      (should (string-match-p "truncated" out)))))    ; marker present
+
+(ert-deftest lark-ai-test-skills-abbreviate-nil-passthrough ()
+  "A nil log limit returns the text unchanged."
+  (let ((lark-ai-skills-log-lines nil)
+        (text "## Skill: foo\na\nb\nc\nd"))
+    (should (equal (lark-ai-skills-abbreviate-for-log text) text))))
 
 (ert-deftest lark-ai-test-head-lines ()
   "`lark-ai-skills--head-lines' keeps N lines, or all when N is nil."

@@ -44,12 +44,12 @@ Each skill lives in a subdirectory (e.g., lark-calendar/SKILL.md)."
                  (const :tag "Keyword routing" keyword))
   :group 'lark-ai)
 
-(defcustom lark-ai-skills-content-lines 10
-  "How many leading lines of each SKILL.md to embed in the system prompt.
-Only the top N lines of a skill's markdown are included — enough for
-the model to know the skill's purpose without bloating the prompt with
-the full file.  Set to nil to embed the entire file."
-  :type '(choice (const :tag "Full file" nil)
+(defcustom lark-ai-skills-log-lines 10
+  "How many leading lines of each skill to show in the *Lark AI Debug* log.
+Display-only: the FULL skill body is always sent to the LLM; this just
+keeps the debug log readable by abbreviating each `## Skill:' section to
+its top N lines.  Set to nil to log skill bodies in full."
+  :type '(choice (const :tag "Full body" nil)
                  (integer :tag "Top N lines"))
   :group 'lark-ai)
 
@@ -334,19 +334,42 @@ Kept so older callers continue to work; new code should call
                "\n")))
 
 (defun lark-ai-skills--assemble (preamble skill-names)
-  "Concatenate PREAMBLE with each skill in SKILL-NAMES.
-Each skill contributes only its leading `lark-ai-skills-content-lines'
-lines (the whole file when that is nil)."
+  "Concatenate PREAMBLE with the full content of each skill in SKILL-NAMES."
   (let ((parts (list preamble)))
     (dolist (name skill-names)
       (let ((content (lark-ai-skills-load name)))
         (when content
-          (push (format "\n---\n## Skill: %s\n\n%s"
-                        name
-                        (lark-ai-skills--head-lines
-                         content lark-ai-skills-content-lines))
-                parts))))
+          (push (format "\n---\n## Skill: %s\n\n%s" name content) parts))))
     (mapconcat #'identity (nreverse parts) "\n")))
+
+(defun lark-ai-skills-abbreviate-for-log (text)
+  "Abbreviate each `## Skill:' section of TEXT for debug-log display.
+Keeps each skill's header plus its first `lark-ai-skills-log-lines' lines
+and drops the rest behind a marker.  The preamble and any non-skill text
+are left intact.  Returns TEXT unchanged when `lark-ai-skills-log-lines'
+is nil.  This is display-only — the full bodies are still sent to the LLM."
+  (if (null lark-ai-skills-log-lines)
+      text
+    (let ((n lark-ai-skills-log-lines)
+          (in-skill nil)
+          (kept 0)
+          (truncated nil)
+          out)
+      (dolist (line (split-string text "\n"))
+        (cond
+         ((string-prefix-p "## Skill: " line)
+          (setq in-skill t kept 0 truncated nil)
+          (push line out))
+         ((not in-skill)
+          (push line out))
+         ((< kept n)
+          (setq kept (1+ kept))
+          (push line out))
+         ((not truncated)
+          (setq truncated t)
+          (push "  …(skill body truncated in log; full text sent to LLM)…" out))
+         (t nil)))
+      (mapconcat #'identity (nreverse out) "\n"))))
 
 (defun lark-ai-skills-build-system-prompt (skill-names)
   "Build the planning system prompt from SKILL-NAMES.

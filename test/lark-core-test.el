@@ -191,6 +191,60 @@ only — a bare {data: ...} without ok or code passes through."
   (let ((resp '((data . ((items . nil))))))
     (should (equal (lark--handle-error resp) resp))))
 
+;;;; Result dispatch — `lark--dispatch-result' (success vs failure routing)
+
+(ert-deftest lark-test-dispatch-success-calls-callback ()
+  "Zero exit parses output and calls CALLBACK, not ON-ERROR."
+  (let (cb-result err-called)
+    (lark--dispatch-result
+     0 "{\"a\": 1}" "finished\n" t nil
+     (lambda (r) (setq cb-result r))
+     (lambda (&rest _) (setq err-called t)))
+    (should (equal (alist-get 'a cb-result) 1))
+    (should-not err-called)))
+
+(ert-deftest lark-test-dispatch-nonzero-calls-on-error-not-callback ()
+  "Non-zero exit calls ON-ERROR with (code msg) and never CALLBACK.
+This is the regression guard for the silent-stall bug: a failed step
+must notify ON-ERROR so the caller can advance instead of hanging."
+  (let (cb-called err-code err-msg)
+    (lark--dispatch-result
+     2 "{\"ok\": false, \"error\": {\"message\": \"--content is required\"}}"
+     "exited abnormally\n" t nil
+     (lambda (&rest _) (setq cb-called t))
+     (lambda (code msg) (setq err-code code err-msg msg)))
+    (should-not cb-called)
+    (should (= err-code 2))
+    (should (string-match-p "--content is required" err-msg))))
+
+(ert-deftest lark-test-dispatch-on-error-fires-even-with-no-error ()
+  "ON-ERROR runs regardless of NO-ERROR (NO-ERROR only mutes `message')."
+  (let (err-called)
+    (lark--dispatch-result
+     1 "boom" "exited abnormally\n" t nil
+     #'ignore
+     (lambda (&rest _) (setq err-called t)))
+    (should err-called)))
+
+(ert-deftest lark-test-dispatch-nonzero-without-on-error-is-safe ()
+  "A non-zero exit with no ON-ERROR neither calls CALLBACK nor errors."
+  (let (cb-called)
+    (should-not
+     (lark--dispatch-result
+      1 "boom" "exited\n" t nil
+      (lambda (&rest _) (setq cb-called t))
+      nil))
+    (should-not cb-called)))
+
+(ert-deftest lark-test-dispatch-raw-skips-parsing ()
+  "RAW passes the unparsed output string straight to CALLBACK."
+  (let (cb-result)
+    (lark--dispatch-result
+     0 "not json at all" "finished\n" t t
+     (lambda (r) (setq cb-result r))
+     nil)
+    (should (equal cb-result "not json at all"))))
+
 ;;;; Auth gate tests — `lark--ensure-auth-for'
 
 (ert-deftest lark-test-ensure-auth-calls-for-non-auth-cmd ()

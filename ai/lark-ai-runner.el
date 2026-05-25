@@ -40,6 +40,14 @@
   :type 'boolean
   :group 'lark-ai)
 
+(defcustom lark-ai-step-timeout 1800
+  "Seconds to wait for a single plan step's lark-cli call before giving up.
+A step that exceeds this is killed and marked failed so the plan can
+continue instead of hanging.  Set to nil to disable the timeout."
+  :type '(choice (const :tag "No timeout" nil)
+                 (integer :tag "Seconds"))
+  :group 'lark-ai)
+
 ;;;; Result accumulation
 
 (defun lark-ai--push-result (idx result)
@@ -149,7 +157,23 @@ $step-N references in CMD-ARGS are resolved from prior results."
         "%s" (lark-ai--format-cli-result result))
        (funcall done-fn))
      nil
-     :no-error t)))
+     :no-error t
+     :timeout lark-ai-step-timeout
+     ;; Without this, a non-zero exit (or a timeout kill) means CALLBACK
+     ;; never fires, DONE-FN never runs, and the whole plan stalls
+     ;; silently.  Record the failure and advance so the user sees it.
+     :on-error
+     (lambda (exit-code msg)
+       (lark-ai--push-result
+        index (list (cons 'error (if (and msg (not (string-empty-p msg)))
+                                     msg "command failed"))
+                    (cons 'exit_code exit-code)))
+       (lark-ai--update-step-status index 'error)
+       (lark-ai--progress-log "Step %d: failed (exit %s)" index exit-code)
+       (lark-ai--debug-log
+        (format "CLI ERROR (step %d)" index)
+        "exit %s\n%s" exit-code (or msg ""))
+       (funcall done-fn)))))
 
 (provide 'lark-ai-runner)
 ;;; lark-ai-runner.el ends here

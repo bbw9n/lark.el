@@ -630,6 +630,8 @@ All options are under =M-x customize-group RET lark=.
 | =lark-ai-model=            | =nil=          | Model ID (nil uses backend default)   |
 | =lark-ai-skills-directory= | =~/.agents/skills/= | Path to lark-cli SKILL.md files |
 | =lark-ai-skill-routing=    | =llm=          | Skill picker: =llm= (ask the model) or =keyword= |
+| =lark-ai-skills-log-lines=  | =10=          | Top N lines of each skill shown in the debug log (nil = full) |
+| =lark-ai-step-timeout=     | =1800=         | Seconds before a plan step's CLI call is killed (nil = none) |
 | =lark-ai-confirm-side-effects= | =t=        | Confirm before write operations       |
 | =lark-ai-http-endpoint=    | =nil=          | URL for the =http= backend            |
 | =lark-ai-http-api-key=     | =nil=          | API key (or set =LARK_AI_API_KEY=)    |

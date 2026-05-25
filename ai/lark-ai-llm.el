@@ -31,6 +31,7 @@
 ;;; Code:
 
 (require 'lark-ai-protocol)
+(require 'lark-ai-skills)   ; `lark-ai-skills-abbreviate-for-log' for debug output
 (require 'lark-core)
 (require 'json)
 
@@ -93,7 +94,7 @@ If nil, reads from environment variable LARK_AI_API_KEY."
 Call CALLBACK with the response text."
   (lark-ai--debug-log
    "REQUEST" "backend=%s\n--- system ---\n%s\n--- user ---\n%s"
-   lark-ai-backend system-prompt user-message)
+   lark-ai-backend (lark-ai-skills-abbreviate-for-log system-prompt) user-message)
   (pcase lark-ai-backend
     ('gptel (lark-ai--call-gptel system-prompt user-message callback))
     ('http  (lark-ai--call-http system-prompt user-message callback))
@@ -194,7 +195,7 @@ find and cancel the in-flight stream."
     (lark-ai--ensure-output-fragment))
   (lark-ai--debug-log
    "STREAM REQUEST" "--- system ---\n%s\n--- user ---\n%s"
-   system-prompt user-message)
+   (lark-ai-skills-abbreviate-for-log system-prompt) user-message)
   (let ((gptel-log-level nil)
         (inhibit-message t)
         (accumulated "")
