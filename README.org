@@ -686,6 +686,9 @@ core/
   lark-auth.el                  OAuth device-code login, status, identity switching
   lark-transient.el             Top-level transient dispatch menu
 
+ui/
+  lark-ui.el                    Shared presentation helpers (loading spinner)
+
 domain/
   lark-calendar.el              Calendar: agenda, events, create, free/busy, RSVP
   lark-tasks.el                 Tasks: list, create, complete, subtasks, tasklists
@@ -712,7 +715,7 @@ All CLI calls funnel through =lark--run-command= (async) or
 with =json-parse-string=.  CLI debug lines (=[cmd +sub]= prefixes and
 =tip= lines) are automatically stripped before JSON parsing.
 
-=lark.el= automatically adds =core/=, =domain/=, and =ai/= to the
+=lark.el= automatically adds =core/=, =ui/=, =domain/=, and =ai/= to the
 =load-path= at load time, so a single =(add-to-list 'load-path "/path/to/lark.el")=
 is sufficient.
 

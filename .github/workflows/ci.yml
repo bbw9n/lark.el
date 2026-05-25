@@ -30,7 +30,7 @@ jobs:
 
       - name: Byte-compile
         run: |
-          emacs --batch -L . -L core -L domain -L ai \
+          emacs --batch -L . -L core -L ui -L domain -L ai \
             --eval "(require 'package)" \
             --eval "(package-initialize)" \
             --eval "(setq byte-compile-error-on-warn t)" \
@@ -38,6 +38,7 @@ jobs:
             core/lark-core.el \
             core/lark-auth.el \
             core/lark-transient.el \
+            ui/lark-ui.el \
             domain/lark-calendar.el \
             domain/lark-tasks.el \
             domain/lark-im.el \
@@ -55,10 +56,11 @@ jobs:
 
       - name: Run tests
         run: |
-          emacs --batch -L . -L core -L domain -L ai -L test \
+          emacs --batch -L . -L core -L ui -L domain -L ai -L test \
             --eval "(require 'package)" \
             --eval "(package-initialize)" \
             -l lark-core-test \
+            -l lark-ui-test \
             -l lark-calendar-test \
             -l lark-tasks-test \
             -l lark-im-test \

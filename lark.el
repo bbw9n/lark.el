@@ -41,10 +41,11 @@
        buffer-file-name))
   "Directory where lark.el is installed.")
 
-(dolist (sub '("core" "domain" "ai"))
+(dolist (sub '("core" "ui" "domain" "ai"))
   (add-to-list 'load-path (expand-file-name sub lark--directory)))
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'lark-auth)
 (require 'lark-transient)
 
