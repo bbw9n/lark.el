@@ -35,9 +35,28 @@
 
 ;;;; Customization
 
-(defcustom lark-ai-confirm-side-effects t
-  "When non-nil, pause for confirmation before executing write operations."
-  :type 'boolean
+(defcustom lark-ai-execute-mode 'confirm-writes
+  "How a generated plan is executed — a single mutually-exclusive choice.
+- `auto'           run the whole plan immediately, no confirmation
+                   (create/update/delete/send steps run on their own).
+- `confirm-writes' run immediately but prompt before each write
+                   (side-effect) step, except commands listed in
+                   `lark-ai-auto-execute-commands'; read-only steps run
+                   freely.
+- `review'         show the plan and wait for the user to confirm
+                   (press RET) before anything runs."
+  :type '(choice (const :tag "Auto — run everything, no prompts" auto)
+                 (const :tag "Confirm writes — prompt before each write" confirm-writes)
+                 (const :tag "Review — confirm the whole plan first" review))
+  :group 'lark-ai)
+
+(defcustom lark-ai-auto-execute-commands '("docs +create" "docs +update")
+  "Write commands that run WITHOUT confirmation even in `confirm-writes' mode.
+Each entry is a space-separated command prefix matched against the
+leading tokens of a step's lark-cli command — e.g. \"docs +create\"
+matches the step `(\"docs\" \"+create\" \"--api-version\" \"v2\" …)'.
+Only consulted when `lark-ai-execute-mode' is `confirm-writes'."
+  :type '(repeat string)
   :group 'lark-ai)
 
 (defcustom lark-ai-step-timeout 1800
@@ -54,6 +73,18 @@ continue instead of hanging.  Set to nil to disable the timeout."
   "Push (IDX . RESULT) onto the session's step-results."
   (push (cons idx result)
         (lark-ai-session-step-results (lark-ai--session))))
+
+;;;; Confirmation policy
+
+(defun lark-ai--command-auto-p (cmd)
+  "Return non-nil when CMD's leading tokens match an auto-execute entry.
+CMD is a list of lark-cli argument strings.  Matched against
+`lark-ai-auto-execute-commands' so whitelisted writes skip the prompt."
+  (seq-some
+   (lambda (entry)
+     (let ((prefix (split-string entry " " t)))
+       (and prefix (equal prefix (seq-take cmd (length prefix))))))
+   lark-ai-auto-execute-commands))
 
 ;;;; Execution
 
@@ -99,8 +130,10 @@ Results is an alist of (index . parsed-json-or-string)."
               (setq pending (1- pending))
               (when (zerop pending)
                 (lark-ai--execute-next rest callback)))
-             ;; Side-effect step: confirm first
-             ((and side-effect lark-ai-confirm-side-effects)
+             ;; Side-effect step: in `confirm-writes' mode, prompt unless the
+             ;; command is whitelisted in `lark-ai-auto-execute-commands'.
+             ((and side-effect (eq lark-ai-execute-mode 'confirm-writes)
+                   (not (lark-ai--command-auto-p cmd)))
               (if (yes-or-no-p (format "Execute: lark-cli %s? "
                                        (string-join cmd " ")))
                   (lark-ai--run-step idx cmd

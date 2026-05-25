@@ -737,31 +737,36 @@ the second half of `lark-ai-ask', invoked once skills are selected."
                         (push (cons "assistant" text)
                               (lark-ai-session-history (lark-ai--session)))
                         (lark-ai--ensure-input-area))))))
-             (lark-ai--display-plan
-              plan
-              (lambda (confirmed-steps)
-                (lark-ai--progress-log "Executing plan...")
-                (lark-ai--execute-plan
-                 confirmed-steps
-                 (lambda (results)
-                   (if (seq-find (lambda (s) (plist-get s :synthesize))
-                                 confirmed-steps)
-                       (progn
-                         (lark-ai--progress-log "Synthesizing results...")
-                         (lark-ai--mark-all-done)
-                         ;; Synth-prompt here too — same reason.
-                         (lark-ai--synthesize-stream
-                          results confirmed-steps synth-prompt))
-                     (lark-ai--mark-all-done)
-                     (lark-ai--present
-                      (mapconcat
-                       (lambda (pair)
-                         (format "## Step %d\n```\n%s\n```"
-                                 (car pair)
-                                 (if (cdr pair) (pp-to-string (cdr pair)) "(no data)")))
-                       (sort (copy-sequence results)
-                             (lambda (a b) (< (car a) (car b))))
-                       "\n\n")))))))))))
+             (progn
+               (lark-ai--display-plan
+                plan
+                (lambda (confirmed-steps)
+                  (lark-ai--progress-log "Executing plan...")
+                  (lark-ai--execute-plan
+                   confirmed-steps
+                   (lambda (results)
+                     (if (seq-find (lambda (s) (plist-get s :synthesize))
+                                   confirmed-steps)
+                         (progn
+                           (lark-ai--progress-log "Synthesizing results...")
+                           (lark-ai--mark-all-done)
+                           ;; Synth-prompt here too — same reason.
+                           (lark-ai--synthesize-stream
+                            results confirmed-steps synth-prompt))
+                       (lark-ai--mark-all-done)
+                       (lark-ai--present
+                        (mapconcat
+                         (lambda (pair)
+                           (format "## Step %d\n```\n%s\n```"
+                                   (car pair)
+                                   (if (cdr pair) (pp-to-string (cdr pair)) "(no data)")))
+                         (sort (copy-sequence results)
+                               (lambda (a b) (< (car a) (car b))))
+                         "\n\n")))))))
+               ;; Auto-run past the review gate unless the user wants to
+               ;; review the plan first.
+               (unless (eq lark-ai-execute-mode 'review)
+                 (lark-ai-plan-execute)))))))
      ;; Chunk handler — stream raw planning JSON into the log
      ;; fragment so the user sees the model generating.  Wrapped
      ;; in the comment face to blend with progress lines.

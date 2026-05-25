@@ -438,6 +438,23 @@ emits prose instead of another plan."
     (should (equal (lark-ai-skills--head-lines txt 10) "a\nb\nc\nd"))
     (should (equal (lark-ai-skills--head-lines txt nil) "a\nb\nc\nd"))))
 
+;;;; Confirmation policy — auto-execute whitelist
+
+(ert-deftest lark-ai-test-command-auto-whitelist ()
+  "Whitelisted write commands match by leading tokens; others do not."
+  (let ((lark-ai-auto-execute-commands '("docs +create" "docs +update")))
+    (should (lark-ai--command-auto-p '("docs" "+create" "--api-version" "v2")))
+    (should (lark-ai--command-auto-p '("docs" "+update" "--document-id" "x")))
+    (should-not (lark-ai--command-auto-p '("docs" "+delete" "--document-id" "x")))
+    (should-not (lark-ai--command-auto-p '("im" "+messages-send" "--text" "hi")))
+    ;; A prefix needs all its tokens present.
+    (should-not (lark-ai--command-auto-p '("docs")))))
+
+(ert-deftest lark-ai-test-command-auto-empty-whitelist ()
+  "An empty whitelist matches nothing."
+  (let ((lark-ai-auto-execute-commands nil))
+    (should-not (lark-ai--command-auto-p '("docs" "+create")))))
+
 ;;;; Skill selection — context-aware + no-fallback
 
 (ert-deftest lark-ai-test-select-skills-context-match ()
