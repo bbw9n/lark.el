@@ -126,15 +126,27 @@ $step-N references in CMD-ARGS are resolved from prior results."
   (let* ((session (lark-ai--session))
          (resolved (lark-ai--interpolate-cmd
                     cmd-args
-                    (lark-ai-session-step-results session))))
+                    (lark-ai-session-step-results session)))
+         ;; The actual argument vector lark-cli receives — mirrors the
+         ;; `lark--run-command' call below (no :format, no extra-args),
+         ;; so framework-injected flags like --dry-run are surfaced too.
+         (fired (lark--build-command resolved nil nil)))
     (lark-ai--update-step-status index 'running)
     (lark-ai--progress-log "Step %d: lark-cli %s" index (string-join resolved " "))
+    (lark-ai--debug-log
+     (format "CLI REQUEST (step %d)" index)
+     "%s"
+     (propertize (concat "lark-cli " (string-join fired " "))
+                 'face 'font-lock-function-name-face))
     (lark--run-command
      resolved
      (lambda (result)
        (lark-ai--push-result index result)
        (lark-ai--update-step-status index 'done)
        (lark-ai--progress-log "Step %d: done" index)
+       (lark-ai--debug-log
+        (format "CLI RESPONSE (step %d)" index)
+        "%s" (lark-ai--format-cli-result result))
        (funcall done-fn))
      nil
      :no-error t)))

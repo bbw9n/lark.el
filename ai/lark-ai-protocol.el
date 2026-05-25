@@ -59,6 +59,20 @@ ARGS are passed to `format'.  No-op when `lark-ai-debug' is nil."
                           (format-time-string "%H:%M:%S.%3N")
                           label entry)))))))
 
+(defun lark-ai--format-cli-result (result)
+  "Render a lark-cli step RESULT for the debug log.
+RESULT is parsed JSON (alist/list) or a raw string.  JSON is
+pretty-printed; strings pass through; nil renders as a placeholder."
+  (cond
+   ((null result) "(no result)")
+   ((stringp result) result)
+   (t (condition-case nil
+          (with-temp-buffer
+            (insert (json-encode result))
+            (json-pretty-print-buffer)
+            (buffer-string))
+        (error (format "%S" result))))))
+
 ;;;###autoload
 (defun lark-ai-toggle-debug ()
   "Toggle Lark AI debug logging.
