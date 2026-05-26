@@ -145,9 +145,7 @@ Truncates to \"YYYY-MM-DD HH:MM\" for display."
 
 (defun lark-im--insert-chat-field (label value)
   "Insert a LABEL: VALUE line if VALUE is non-empty."
-  (when (and value (not (string-empty-p value)))
-    (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face)
-            value "\n")))
+  (lark-ui-insert-field label value))
 
 (defun lark-im--insert-chat (chat)
   "Insert a multi-line section for CHAT into the current buffer."
@@ -293,35 +291,12 @@ Each chat is displayed as a multi-line section.")
 (defun lark-im--next-chat ()
   "Move to the next chat section."
   (interactive)
-  (let ((current (lark-im--chat-id-at-point))
-        (pos (point)))
-    (when current
-      (while (and (not (eobp))
-                  (equal (get-text-property (point) 'lark-chat-id) current))
-        (forward-char)))
-    (while (and (not (eobp))
-                (not (get-text-property (point) 'lark-chat-id)))
-      (forward-char))
-    (when (eobp) (goto-char pos))))
+  (lark-ui-next-section 'lark-chat-id))
 
 (defun lark-im--prev-chat ()
   "Move to the previous chat section."
   (interactive)
-  (let ((current (lark-im--chat-id-at-point))
-        (pos (point)))
-    (when current
-      (while (and (not (bobp))
-                  (equal (get-text-property (point) 'lark-chat-id) current))
-        (backward-char)))
-    (while (and (not (bobp))
-                (not (get-text-property (point) 'lark-chat-id)))
-      (backward-char))
-    (let ((target (get-text-property (point) 'lark-chat-id)))
-      (if target
-          (while (and (not (bobp))
-                      (equal (get-text-property (1- (point)) 'lark-chat-id) target))
-            (backward-char))
-        (goto-char pos)))))
+  (lark-ui-prev-section 'lark-chat-id))
 
 ;;;; Chat message mode
 
@@ -486,8 +461,7 @@ messages can be loaded one page at a time with `lark-im-load-older'."
 When HAS-MORE is non-nil, include a hint line about loading older
 messages.  The hint line is tagged with the `lark-im-hint' text
 property so the loading spinner can update it in place."
-  (insert (propertize chat-name 'face 'bold) "\n"
-          (make-string (min 60 (max 20 (length chat-name))) ?─) "\n")
+  (lark-ui-insert-title chat-name 1)
   (when has-more
     (insert (propertize (lark-im--hint-text)
                         'face 'font-lock-comment-face
@@ -813,7 +787,7 @@ Prompts for message ID if not determinable from point."
          (let ((inhibit-read-only t))
            (erase-buffer)
            (insert (propertize (format "Search: %s\n" query) 'face 'bold)
-                   (make-string 60 ?─) "\n\n")
+                   (lark-ui-separator 60) "\n\n")
            (if (null messages)
                (insert "(no results)\n")
              (dolist (msg messages)

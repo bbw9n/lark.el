@@ -22,6 +22,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'lark-contact)
 (require 'json)
 (require 'transient)
@@ -271,7 +272,7 @@ Keybindings follow dired conventions where possible.")
         (when (and folder-token (not (string-empty-p folder-token)))
           (insert (propertize (format "  [%s]" folder-token) 'face 'font-lock-comment-face)))
         (insert "\n"
-                (make-string 60 ?─) "\n")
+                (lark-ui-separator 60) "\n")
         ;; ".." entry for going up
         (when (and folder-token (not (string-empty-p folder-token)))
           (let ((beg (point)))
@@ -404,8 +405,7 @@ Press RET to view document content (doc/docx/sheet).
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (propertize name 'face 'bold) "\n"
-                (make-string (min 60 (max 20 (length name))) ?─) "\n\n")
+        (lark-ui-insert-title name)
         (lark-drive--detail-field "Type" type)
         (lark-drive--detail-field "Token" (lark-drive--file-token file))
         (lark-drive--detail-field "Modified" (lark-drive--file-modified-time file))
@@ -421,9 +421,7 @@ Press RET to view document content (doc/docx/sheet).
 
 (defun lark-drive--detail-field (label value)
   "Insert LABEL: VALUE if VALUE is non-empty."
-  (when (and value (not (string-empty-p value)))
-    (insert (propertize (format "  %-12s" (concat label ":")) 'face 'font-lock-keyword-face)
-            value "\n")))
+  (lark-ui-insert-field label value 12))
 
 ;;;; View document content
 

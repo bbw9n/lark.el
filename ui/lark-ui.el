@@ -9,13 +9,22 @@
 ;; Presentation-layer helpers shared across lark.el domains, kept
 ;; separate from the process/IO engine in `lark-core'.
 ;;
-;; Currently this provides a small, render-target-agnostic loading
-;; spinner.  `lark-spinner-start' cycles through frames on a timer and
-;; calls a render function with each frame string; the render function
-;; decides what to do with it — update an in-buffer line, a header-line,
-;; the echo area, etc.  Domains build their own spinners on top of this;
-;; `lark-spinner-message' is a ready-made echo-area spinner for the
-;; common "fetching…" case.
+;; It provides a small, render-target-agnostic loading spinner plus a
+;; set of section-buffer rendering primitives shared by the domain
+;; modules:
+;;
+;; - `lark-spinner-start' cycles through frames on a timer and calls a
+;;   render function with each frame string; the render function decides
+;;   what to do with it — update an in-buffer line, a header-line, the
+;;   echo area, etc.  Domains build their own spinners on top of this;
+;;   `lark-spinner-message' is a ready-made echo-area spinner for the
+;;   common "fetching…" case.
+;;
+;; - `lark-ui-insert-field' renders an aligned "Label: value" line.
+;; - `lark-ui-separator' / `lark-ui-insert-title' render the horizontal
+;;   rule and bold title-underline used at the top of detail buffers.
+;; - `lark-ui-next-section' / `lark-ui-prev-section' move point between
+;;   text-property-delimited sections in a list buffer.
 
 ;;; Code:
 
@@ -96,6 +105,89 @@ clobbers other output.  Returns a spinner handle; call
          (let ((message-log-max nil))
            (message "%s" last))
          t))))))
+
+;;;; Field rendering
+
+(defun lark-ui-insert-field (label value &optional width indent)
+  "Insert a \"LABEL: VALUE\" line at point when VALUE is a non-empty string.
+The label, with a trailing colon, is left-padded to WIDTH columns
+(default 14) and shown in `font-lock-keyword-face'.  INDENT is leading
+whitespace before the label (default two spaces).  VALUE may span
+multiple lines; continuation lines are aligned under the first line's
+value column.  Does nothing when VALUE is nil, not a string, or empty."
+  (when (and value (stringp value) (not (string-empty-p value)))
+    (let* ((indent (or indent "  "))
+           (width (or width 14))
+           (prefix (concat indent
+                           (format (format "%%-%ds" width) (concat label ":"))))
+           (cont (make-string (length prefix) ?\s))
+           (lines (split-string value "\n")))
+      (insert (propertize prefix 'face 'font-lock-keyword-face)
+              (car lines) "\n")
+      (dolist (line (cdr lines))
+        (insert cont line "\n")))))
+
+;;;; Separators and titles
+
+(defconst lark-ui-rule-char ?─
+  "Character used to draw horizontal rules in lark.el buffers.")
+
+(defun lark-ui-separator (&optional width)
+  "Return a horizontal rule string of WIDTH `lark-ui-rule-char's.
+WIDTH defaults to 60."
+  (make-string (or width 60) lark-ui-rule-char))
+
+(defun lark-ui-insert-title (title &optional trailing-newlines max-width)
+  "Insert TITLE in bold at point, underlined by a horizontal rule.
+The rule's width scales to TITLE's length, clamped to the range
+\[20, MAX-WIDTH] (MAX-WIDTH defaults to 60).  TRAILING-NEWLINES blank
+lines follow the rule (default 2)."
+  (insert (propertize title 'face 'bold) "\n"
+          (lark-ui-separator (min (or max-width 60) (max 20 (length title))))
+          (make-string (or trailing-newlines 2) ?\n)))
+
+;;;; Section navigation
+;;
+;; A "section" is a maximal run of consecutive characters that share the
+;; same non-nil value of a given text PROPERTY.  Domains tag each rendered
+;; item (an event, a chat, a task, …) with a per-item id under such a
+;; property, then bind these commands to n/p to move between items.
+
+(defun lark-ui-next-section (property)
+  "Move point to the start of the next section keyed by text PROPERTY.
+If point is inside a section, skip past it first, then move forward to
+the first character of the next section.  Point does not move when there
+is no following section."
+  (let ((current (get-text-property (point) property))
+        (pos (point)))
+    (when current
+      (while (and (not (eobp))
+                  (equal (get-text-property (point) property) current))
+        (forward-char)))
+    (while (and (not (eobp))
+                (not (get-text-property (point) property)))
+      (forward-char))
+    (when (eobp) (goto-char pos))))
+
+(defun lark-ui-prev-section (property)
+  "Move point to the start of the previous section keyed by text PROPERTY.
+See `lark-ui-next-section' for what a section is.  Point does not move
+when there is no preceding section."
+  (let ((current (get-text-property (point) property))
+        (pos (point)))
+    (when current
+      (while (and (not (bobp))
+                  (equal (get-text-property (point) property) current))
+        (backward-char)))
+    (while (and (not (bobp))
+                (not (get-text-property (point) property)))
+      (backward-char))
+    (let ((target (get-text-property (point) property)))
+      (if target
+          (while (and (not (bobp))
+                      (equal (get-text-property (1- (point)) property) target))
+            (backward-char))
+        (goto-char pos)))))
 
 (provide 'lark-ui)
 ;;; lark-ui.el ends here

@@ -24,6 +24,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'lark-contact)
 (require 'json)
 (require 'transient)
@@ -236,9 +237,7 @@ Each task is displayed as a multi-line section.")
 
 (defun lark-tasks--insert-field (label value)
   "Insert a LABEL: VALUE line if VALUE is non-empty."
-  (when (and value (not (string-empty-p value)))
-    (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face)
-            value "\n")))
+  (lark-ui-insert-field label value))
 
 (defun lark-tasks--status-face (status)
   "Return a face for task STATUS."
@@ -272,35 +271,12 @@ Each task is displayed as a multi-line section.")
 (defun lark-tasks--next-task ()
   "Move to the next task section."
   (interactive)
-  (let ((current (lark-tasks--task-id-at-point))
-        (pos (point)))
-    (when current
-      (while (and (not (eobp))
-                  (equal (get-text-property (point) 'lark-task-id) current))
-        (forward-char)))
-    (while (and (not (eobp))
-                (not (get-text-property (point) 'lark-task-id)))
-      (forward-char))
-    (when (eobp) (goto-char pos))))
+  (lark-ui-next-section 'lark-task-id))
 
 (defun lark-tasks--prev-task ()
   "Move to the previous task section."
   (interactive)
-  (let ((current (lark-tasks--task-id-at-point))
-        (pos (point)))
-    (when current
-      (while (and (not (bobp))
-                  (equal (get-text-property (point) 'lark-task-id) current))
-        (backward-char)))
-    (while (and (not (bobp))
-                (not (get-text-property (point) 'lark-task-id)))
-      (backward-char))
-    (let ((target (get-text-property (point) 'lark-task-id)))
-      (if target
-          (while (and (not (bobp))
-                      (equal (get-text-property (1- (point)) 'lark-task-id) target))
-            (backward-char))
-        (goto-char pos)))))
+  (lark-ui-prev-section 'lark-task-id))
 
 ;;;; Task listing
 ;; CLI: task +get-my-tasks [--query X] [--complete]
@@ -369,8 +345,7 @@ With prefix argument SHOW-COMPLETED, include completed tasks."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (propertize title 'face 'bold) "\n"
-                (make-string (min 60 (max 20 (length title))) ?─) "\n\n")
+        (lark-ui-insert-title title)
         ;; Status
         (let ((status (lark-tasks--task-status task)))
           (insert (propertize "Status: " 'face 'bold)
@@ -407,14 +382,14 @@ With prefix argument SHOW-COMPLETED, include completed tasks."
         (let ((desc (lark-tasks--task-description task)))
           (unless (string-empty-p desc)
             (insert "\n" (propertize "Description" 'face 'bold) "\n"
-                    (make-string 40 ?─) "\n"
+                    (lark-ui-separator 40) "\n"
                     desc "\n")))
         ;; Subtasks
         (let ((subtasks (or (alist-get 'subtasks task)
                             (alist-get 'children task))))
           (when subtasks
             (insert "\n" (propertize "Subtasks" 'face 'bold) "\n"
-                    (make-string 40 ?─) "\n")
+                    (lark-ui-separator 40) "\n")
             (dolist (st subtasks)
               (let ((st-title (lark-tasks--task-title st))
                     (st-status (lark-tasks--task-status st)))
@@ -580,7 +555,7 @@ With prefix argument SHOW-COMPLETED, include completed tasks."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize "Lark Task Lists\n" 'face 'bold)
-                (make-string 60 ?─) "\n\n")
+                (lark-ui-separator 60) "\n\n")
         (if (null lists)
             (insert "(no task lists found)\n")
           (dolist (tl lists)
@@ -655,7 +630,7 @@ Shows incomplete tasks sorted by due date."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize (format "Lark Task Agenda  %s\n" today) 'face 'bold)
-                (make-string 60 ?─) "\n")
+                (lark-ui-separator 60) "\n")
         ;; Overdue
         (when overdue
           (insert "\n" (propertize "Overdue" 'face '(:foreground "red" :weight bold)) "\n")

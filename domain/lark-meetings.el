@@ -21,6 +21,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'json)
 (require 'transient)
 
@@ -150,9 +151,7 @@ Each meeting is displayed as a multi-line section.")
 
 (defun lark-meetings--insert-field (label value)
   "Insert LABEL: VALUE if VALUE is non-empty."
-  (when (and value (not (string-empty-p value)))
-    (insert (propertize (format "  %-18s" (concat label ":")) 'face 'font-lock-keyword-face)
-            value "\n")))
+  (lark-ui-insert-field label value 18))
 
 (defun lark-meetings--insert-meeting (meeting)
   "Insert a multi-line section for MEETING."
@@ -172,35 +171,12 @@ Each meeting is displayed as a multi-line section.")
 (defun lark-meetings--next ()
   "Move to the next meeting section."
   (interactive)
-  (let ((current (lark-meetings--meeting-id-at-point))
-        (pos (point)))
-    (when current
-      (while (and (not (eobp))
-                  (equal (get-text-property (point) 'lark-meeting-id) current))
-        (forward-char)))
-    (while (and (not (eobp))
-                (not (get-text-property (point) 'lark-meeting-id)))
-      (forward-char))
-    (when (eobp) (goto-char pos))))
+  (lark-ui-next-section 'lark-meeting-id))
 
 (defun lark-meetings--prev ()
   "Move to the previous meeting section."
   (interactive)
-  (let ((current (lark-meetings--meeting-id-at-point))
-        (pos (point)))
-    (when current
-      (while (and (not (bobp))
-                  (equal (get-text-property (point) 'lark-meeting-id) current))
-        (backward-char)))
-    (while (and (not (bobp))
-                (not (get-text-property (point) 'lark-meeting-id)))
-      (backward-char))
-    (let ((target (get-text-property (point) 'lark-meeting-id)))
-      (if target
-          (while (and (not (bobp))
-                      (equal (get-text-property (1- (point)) 'lark-meeting-id) target))
-            (backward-char))
-        (goto-char pos)))))
+  (lark-ui-prev-section 'lark-meeting-id))
 
 ;;;; Search
 ;; CLI: vc +search --start X --end X [--query X] [--page-size N]
@@ -254,7 +230,7 @@ week through tomorrow."
         (insert (propertize (format "Meetings: %s → %s" start end) 'face 'bold)
                 (if query (format "  [%s]" query) "")
                 "\n"
-                (make-string 60 ?─) "\n\n")
+                (lark-ui-separator 60) "\n\n")
         (if (null meetings)
             (insert "(no meetings found)\n")
           (dolist (m meetings)
@@ -282,14 +258,13 @@ Automatically queries for recordings and appends them if found."
       (with-current-buffer buf
         (let ((inhibit-read-only t))
           (erase-buffer)
-          (insert (propertize title 'face 'bold) "\n"
-                  (make-string (min 60 (max 20 (length title))) ?─) "\n\n")
+          (lark-ui-insert-title title)
           (lark-meetings--insert-field "Meeting ID" id)
           (lark-meetings--insert-field "Description" desc)
           (lark-meetings--insert-field "Link" link)
           (when (and info (not (string-empty-p info)))
             (insert "\n" (propertize "Full Info" 'face 'bold) "\n"
-                    (make-string 40 ?─) "\n"
+                    (lark-ui-separator 40) "\n"
                     info "\n")))
         (special-mode)
         (goto-char (point-min)))
@@ -311,11 +286,11 @@ Automatically queries for recordings and appends them if found."
                    (let ((inhibit-read-only t))
                      (goto-char (point-max))
                      (insert "\n" (propertize "Recording" 'face 'bold) "\n"
-                             (make-string 40 ?─) "\n\n")
+                             (lark-ui-separator 40) "\n\n")
                      (let ((idx 0))
                        (dolist (rec items)
                          (when (> idx 0)
-                           (insert "\n" (make-string 40 ?─) "\n\n"))
+                           (insert "\n" (lark-ui-separator 40) "\n\n"))
                          (lark-meetings--insert-recording rec)
                          (setq idx (1+ idx))))))))))
          nil :no-error t)))))
@@ -351,7 +326,7 @@ Automatically queries for recordings and appends them if found."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize (format "Meeting Notes: %s" meeting-id) 'face 'bold) "\n"
-                (make-string 60 ?─) "\n\n")
+                (lark-ui-separator 60) "\n\n")
         (if (null notes)
             (insert "(no notes available)\n")
           (dolist (note notes)
@@ -512,13 +487,13 @@ Optional OUTPUT-DIR specifies where to save; prompts if interactive."
          (let ((inhibit-read-only t))
            (erase-buffer)
            (insert (propertize (format "Recording: %s" meeting-id) 'face 'bold) "\n"
-                   (make-string 60 ?─) "\n\n")
+                   (lark-ui-separator 60) "\n\n")
            (if (null items)
                (insert "(no recording found)\n")
              (let ((idx 0))
                (dolist (rec items)
                  (when (> idx 0)
-                   (insert "\n" (make-string 40 ?─) "\n\n"))
+                   (insert "\n" (lark-ui-separator 40) "\n\n"))
                  (lark-meetings--insert-recording rec)
                  (setq idx (1+ idx))))))
          (special-mode)

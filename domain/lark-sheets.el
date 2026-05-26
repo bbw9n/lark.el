@@ -22,6 +22,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'json)
 (require 'transient)
 (require 'org-table)
@@ -183,13 +184,12 @@ Fetches the first 100 rows from the sheet under the cursor."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (propertize title 'face 'bold) "\n"
-                (make-string (min 60 (max 20 (length title))) ?─) "\n\n")
+        (lark-ui-insert-title title)
         (lark-sheets--insert-field "Token" token)
         (lark-sheets--insert-field "URL" url)
         (lark-sheets--insert-field "Owner" (or (alist-get 'owner_id ss) ""))
         (insert "\n" (propertize "Sheets" 'face 'bold) "\n"
-                (make-string 40 ?─) "\n")
+                (lark-ui-separator 40) "\n")
         (if (null sheets)
             (insert "  (no sheets)\n")
           (dolist (s sheets)
@@ -216,9 +216,7 @@ Fetches the first 100 rows from the sheet under the cursor."
 
 (defun lark-sheets--insert-field (label value)
   "Insert LABEL: VALUE if VALUE is non-empty."
-  (when (and value (not (string-empty-p value)))
-    (insert (propertize (format "  %-12s" (concat label ":")) 'face 'font-lock-keyword-face)
-            value "\n")))
+  (lark-ui-insert-field label value 12))
 
 ;;;; Read — display as org-mode table
 ;; CLI: sheets +read --spreadsheet-token X --range R
@@ -495,7 +493,7 @@ Optional RANGE limits the search area."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize (format "Find: \"%s\"" query) 'face 'bold) "\n"
-                (make-string 60 ?─) "\n\n")
+                (lark-ui-separator 60) "\n\n")
         (cond
          ((and (listp matched) matched)
           (dolist (cell matched)

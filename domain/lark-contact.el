@@ -17,6 +17,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'transient)
 
 ;;;; Customization
@@ -137,7 +138,7 @@ When called interactively, displays the result in a detail buffer."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize (if (string-empty-p name) user-id name) 'face 'bold) "\n"
-                (make-string 60 ?─) "\n\n")
+                (lark-ui-separator 60) "\n\n")
         (lark-contact--insert-field "Name" name)
         (lark-contact--insert-field "EN Name" (or (alist-get 'en_name user) ""))
         (lark-contact--insert-field "Email" (or (alist-get 'email user) ""))
@@ -163,9 +164,7 @@ When called interactively, displays the result in a detail buffer."
 
 (defun lark-contact--insert-field (label value)
   "Insert a LABEL: VALUE line if VALUE is non-empty."
-  (when (and value (not (string-empty-p value)))
-    (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face)
-            value "\n")))
+  (lark-ui-insert-field label value))
 
 ;;;; Display: search results
 

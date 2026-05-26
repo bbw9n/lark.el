@@ -27,6 +27,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'org-lark)
 (require 'json)
 (require 'transient)
@@ -235,9 +236,7 @@ buffer) vs not (search-results buffer)."
 
 (defun lark-docs--insert-field (label value)
   "Insert a LABEL: VALUE line if VALUE is non-empty."
-  (when (and value (not (string-empty-p value)))
-    (insert (propertize (format "  %-14s" (concat label ":")) 'face 'font-lock-keyword-face)
-            value "\n")))
+  (lark-ui-insert-field label value))
 
 (defun lark-docs--doc-summary (doc)
   "Extract and clean the summary from search result DOC."
@@ -273,35 +272,12 @@ buffer) vs not (search-results buffer)."
 (defun lark-docs--next-result ()
   "Move to the next result section."
   (interactive)
-  (let ((current (lark-docs--doc-token-at-point))
-        (pos (point)))
-    (when current
-      (while (and (not (eobp))
-                  (equal (get-text-property (point) 'lark-doc-token) current))
-        (forward-char)))
-    (while (and (not (eobp))
-                (not (get-text-property (point) 'lark-doc-token)))
-      (forward-char))
-    (when (eobp) (goto-char pos))))
+  (lark-ui-next-section 'lark-doc-token))
 
 (defun lark-docs--prev-result ()
   "Move to the previous result section."
   (interactive)
-  (let ((current (lark-docs--doc-token-at-point))
-        (pos (point)))
-    (when current
-      (while (and (not (bobp))
-                  (equal (get-text-property (point) 'lark-doc-token) current))
-        (backward-char)))
-    (while (and (not (bobp))
-                (not (get-text-property (point) 'lark-doc-token)))
-      (backward-char))
-    (let ((target (get-text-property (point) 'lark-doc-token)))
-      (if target
-          (while (and (not (bobp))
-                      (equal (get-text-property (1- (point)) 'lark-doc-token) target))
-            (backward-char))
-        (goto-char pos)))))
+  (lark-ui-prev-section 'lark-doc-token))
 
 ;;;###autoload
 (defun lark-docs-search (query)
@@ -414,8 +390,7 @@ Otherwise raw markdown is shown."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (propertize title 'face 'bold) "\n"
-                (make-string (min 60 (max 20 (length title))) ?─) "\n\n")
+        (lark-ui-insert-title title)
         (lark-docs--insert-field "Token" token)
         (lark-docs--insert-field "Type" (lark-docs--doc-type doc))
         (lark-docs--insert-field "URL" (lark-docs--doc-url doc))

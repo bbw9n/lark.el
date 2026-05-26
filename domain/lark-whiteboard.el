@@ -20,6 +20,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'transient)
 
 ;;;; Customization
@@ -90,7 +91,7 @@ OUTPUT-DIR is the directory to save image output."
         (erase-buffer)
         (insert (propertize (format "Whiteboard: %s" token) 'face 'bold) "\n"
                 (propertize (format "Format: %s" output-as) 'face 'font-lock-comment-face) "\n"
-                (make-string 60 ?─) "\n\n")
+                (lark-ui-separator 60) "\n\n")
         (cond
          ((null content)
           (insert "(no content)\n"))

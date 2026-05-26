@@ -22,6 +22,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'json)
 (require 'transient)
 (require 'shr)
@@ -288,9 +289,7 @@
 
 (defun lark-mail--header-field (label value)
   "Insert a mail header LABEL: VALUE line if VALUE is non-empty."
-  (when (and value (stringp value) (not (string-empty-p value)))
-    (insert (propertize (format "%-10s" (concat label ":")) 'face 'font-lock-keyword-face)
-            value "\n")))
+  (lark-ui-insert-field label value 10 ""))
 
 (defun lark-mail--format-address (addr)
   "Format a single address ADDR (string or alist) for display."
@@ -361,8 +360,7 @@ to plain text."
         (erase-buffer)
         (setq lark-mail--mail-id mail-id)
         ;; Subject line
-        (insert (propertize subject 'face 'bold) "\n"
-                (make-string (min 72 (max 20 (length subject))) ?─) "\n")
+        (lark-ui-insert-title subject 1 72)
         ;; Headers
         (lark-mail--header-field "From"
           (lark-mail--format-address-list (or (alist-get 'head_from mail)
@@ -415,7 +413,7 @@ to plain text."
                                       'face 'font-lock-comment-face)))
                 (insert "\n")))))
         ;; Body
-        (insert "\n" (make-string 72 ?─) "\n\n")
+        (insert "\n" (lark-ui-separator 72) "\n\n")
         (let* ((body-pair (lark-mail--extract-body mail))
                (body-type (car body-pair))
                (body-content (cdr body-pair)))

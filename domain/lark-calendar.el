@@ -24,6 +24,7 @@
 ;;; Code:
 
 (require 'lark-core)
+(require 'lark-ui)
 (require 'json)
 (require 'transient)
 
@@ -215,14 +216,7 @@ Each event is displayed as a multi-line section.")
 (defun lark-calendar--insert-field (label value)
   "Insert a LABEL: VALUE line if VALUE is non-empty.
 VALUE may span multiple lines; continuation lines are indented."
-  (when (and value (not (string-empty-p value)))
-    (let ((prefix (format "  %-12s" (concat label ":")))
-          (indent (make-string 14 ?\s)))
-      (insert (propertize prefix 'face 'font-lock-keyword-face))
-      (let ((lines (split-string value "\n")))
-        (insert (car lines) "\n")
-        (dolist (line (cdr lines))
-          (insert indent line "\n"))))))
+  (lark-ui-insert-field label value 12))
 
 (defun lark-calendar--insert-event (event)
   "Insert a multi-line section for EVENT into the current buffer."
@@ -280,40 +274,12 @@ Optional CALENDAR-ID is stored for refresh."
 (defun lark-calendar--next-event ()
   "Move to the next event section."
   (interactive)
-  (let ((current (lark-calendar--event-id-at-point))
-        (pos (point)))
-    ;; Move past current section
-    (when current
-      (while (and (not (eobp))
-                  (equal (get-text-property (point) 'lark-event-id) current))
-        (forward-char)))
-    ;; Find next section
-    (while (and (not (eobp))
-                (not (get-text-property (point) 'lark-event-id)))
-      (forward-char))
-    (when (eobp) (goto-char pos))))
+  (lark-ui-next-section 'lark-event-id))
 
 (defun lark-calendar--prev-event ()
   "Move to the previous event section."
   (interactive)
-  (let ((current (lark-calendar--event-id-at-point))
-        (pos (point)))
-    ;; Move before current section
-    (when current
-      (while (and (not (bobp))
-                  (equal (get-text-property (point) 'lark-event-id) current))
-        (backward-char)))
-    ;; Skip gap
-    (while (and (not (bobp))
-                (not (get-text-property (point) 'lark-event-id)))
-      (backward-char))
-    ;; Move to start of that section
-    (let ((target (get-text-property (point) 'lark-event-id)))
-      (if target
-          (while (and (not (bobp))
-                      (equal (get-text-property (1- (point)) 'lark-event-id) target))
-            (backward-char))
-        (goto-char pos)))))
+  (lark-ui-prev-section 'lark-event-id))
 
 ;;;; Agenda
 ;; CLI: calendar +agenda [--calendar-id X] [--start X] [--end X]
@@ -390,7 +356,7 @@ Shows events for the next 7 days."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize "Lark Calendars\n" 'face 'bold)
-                (make-string 60 ?─) "\n\n")
+                (lark-ui-separator 60) "\n\n")
         (if (null calendars)
             (insert "(no calendars found)\n")
           (dolist (cal calendars)
@@ -431,8 +397,7 @@ Shows events for the next 7 days."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (propertize title 'face 'bold) "\n"
-                (make-string (min 60 (max 20 (length title))) ?─) "\n\n")
+        (lark-ui-insert-title title)
         ;; Time
         (let ((time-str (lark-calendar--parse-event-time event)))
           (unless (string-empty-p time-str)
@@ -455,13 +420,13 @@ Shows events for the next 7 days."
         (let ((desc (or (alist-get 'description event) "")))
           (unless (string-empty-p desc)
             (insert "\n" (propertize "Description" 'face 'bold) "\n"
-                    (make-string 40 ?─) "\n"
+                    (lark-ui-separator 40) "\n"
                     desc "\n")))
         ;; Attendees
         (let ((attendees (or (alist-get 'attendees event) nil)))
           (when attendees
             (insert "\n" (propertize "Attendees" 'face 'bold) "\n"
-                    (make-string 40 ?─) "\n")
+                    (lark-ui-separator 40) "\n")
             (dolist (att attendees)
               (let ((name (or (alist-get 'display_name att)
                               (alist-get 'name att) ""))
@@ -575,7 +540,7 @@ Time values are expanded from shorthand (e.g. \"10:00\") to ISO 8601."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (propertize "Free/Busy\n" 'face 'bold)
-                (make-string 60 ?─) "\n\n"
+                (lark-ui-separator 60) "\n\n"
                 (pp-to-string data)))
       (special-mode)
       (goto-char (point-min)))
@@ -600,7 +565,7 @@ Time values are expanded from shorthand (e.g. \"10:00\") to ISO 8601."
          (let ((inhibit-read-only t))
            (erase-buffer)
            (insert (propertize "Time Suggestions\n" 'face 'bold)
-                   (make-string 60 ?─) "\n\n")
+                   (lark-ui-separator 60) "\n\n")
            (let ((suggestions (or (alist-get 'suggestions data)
                                   (lark--get-nested data 'data 'suggestions)
                                   (and (listp data) data))))
