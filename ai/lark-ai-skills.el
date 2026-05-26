@@ -316,6 +316,20 @@ Use the skills below as reference for facts and capabilities, but
 do not emit a JSON plan and do not propose further steps.
 ")
 
+(defun lark-ai-skills--producer-rules ()
+  "Output-format rules for a synthesis step that PRODUCES content.
+Used when a synthesis step's result is interpolated into a later
+command via $step-N — the output is fed verbatim as a command
+argument, so it must be the bare artifact, not a user-facing answer."
+  "## Response Format
+
+You are producing content that will be passed verbatim as an argument to a
+later command — this is NOT a user-facing answer.  Output ONLY the
+requested content artifact: no preamble, no commentary, no explanation,
+and no surrounding markdown code fences.  Produce exactly the content in
+the format the instruction specifies.
+")
+
 (defun lark-ai-skills--preamble ()
   "Backwards-compatible alias for the planning preamble.
 Kept so older callers continue to work; new code should call
@@ -388,6 +402,16 @@ free to answer in markdown prose during the synthesis pass."
    (concat (lark-ai-skills--identity-preamble)
            "\n"
            (lark-ai-skills--synthesis-rules))
+   skill-names))
+
+(defun lark-ai-skills-build-producer-prompt (skill-names)
+  "Build the producer system prompt from SKILL-NAMES.
+Identity + skills + a rule mandating bare-artifact output, for a
+synthesis step whose result feeds a later command via $step-N."
+  (lark-ai-skills--assemble
+   (concat (lark-ai-skills--identity-preamble)
+           "\n"
+           (lark-ai-skills--producer-rules))
    skill-names))
 
 (provide 'lark-ai-skills)

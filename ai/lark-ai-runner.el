@@ -32,6 +32,7 @@
 (declare-function lark-ai--session "lark-ai")
 (declare-function lark-ai--update-step-status "lark-ai" (index status))
 (declare-function lark-ai--progress-log "lark-ai" (fmt &rest args))
+(declare-function lark-ai--synthesize-inline "lark-ai" (step done-fn))
 
 ;;;; Customization
 
@@ -124,12 +125,32 @@ Results is an alist of (index . parsed-json-or-string)."
                 (synthesize (plist-get step :synthesize))
                 (side-effect (plist-get step :side-effect)))
             (cond
-             ;; Synthesis step: defer to after we have results
+             ;; Synthesis step.  If a later step interpolates this
+             ;; step's output via $step-N, produce the text NOW so the
+             ;; reference resolves to real content — otherwise $step-N
+             ;; would resolve to the `:synthesize' sentinel (the
+             ;; empty-document bug).  An unreferenced synthesis step is
+             ;; still deferred to the terminal answer pass.
              (synthesize
-              (lark-ai--push-result idx :synthesize)
-              (setq pending (1- pending))
-              (when (zerop pending)
-                (lark-ai--execute-next rest callback)))
+              (if (lark-ai--step-referenced-p
+                   idx (lark-ai-session-steps (lark-ai--session)))
+                  (progn
+                    (lark-ai--update-step-status idx 'running)
+                    (lark-ai--synthesize-inline
+                     step
+                     (lambda (text)
+                       (lark-ai--push-result idx (or text ""))
+                       (lark-ai--update-step-status idx 'done)
+                       (lark-ai--progress-log
+                        "Step %d: synthesized %d chars"
+                        idx (length (or text "")))
+                       (setq pending (1- pending))
+                       (when (zerop pending)
+                         (lark-ai--execute-next rest callback)))))
+                (lark-ai--push-result idx :synthesize)
+                (setq pending (1- pending))
+                (when (zerop pending)
+                  (lark-ai--execute-next rest callback))))
              ;; Side-effect step: in `confirm-writes' mode, prompt unless the
              ;; command is whitelisted in `lark-ai-auto-execute-commands'.
              ((and side-effect (eq lark-ai-execute-mode 'confirm-writes)

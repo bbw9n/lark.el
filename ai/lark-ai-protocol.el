@@ -238,6 +238,22 @@ PATH examples: \"field\", \"a.b\", \"items[0].id\",
                    nil)))))
       current)))
 
+;;;; Step-reference detection
+
+(defun lark-ai--step-referenced-p (idx steps)
+  "Return non-nil when any step in STEPS interpolates $step-IDX.
+Scans each step's `:command' args for a $step-IDX reference.  Used to
+decide whether a synthesis step must produce its text inline (because a
+later step consumes it) or can be deferred to the final answer pass.
+Matches IDX exactly: $step-1 does not match $step-10."
+  (let ((re (format "\\$step-%d\\b" idx)))
+    (seq-some
+     (lambda (step)
+       (seq-some (lambda (arg)
+                   (and (stringp arg) (string-match-p re arg)))
+                 (plist-get step :command)))
+     steps)))
+
 (defun lark-ai--parse-path (path)
   "Parse PATH into a list of segments.
 Returns list of (field NAME), (index N), or (wildcard REST)."

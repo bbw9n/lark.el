@@ -465,34 +465,52 @@ step's description or command line."
 
 ;;;; Synthesis (second LLM pass)
 
+(defun lark-ai--results-text (results plan)
+  "Format step RESULTS as a labelled text block for an LLM prompt.
+PLAN supplies each step's description.  The `:synthesize' sentinel — an
+unproduced (deferred) synthesis step — is skipped.  String results
+\(e.g. an inline producer's output) are inserted verbatim; other results
+are JSON-encoded.  Steps are ordered by index."
+  (mapconcat
+   (lambda (pair)
+     (let ((idx (car pair))
+           (data (cdr pair)))
+       (unless (eq data :synthesize)
+         (let ((step (seq-find (lambda (s) (= (plist-get s :index) idx)) plan)))
+           (format "### Step %d: %s\n```json\n%s\n```\n"
+                   idx
+                   (or (and step (plist-get step :description)) "")
+                   (cond ((null data) "(no data)")
+                         ((stringp data) data)
+                         (t (json-encode data))))))))
+   (sort (copy-sequence results)
+         (lambda (a b) (< (car a) (car b))))
+   "\n"))
+
+(defun lark-ai--synthesis-instruction (results plan)
+  "Choose the instruction for the terminal (final-answer) synthesis.
+Prefer a synthesis step that is still deferred — its result in RESULTS
+is the `:synthesize' sentinel.  A synthesis step already consumed inline
+as a producer (its result is real text) should NOT drive the final
+answer with its content-generation instruction, so it is ignored here.
+Falls back to a generic summary instruction."
+  (let ((deferred (seq-find
+                   (lambda (s)
+                     (and (plist-get s :synthesize)
+                          (eq (alist-get (plist-get s :index) results)
+                              :synthesize)))
+                   plan)))
+    (or (and deferred (plist-get deferred :synthesis-instruction))
+        "Summarize the results clearly and concisely.")))
+
 (defun lark-ai--synthesize (results plan system-prompt callback)
   "Send execution RESULTS back to the LLM for synthesis.
 PLAN is the original plan.  SYSTEM-PROMPT must be the synthesis
 prompt (see `lark-ai-skills-build-synthesis-prompt') — passing
 the planning prompt here makes the model emit another JSON plan
 instead of the prose answer.  CALLBACK receives the synthesis text."
-  ;; Find the synthesis step
-  (let* ((synth-step (seq-find (lambda (s) (plist-get s :synthesize)) plan))
-         (instruction (or (and synth-step
-                               (plist-get synth-step :synthesis-instruction))
-                          "Summarize the results clearly and concisely."))
-         ;; Build results text
-         (results-text
-          (mapconcat
-           (lambda (pair)
-             (let ((idx (car pair))
-                   (data (cdr pair)))
-               (unless (eq data :synthesize)
-                 (let ((step (seq-find (lambda (s) (= (plist-get s :index) idx)) plan)))
-                   (format "### Step %d: %s\n```json\n%s\n```\n"
-                           idx
-                           (or (and step (plist-get step :description)) "")
-                           (if data
-                               (json-encode data)
-                             "(no data)"))))))
-           (sort (copy-sequence results)
-                 (lambda (a b) (< (car a) (car b))))
-           "\n"))
+  (let* ((instruction (lark-ai--synthesis-instruction results plan))
+         (results-text (lark-ai--results-text results plan))
          (user-msg (format "Here are the execution results:\n\n%s\n\nInstruction: %s\n\nRespond with plain text (not JSON). Use markdown formatting."
                            results-text instruction)))
     (lark-ai--call-llm system-prompt user-msg callback)))
@@ -500,24 +518,8 @@ instead of the prose answer.  CALLBACK receives the synthesis text."
 (defun lark-ai--synthesize-stream (results plan system-prompt)
   "Like `lark-ai--synthesize' but streams the output.
 SYSTEM-PROMPT must be the synthesis prompt (no JSON mandate)."
-  (let* ((synth-step (seq-find (lambda (s) (plist-get s :synthesize)) plan))
-         (instruction (or (and synth-step
-                               (plist-get synth-step :synthesis-instruction))
-                          "Summarize the results clearly and concisely."))
-         (results-text
-          (mapconcat
-           (lambda (pair)
-             (let ((idx (car pair))
-                   (data (cdr pair)))
-               (unless (eq data :synthesize)
-                 (let ((step (seq-find (lambda (s) (= (plist-get s :index) idx)) plan)))
-                   (format "### Step %d: %s\n```json\n%s\n```\n"
-                           idx
-                           (or (and step (plist-get step :description)) "")
-                           (if data (json-encode data) "(no data)"))))))
-           (sort (copy-sequence results)
-                 (lambda (a b) (< (car a) (car b))))
-           "\n"))
+  (let* ((instruction (lark-ai--synthesis-instruction results plan))
+         (results-text (lark-ai--results-text results plan))
          (user-msg (format "Here are the execution results:\n\n%s\n\nInstruction: %s\n\nRespond with plain text (not JSON). Use markdown formatting."
                            results-text instruction)))
     (lark-ai--call-llm-stream
@@ -528,6 +530,35 @@ SYSTEM-PROMPT must be the synthesis prompt (no JSON mandate)."
            (push (cons "assistant" text)
                  (lark-ai-session-history (lark-ai--session)))
            (lark-ai--ensure-input-area)))))))
+
+(defun lark-ai--synthesize-inline (step done-fn)
+  "Run a producer synthesis STEP now and pass its text to DONE-FN.
+Called by the runner when a later step interpolates this step's output
+via $step-N.  Unlike the terminal synthesis pass this is non-streaming
+\(the full text must exist before the dependent step runs) and uses the
+producer system prompt (bare artifact, no user-facing framing).  The
+source material is the originating-buffer context plus any prior step
+results — the chat/document content the plan was told to work from lives
+in the context, not in a CLI result."
+  (let* ((session (lark-ai--session))
+         (instruction (or (plist-get step :synthesis-instruction)
+                          "Produce the requested content."))
+         (context (lark-ai-session-context session))
+         (results (lark-ai-session-step-results session))
+         (plan (lark-ai-session-steps session))
+         (system-prompt (lark-ai-skills-build-producer-prompt
+                         (lark-ai-session-skills session)))
+         (results-text (lark-ai--results-text results plan))
+         (user-msg
+          (concat
+           (when (and context (not (string-empty-p context)))
+             (concat "## Source context\n" context "\n\n"))
+           (unless (string-empty-p results-text)
+             (concat "## Prior step results\n" results-text "\n\n"))
+           "## Instruction\n" instruction
+           "\n\nOutput only the content described above, ready to be used"
+           " verbatim as a command argument.")))
+    (lark-ai--call-llm system-prompt user-msg done-fn)))
 
 ;;;; Output rendering
 

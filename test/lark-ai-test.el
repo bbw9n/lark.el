@@ -670,5 +670,65 @@ emits prose instead of another plan."
               (should found-1))))
       (kill-buffer buf))))
 
+;;;; Inline synthesis producer (regression for the :synthesize sentinel)
+
+(ert-deftest lark-ai-test-step-referenced-p ()
+  "`lark-ai--step-referenced-p' detects $step-IDX in commands, matching exactly."
+  (let ((steps '((:index 0 :command nil :synthesize t)
+                 (:index 1 :command ("docs" "+create" "--content" "$step-0")))))
+    (should (lark-ai--step-referenced-p 0 steps))
+    (should-not (lark-ai--step-referenced-p 1 steps)))
+  ;; $step-1 must not match $step-10.
+  (let ((steps '((:index 0 :command ("x" "--data" "$step-10")))))
+    (should-not (lark-ai--step-referenced-p 1 steps))
+    (should (lark-ai--step-referenced-p 10 steps))))
+
+(defun lark-ai-test--fresh-session (steps)
+  "Reset the AI buffer's session and set its STEPS; return the session."
+  (with-current-buffer (lark-ai--get-buffer)
+    (setq lark-ai--session (make-lark-ai-session))
+    (setf (lark-ai-session-steps lark-ai--session) steps)
+    lark-ai--session))
+
+(ert-deftest lark-ai-test-synthesize-inline-feeds-step ()
+  "A referenced synthesis step produces real text that $step-N resolves to.
+Regression: previously the synthesis step pushed the `:synthesize'
+sentinel, so $step-0 interpolated to the literal \"synthesize\"."
+  (let ((plan '((:index 0 :command nil :synthesize t
+                        :synthesis-instruction "make SOP")
+                (:index 1 :command ("docs" "+create" "--content" "$step-0")
+                        :side-effect t)))
+        (captured nil) (done nil)
+        (lark-ai-execute-mode 'auto))
+    (lark-ai-test--fresh-session plan)
+    (cl-letf (((symbol-function 'lark-ai--call-llm)
+               (lambda (_sys _user cb) (funcall cb "<h1>Real SOP</h1>")))
+              ((symbol-function 'lark--run-command)
+               (lambda (cmd cb &rest _) (setq captured cmd) (funcall cb '((ok . t)))))
+              ((symbol-function 'lark-ai--update-step-status) #'ignore)
+              ((symbol-function 'lark-ai--progress-log) (lambda (&rest _) nil)))
+      (lark-ai--execute-plan plan (lambda (_r) (setq done t))))
+    (should done)
+    ;; The write received the synthesized text, not the sentinel.
+    (should (member "<h1>Real SOP</h1>" captured))
+    (should-not (member "synthesize" captured))))
+
+(ert-deftest lark-ai-test-synthesize-unreferenced-defers ()
+  "An unreferenced synthesis step is deferred (sentinel), not run inline."
+  (let ((plan '((:index 0 :command nil :synthesize t
+                        :synthesis-instruction "x")))
+        (called nil) (done nil)
+        (lark-ai-execute-mode 'auto))
+    (lark-ai-test--fresh-session plan)
+    (cl-letf (((symbol-function 'lark-ai--call-llm)
+               (lambda (&rest _) (setq called t)))
+              ((symbol-function 'lark-ai--update-step-status) #'ignore)
+              ((symbol-function 'lark-ai--progress-log) (lambda (&rest _) nil)))
+      (lark-ai--execute-plan plan (lambda (_r) (setq done t))))
+    (should done)
+    (should-not called)
+    (should (eq (alist-get 0 (lark-ai-session-step-results (lark-ai--session)))
+                :synthesize))))
+
 (provide 'lark-ai-test)
 ;;; lark-ai-test.el ends here
