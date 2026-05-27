@@ -20,6 +20,8 @@
 ;;   `lark-spinner-message' is a ready-made echo-area spinner for the
 ;;   common "fetching…" case.
 ;;
+;; - `lark-ui-bar-frames' is an indeterminate progress-bar frame set for
+;;   the same `lark-spinner-start' engine (a fill that loops).
 ;; - `lark-ui-insert-field' renders an aligned "Label: value" line.
 ;; - `lark-ui-separator' / `lark-ui-insert-title' render the horizontal
 ;;   rule and bold title-underline used at the top of detail buffers.
@@ -28,13 +30,27 @@
 
 ;;; Code:
 
+;;;; Faces
+
+(defface lark-ui-info
+  '((((class color) (min-colors 88) (background dark))  :foreground "#5fafff")
+    (((class color) (min-colors 88) (background light)) :foreground "#0064c8")
+    (((class color) (background dark))  :foreground "cyan")
+    (((class color) (background light)) :foreground "blue")
+    (t :inherit default))
+  "Base face for lark.el informational / in-progress indicators.
+A calm info blue.  Shared affordances such as the loading spinner
+\(`lark-spinner') and the progress bar (`lark-ui-bar') inherit from it,
+so one customization recolours every \"working\" indicator at once."
+  :group 'lark)
+
 ;;;; Loading spinner
 
 (defface lark-spinner
-  '((t :inherit warning))
+  '((t :inherit lark-ui-info))
   "Face for lark.el loading-spinner glyphs.
-Inherits `warning' (yellow in stock themes) so the animated glyph
-stands out from surrounding text."
+Inherits `lark-ui-info' (an info blue) so the animated glyph stands out
+from surrounding text."
   :group 'lark)
 
 (defconst lark-spinner-frames
@@ -116,6 +132,27 @@ clobbers other output.  Returns a spinner handle; call
          (let ((message-log-max nil))
            (message "%s" last))
          t))))))
+
+;;;; Progress bar
+
+(defface lark-ui-bar
+  '((t :inherit lark-ui-info))
+  "Face for the filled cells of a `lark-ui' progress bar.
+Inherits `lark-ui-info' (an info blue), shared with `lark-spinner', so a
+running bar reads as active."
+  :group 'lark)
+
+(defconst lark-ui-bar-frames
+  (apply #'vector
+         (mapcar (lambda (n)
+                   (concat
+                    (propertize (make-string n ?█) 'face 'lark-ui-bar)
+                    (propertize (make-string (- 10 n) ?░) 'face 'shadow)))
+                 (number-sequence 1 10)))
+  "Indeterminate progress-bar frames: a 10-cell left-to-right fill that loops.
+Feed to `lark-spinner-start' as its FRAMES argument — the animation
+engine is shared with the loading spinner.  Filled cells use the
+`lark-ui-bar' face; empty cells use `shadow'.")
 
 ;;;; Field rendering
 

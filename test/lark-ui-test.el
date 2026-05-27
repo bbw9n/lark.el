@@ -59,6 +59,18 @@
   "`lark-spinner-stop' is a no-op on nil."
   (should-not (lark-spinner-stop nil)))
 
+;;;; Progress bar
+
+(ert-deftest lark-test-bar-frames ()
+  "`lark-ui-bar-frames' is a faced left-to-right fill that loops."
+  (should (vectorp lark-ui-bar-frames))
+  (should (= 10 (length lark-ui-bar-frames)))
+  (should (equal "█░░░░░░░░░" (substring-no-properties (aref lark-ui-bar-frames 0))))
+  (should (equal "██████████" (substring-no-properties (aref lark-ui-bar-frames 9))))
+  ;; Filled cells carry the bar face; the track is shadowed.
+  (should (eq 'lark-ui-bar (get-text-property 0 'face (aref lark-ui-bar-frames 4))))
+  (should (eq 'shadow (get-text-property 9 'face (aref lark-ui-bar-frames 4)))))
+
 ;;;; Field rendering tests
 
 (defun lark-test-ui--render (thunk)

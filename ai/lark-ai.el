@@ -25,6 +25,7 @@
 
 (require 'cl-lib)
 (require 'lark-core)
+(require 'lark-ui)            ; shared spinner engine + `lark-spinner' face
 (require 'lark-ai-skills)
 (require 'lark-ai-context)
 (require 'lark-ai-protocol)   ; debug log + plan parse + interpolate + user-message
@@ -130,6 +131,61 @@ plain typing in the follow-up input area below isn't intercepted.")
         (lark-ai-ui-append-fragment
          (lark-ai--frag "log") entry)))))
 
+;;; Header progress bar
+;;
+;; An indeterminate "working…" bar shown in the AI buffer's header line
+;; while a turn is loading or executing.  Unlike the in-buffer streaming
+;; preview, the header line is pinned to the top of the window, so the
+;; user can tell the turn is running even when the loading zone has
+;; scrolled out of view (e.g. on follow-ups).
+
+(defvar-local lark-ai--bar-frame nil
+  "Current header progress-bar frame string, or nil when idle.")
+(defvar-local lark-ai--bar-timer nil
+  "Timer animating the header progress bar, or nil.")
+
+(defun lark-ai--ai-header-line ()
+  "Return the AI buffer's header-line string while a turn is busy.
+The bar itself is the shared `lark-ui-bar-frames' component."
+  (concat " Lark AI  "
+          (or lark-ai--bar-frame (aref lark-ui-bar-frames 0))
+          "  working…"))
+
+(defun lark-ai--stop-bar ()
+  "Stop the header progress bar and remove the header line."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (when lark-ai--bar-timer
+        (lark-spinner-stop lark-ai--bar-timer))
+      (setq lark-ai--bar-timer nil
+            lark-ai--bar-frame nil
+            header-line-format nil)
+      (force-mode-line-update))))
+
+(defun lark-ai--start-bar ()
+  "Show and animate the header progress bar while the AI buffer is busy.
+Self-stops once the session phase is no longer `loading' or `executing'
+\(the render function then returns nil and ON-STOP clears the bar)."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (when lark-ai--bar-timer
+        (lark-spinner-stop lark-ai--bar-timer))
+      (setq header-line-format '(:eval (lark-ai--ai-header-line)))
+      (setq lark-ai--bar-timer
+            (lark-spinner-start
+             (lambda (frame)
+               (when (and (buffer-live-p buf)
+                          (memq (and (buffer-local-value 'lark-ai--session buf)
+                                     (lark-ai-session-phase
+                                      (buffer-local-value 'lark-ai--session buf)))
+                                '(loading executing)))
+                 (with-current-buffer buf
+                   (setq lark-ai--bar-frame frame)
+                   (force-mode-line-update))
+                 t))
+             0.12 lark-ui-bar-frames 36000
+             (lambda () (lark-ai--stop-bar)))))))
+
 ;;; Session lifecycle commands
 
 (declare-function gptel-abort "gptel" (&optional buf))
@@ -142,6 +198,7 @@ reality.  Bound to \\[lark-ai-abort] in `lark-ai-plan-mode-map'."
   (interactive)
   (when (fboundp 'gptel-abort)
     (ignore-errors (gptel-abort (lark-ai--get-buffer))))
+  (lark-ai--stop-bar)
   (let ((session (lark-ai--session)))
     (setf (lark-ai-session-phase session) 'idle
           (lark-ai-session-callback session) nil)
@@ -292,7 +349,18 @@ the separator, used to delete the whole region) and `input-start'
                      'face 'font-lock-comment-face)))
       ;; Track conversation
       (push (cons "user" prompt) (lark-ai-session-history session)))
-    (display-buffer buf)))
+    ;; Make the new turn's loading zone visible.  Follow-up turns are
+    ;; appended at the bottom, so without scrolling there the
+    ;; "Waiting for LLM response…" preview would be off-screen.
+    (let ((win (display-buffer buf)))
+      (when (window-live-p win)
+        (when-let ((region (with-current-buffer buf
+                             (lark-ai-ui-find-fragment (lark-ai--frag "prompt")))))
+          (with-selected-window win
+            (goto-char (car region))
+            (recenter 0)))))
+    ;; Animate the header "working…" bar for the duration of the turn.
+    (lark-ai--start-bar)))
 
 ;;; Live stream preview — a small rolling tail under "Waiting for LLM
 ;;; response…" so a slow call visibly progresses instead of looking hung.
@@ -479,6 +547,8 @@ relying on line-number arithmetic."
       (setf (lark-ai-session-phase session) 'executing
             (lark-ai-session-callback session) nil)
       (lark-ai--refresh-plan-fragment)
+      ;; Re-arm the header bar (it stopped while the plan sat in review).
+      (lark-ai--start-bar)
       (when callback
         (funcall callback steps)))))
 
