@@ -33,15 +33,8 @@
 ;;;; Faces
 
 (defface lark-ui-info
-  '((((class color) (min-colors 88) (background dark))  :foreground "#5fafff")
-    (((class color) (min-colors 88) (background light)) :foreground "#0064c8")
-    (((class color) (background dark))  :foreground "cyan")
-    (((class color) (background light)) :foreground "blue")
-    (t :inherit default))
-  "Base face for lark.el informational / in-progress indicators.
-A calm info blue.  Shared affordances such as the loading spinner
-\(`lark-spinner') and the progress bar (`lark-ui-bar') inherit from it,
-so one customization recolours every \"working\" indicator at once."
+  '((t :inherit font-lock-function-name-face))
+  "Base face for lark.el informational / in-progress indicators."
   :group 'lark)
 
 ;;;; Loading spinner
