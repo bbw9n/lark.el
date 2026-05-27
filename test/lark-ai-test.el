@@ -730,5 +730,105 @@ sentinel, so $step-0 interpolated to the literal \"synthesize\"."
     (should (eq (alist-get 0 (lark-ai-session-step-results (lark-ai--session)))
                 :synthesize))))
 
+;;;; Agent loop (lark-ai-strategy = agent)
+
+(ert-deftest lark-ai-test-agent-parse-action ()
+  "`lark-ai-agent--parse-action' accepts only command/final action objects."
+  (should (equal "command"
+                 (alist-get 'action
+                            (lark-ai-agent--parse-action
+                             "{\"action\":\"command\",\"command\":[\"im\",\"+list\"]}"))))
+  (should (equal "final"
+                 (alist-get 'action
+                            (lark-ai-agent--parse-action
+                             "{\"action\":\"final\",\"answer\":\"hi\"}"))))
+  (should-not (lark-ai-agent--parse-action "not json"))
+  (should-not (lark-ai-agent--parse-action "{\"action\":\"bogus\"}")))
+
+(ert-deftest lark-ai-test-agent-empty-content-p ()
+  "`lark-ai-agent--empty-content-p' flags a write whose content arg is blank."
+  (should (lark-ai-agent--empty-content-p '("docs" "+create" "--content" "  ")))
+  (should-not (lark-ai-agent--empty-content-p
+               '("docs" "+create" "--content" "<h1>x</h1>")))
+  (should-not (lark-ai-agent--empty-content-p '("im" "+list"))))
+
+(ert-deftest lark-ai-test-agent-generate-then-write ()
+  "Agent writes self-generated content directly into the command, then finishes.
+Regression mirror: the doc-create command receives the real content, not
+a `$step-N' sentinel."
+  (let ((responses
+         (list (concat "{\"action\":\"command\",\"command\":[\"docs\",\"+create\","
+                       "\"--content\",\"<h1>SOP</h1>\"],\"side_effect\":true}")
+               "{\"action\":\"final\",\"answer\":\"Done.\"}"))
+        (captured nil) (presented nil)
+        (lark-ai-agent-confirm-writes nil)
+        (session (make-lark-ai-session)))
+    (cl-letf (((symbol-function 'lark-ai--call-llm-stream)
+               (lambda (_s _u cb &optional _ch) (funcall cb (pop responses))))
+              ((symbol-function 'lark--run-command)
+               (lambda (cmd cb &rest _) (setq captured cmd) (funcall cb '((ok . t)))))
+              ((symbol-function 'lark-ai--present)
+               (lambda (content &rest _) (setq presented content)))
+              ((symbol-function 'lark-ai--progress-log) (lambda (&rest _) nil))
+              ((symbol-function 'lark-ai-ui-append-fragment) (lambda (&rest _) nil)))
+      (lark-ai-agent--run "make a SOP doc" "" nil session nil))
+    (should (member "<h1>SOP</h1>" captured))
+    (should-not (member "synthesize" captured))
+    (should (equal presented "Done."))))
+
+(ert-deftest lark-ai-test-agent-final-only ()
+  "A request that needs no command resolves directly to a final answer."
+  (let ((presented nil)
+        (session (make-lark-ai-session)))
+    (cl-letf (((symbol-function 'lark-ai--call-llm-stream)
+               (lambda (_s _u cb &optional _ch)
+                 (funcall cb "{\"action\":\"final\",\"answer\":\"Hi\"}")))
+              ((symbol-function 'lark-ai--present)
+               (lambda (c &rest _) (setq presented c)))
+              ((symbol-function 'lark-ai--progress-log) (lambda (&rest _) nil))
+              ((symbol-function 'lark-ai-ui-append-fragment) (lambda (&rest _) nil)))
+      (lark-ai-agent--run "hi" "" nil session nil))
+    (should (equal presented "Hi"))))
+
+(ert-deftest lark-ai-test-agent-recovers-from-bad-action ()
+  "An unparseable reply becomes an error observation; the loop continues."
+  (let ((responses (list "this is not json"
+                         "{\"action\":\"final\",\"answer\":\"ok\"}"))
+        (presented nil)
+        (session (make-lark-ai-session)))
+    (cl-letf (((symbol-function 'lark-ai--call-llm-stream)
+               (lambda (_s _u cb &optional _ch) (funcall cb (pop responses))))
+              ((symbol-function 'lark-ai--present)
+               (lambda (c &rest _) (setq presented c)))
+              ((symbol-function 'lark-ai--progress-log) (lambda (&rest _) nil))
+              ((symbol-function 'lark-ai-ui-append-fragment) (lambda (&rest _) nil)))
+      (lark-ai-agent--run "x" "" nil session nil))
+    (should (equal presented "ok"))
+    ;; The invalid reply was recorded as one transcript entry.
+    (should (= 1 (length (lark-ai-session-agent-steps session))))))
+
+(ert-deftest lark-ai-test-agent-max-steps-forces-final ()
+  "Hitting the step cap forces a final answer via a non-looping LLM call."
+  (let ((presented nil) (cli-calls 0)
+        (lark-ai-agent-max-steps 1)
+        (lark-ai-agent-confirm-writes nil)
+        (session (make-lark-ai-session)))
+    (cl-letf (((symbol-function 'lark-ai--call-llm-stream)
+               (lambda (_s _u cb &optional _ch)
+                 (funcall cb "{\"action\":\"command\",\"command\":[\"im\",\"+list\"]}")))
+              ((symbol-function 'lark--run-command)
+               (lambda (_cmd cb &rest _)
+                 (setq cli-calls (1+ cli-calls)) (funcall cb '((ok . t)))))
+              ((symbol-function 'lark-ai--call-llm)
+               (lambda (_s _u cb) (funcall cb "Summary after limit.")))
+              ((symbol-function 'lark-ai--present)
+               (lambda (c &rest _) (setq presented c)))
+              ((symbol-function 'lark-ai--progress-log) (lambda (&rest _) nil))
+              ((symbol-function 'lark-ai-ui-append-fragment) (lambda (&rest _) nil)))
+      (lark-ai-agent--run "x" "" nil session nil))
+    ;; One command ran (iter 0); the cap then forced a final answer.
+    (should (= cli-calls 1))
+    (should (equal presented "Summary after limit."))))
+
 (provide 'lark-ai-test)
 ;;; lark-ai-test.el ends here

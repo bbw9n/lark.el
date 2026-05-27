@@ -1,0 +1,299 @@
+;;; lark-ai-agent.el --- Agentic loop executor for the lark.el AI layer -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
+
+;;; Commentary:
+
+;; The default turn executor (`lark-ai-strategy' is `agent').  The
+;; upfront-plan executor (`lark-ai-runner') remains available by setting
+;; `lark-ai-strategy' to `plan'.
+;;
+;; Instead of asking the LLM for a whole plan in advance, the agent runs
+;; an iterative ReAct-style loop: each turn it asks the model for ONE
+;; action — either a lark-cli command to run, or a final answer — runs
+;; the command, feeds the observation back, and repeats until the model
+;; emits a final answer (or the step cap is hit).
+;;
+;; Because the model writes any generated content directly into a
+;; command's arguments (no `$step-N' indirection), a "produce content →
+;; write content" task is handled naturally within the loop: the model
+;; generates the document body in the same action that creates the doc.
+;;
+;; The loop is a callback recursion (the LLM dispatch is async), mirroring
+;; the runner's structure.  Like the runner, this module forward-declares
+;; the UI-wiring helpers that live in `lark-ai.el' so there is no
+;; load-time dependency back on the orchestrator.
+;;
+;; Transcript of (action . observation) pairs lives on the session's
+;; `agent-steps' slot so it survives across the async hops and is
+;; inspectable / abortable.
+
+;;; Code:
+
+(require 'lark-ai-protocol)   ; session struct, extract-json, build-user-message
+(require 'lark-ai-skills)     ; build-agent-prompt, build-synthesis-prompt
+(require 'lark-ai-llm)        ; call-llm, call-llm-stream
+(require 'lark-ai-runner)     ; lark-ai-step-timeout
+(require 'lark-core)          ; lark--run-command
+
+;; Forward declarations — these live in `lark-ai.el' / `lark-ai-ui.el'.
+(declare-function lark-ai--frag "lark-ai" (suffix))
+(declare-function lark-ai--progress-log "lark-ai" (fmt &rest args))
+(declare-function lark-ai--present "lark-ai" (content &optional skip-history))
+(declare-function lark-ai-ui-append-fragment "lark-ai-ui" (id text))
+
+;;;; Customization
+
+(defcustom lark-ai-strategy 'agent
+  "How a turn is executed.  Defaults to `agent'.
+- `agent' — run an iterative ReAct loop, one action at a time, until the
+            model produces a final answer (see `lark-ai-agent--run').
+- `plan'  — ask the LLM for a whole plan upfront, review, execute, then
+            synthesize a final answer (see `lark-ai-runner')."
+  :type '(choice (const :tag "Agentic loop" agent)
+                 (const :tag "Upfront plan" plan))
+  :group 'lark-ai)
+
+(defcustom lark-ai-agent-max-steps 12
+  "Maximum command/parse iterations before the agent loop is forced to finish.
+Bounds runaway loops and total LLM round-trips.  On hitting the cap the
+loop makes one final LLM call to write the user-facing answer."
+  :type 'integer
+  :group 'lark-ai)
+
+(defcustom lark-ai-agent-confirm-writes t
+  "When non-nil, the agent loop prompts before each side-effecting command.
+The prompt shows the exact resolved command.  Recommended: the agent's
+command arguments are model-generated, so a human gate catches a bad
+write before it happens."
+  :type 'boolean
+  :group 'lark-ai)
+
+(defcustom lark-ai-agent-observation-truncate-chars 1500
+  "Maximum characters of a single command observation fed back to the model.
+Large CLI results are clipped so the transcript, which is re-sent every
+iteration, does not blow up the context window."
+  :type 'integer
+  :group 'lark-ai)
+
+(defconst lark-ai-agent--content-flags
+  '("--content" "--markdown" "--body" "--text" "--message")
+  "Argument flags whose value is model-generated content.
+Used to guard against a side-effecting command that writes empty
+content (the empty-document failure class).")
+
+;;;; Command coercion / validation
+
+(defun lark-ai-agent--command-list (cmd)
+  "Coerce a parsed CMD value into a list of argument strings, or nil."
+  (cond ((null cmd) nil)
+        ((vectorp cmd) (append cmd nil))
+        ((listp cmd) cmd)
+        ((stringp cmd) (list cmd))
+        (t nil)))
+
+(defun lark-ai-agent--empty-content-p (cmd)
+  "Return non-nil when CMD passes a content flag with an empty value.
+See `lark-ai-agent--content-flags'."
+  (let ((tail cmd) (empty nil))
+    (while (and tail (not empty))
+      (when (and (member (car tail) lark-ai-agent--content-flags)
+                 (cdr tail)
+                 (or (not (stringp (cadr tail)))
+                     (string-empty-p (string-trim (cadr tail)))))
+        (setq empty t))
+      (setq tail (cdr tail)))
+    empty))
+
+;;;; Observations and transcript
+
+(defun lark-ai-agent--format-observation (result)
+  "Render a lark-cli RESULT (parsed JSON alist, string, or error) for the model.
+Truncated to `lark-ai-agent-observation-truncate-chars'."
+  (let ((text (cond ((null result) "(no data)")
+                    ((stringp result) result)
+                    (t (json-encode result)))))
+    (if (> (length text) lark-ai-agent-observation-truncate-chars)
+        (concat (substring text 0 lark-ai-agent-observation-truncate-chars)
+                "\n…[truncated]")
+      text)))
+
+(defun lark-ai-agent--record (session action observation)
+  "Append (ACTION . OBSERVATION) to SESSION's transcript and log it."
+  (setf (lark-ai-session-agent-steps session)
+        (append (lark-ai-session-agent-steps session)
+                (list (cons action observation))))
+  (lark-ai--progress-log
+   "  → %s"
+   (truncate-string-to-width
+    (replace-regexp-in-string "[ \t\n]+" " " (string-trim observation)) 200)))
+
+(defun lark-ai-agent--render-transcript (transcript)
+  "Render TRANSCRIPT (list of (ACTION . OBSERVATION)) as prompt text."
+  (let ((n 0))
+    (mapconcat
+     (lambda (entry)
+       (let* ((action (car entry))
+              (obs (cdr entry))
+              (thought (alist-get 'thought action))
+              (cmd (lark-ai-agent--command-list (alist-get 'command action))))
+         (setq n (1+ n))
+         (concat
+          (format "### Action %d\n" n)
+          (when thought (format "Thought: %s\n" thought))
+          (when cmd (format "Command: lark-cli %s\n" (string-join cmd " ")))
+          (format "Observation:\n%s\n" obs))))
+     transcript "\n")))
+
+(defun lark-ai-agent--build-user-message (prompt context history transcript)
+  "Build the per-iteration user message.
+Combines the base request (PROMPT + CONTEXT + HISTORY) with the running
+TRANSCRIPT of actions taken so far."
+  (concat
+   (lark-ai--build-user-message prompt context history)
+   (when transcript
+     (concat "\n\n## Actions taken so far\n"
+             (lark-ai-agent--render-transcript transcript)
+             "\n\nDecide the next action: a \"command\" to run, or"
+             " \"final\" with your answer."))))
+
+;;;; Parsing
+
+(defun lark-ai-agent--parse-action (text)
+  "Parse one agent action object from TEXT, or nil when invalid.
+A valid action is a JSON object whose `action' is \"command\" or
+\"final\"."
+  (let ((data (ignore-errors (lark-ai--extract-json text))))
+    (when (and (listp data)
+               (member (alist-get 'action data) '("command" "final")))
+      data)))
+
+;;;; Loop
+
+(defun lark-ai-agent--run (prompt context history session skill-names)
+  "Entry point for the agentic loop strategy.
+PROMPT, CONTEXT, HISTORY and SESSION carry the turn state; SKILL-NAMES
+selects the skills whose docs are included in the system prompt."
+  (setf (lark-ai-session-skills session) skill-names
+        (lark-ai-session-agent-steps session) nil
+        (lark-ai-session-phase session) 'executing
+        (lark-ai-session-system-prompt session)
+        (lark-ai-skills-build-agent-prompt skill-names))
+  (lark-ai--progress-log "Agent loop started (max %d steps)."
+                         lark-ai-agent-max-steps)
+  (lark-ai-agent--step prompt context history session 0))
+
+(defun lark-ai-agent--step (prompt context history session iter)
+  "Run iteration ITER: ask the model for the next action, then dispatch it."
+  (cond
+   ;; Aborted/cancelled between hops — stop quietly.
+   ((not (eq (lark-ai-session-phase session) 'executing)) nil)
+   ;; Step cap — force a final answer instead of looping forever.
+   ((>= iter lark-ai-agent-max-steps)
+    (lark-ai--progress-log "Reached step cap (%d); writing final answer."
+                           lark-ai-agent-max-steps)
+    (lark-ai-agent--force-final prompt context history session))
+   (t
+    (let ((system (lark-ai-session-system-prompt session))
+          (user (lark-ai-agent--build-user-message
+                 prompt context history
+                 (lark-ai-session-agent-steps session))))
+      (lark-ai--progress-log "← LLM (agent step %d)…" (1+ iter))
+      (lark-ai--call-llm-stream
+       system user
+       (lambda (response)
+         (lark-ai-agent--handle-response
+          response prompt context history session iter))
+       ;; Stream raw action tokens into the log fragment (greyed),
+       ;; mirroring the planning pass; the final answer goes to the
+       ;; output fragment via `lark-ai--present'.
+       (lambda (chunk)
+         (lark-ai-ui-append-fragment
+          (lark-ai--frag "log")
+          (propertize chunk 'face 'font-lock-comment-face))))))))
+
+(defun lark-ai-agent--handle-response (response prompt context history session iter)
+  "Dispatch the model's RESPONSE for iteration ITER."
+  (let ((action (lark-ai-agent--parse-action response)))
+    (pcase (and action (alist-get 'action action))
+      ("final"
+       (lark-ai-agent--finish session (or (alist-get 'answer action) "")))
+      ("command"
+       (lark-ai-agent--dispatch-command
+        action prompt context history session iter))
+      (_
+       ;; Unparseable / unknown — feed an error observation so the model
+       ;; can self-correct on the next turn (bounded by the step cap).
+       (lark-ai-agent--record
+        session
+        (list (cons 'action "invalid"))
+        (concat "ERROR: your reply was not a single JSON action object with"
+                " an \"action\" of \"command\" or \"final\". Reply with exactly"
+                " one such object and nothing else."))
+       (lark-ai-agent--step prompt context history session (1+ iter))))))
+
+(defun lark-ai-agent--dispatch-command (action prompt context history session iter)
+  "Validate and run the \"command\" ACTION, then continue the loop."
+  (let* ((cmd (lark-ai-agent--command-list (alist-get 'command action)))
+         (side-effect (eq (alist-get 'side_effect action) t))
+         (advance (lambda (obs)
+                    (lark-ai-agent--record session action obs)
+                    (lark-ai-agent--step prompt context history session (1+ iter)))))
+    (cond
+     ((null cmd)
+      (funcall advance
+               "ERROR: \"command\" must be a non-empty array of lark-cli arguments."))
+     ((and side-effect (lark-ai-agent--empty-content-p cmd))
+      (funcall advance
+               (concat "ERROR: this command writes content but the content"
+                       " argument is empty. Provide the full content inline.")))
+     ((and side-effect lark-ai-agent-confirm-writes
+           (not (yes-or-no-p (format "Agent: run lark-cli %s? "
+                                     (string-join cmd " ")))))
+      (funcall advance "(skipped by user)"))
+     (t
+      (lark-ai--progress-log "Agent: lark-cli %s" (string-join cmd " "))
+      (lark-ai-agent--run-cli cmd advance)))))
+
+(defun lark-ai-agent--run-cli (cmd done-fn)
+  "Run lark-cli CMD, calling DONE-FN with a formatted observation string."
+  (lark--run-command
+   cmd
+   (lambda (result)
+     (funcall done-fn (lark-ai-agent--format-observation result)))
+   nil
+   :no-error t
+   :timeout lark-ai-step-timeout
+   :on-error
+   (lambda (exit-code msg)
+     (funcall done-fn
+              (lark-ai-agent--format-observation
+               (list (cons 'error (if (and msg (not (string-empty-p msg)))
+                                      msg "command failed"))
+                     (cons 'exit_code exit-code)))))))
+
+(defun lark-ai-agent--finish (session answer)
+  "End the loop and present ANSWER to the user."
+  (setf (lark-ai-session-phase session) 'done)
+  (lark-ai--progress-log "Agent loop complete.")
+  (lark-ai--present answer))
+
+(defun lark-ai-agent--force-final (prompt context history session)
+  "Make a final, non-looping LLM call to answer after the step cap is hit."
+  (let ((system (lark-ai-skills-build-synthesis-prompt
+                 (lark-ai-session-skills session)))
+        (user (concat
+               (lark-ai-agent--build-user-message
+                prompt context history
+                (lark-ai-session-agent-steps session))
+               "\n\nYou have reached the action limit. Write the final answer"
+               " for the user based on what you accomplished above."
+               " Markdown prose, not JSON.")))
+    (lark-ai--call-llm
+     system user
+     (lambda (text) (lark-ai-agent--finish session text)))))
+
+(provide 'lark-ai-agent)
+;;; lark-ai-agent.el ends here

@@ -51,6 +51,7 @@ jobs:
             domain/lark-whiteboard.el \
             ai/lark-ai-skills.el \
             ai/lark-ai-context.el \
+            ai/lark-ai-agent.el \
             ai/lark-ai.el \
             lark.el
 

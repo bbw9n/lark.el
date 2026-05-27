@@ -330,6 +330,39 @@ and no surrounding markdown code fences.  Produce exactly the content in
 the format the instruction specifies.
 ")
 
+(defun lark-ai-skills--agent-rules ()
+  "Output-format rules for the iterative agent loop.
+The model emits ONE JSON action per turn and is shown each command's
+output before deciding the next action.  Crucially, content the model
+must generate (a document body, a message) is written directly into the
+command arguments — there is no $step-N variable substitution here, so
+producer-then-consumer dependencies are handled inside one action."
+  "## Response Format
+
+You operate as an agent in a loop.  Each turn, respond with EXACTLY ONE
+JSON object — no prose, no markdown fences — describing your next action.
+
+To run a lark-cli command:
+{\"thought\": \"why this command\", \"action\": \"command\", \"command\": [\"docs\", \"+create\", \"--api-version\", \"v2\", \"--content\", \"<the literal content>\"], \"side_effect\": true}
+
+To finish and answer the user:
+{\"thought\": \"why I'm done\", \"action\": \"final\", \"answer\": \"<markdown answer for the user>\"}
+
+Rules:
+- ONE action per turn.  After a \"command\" you will be shown its output as an
+  observation, then asked for the next action.  Keep going until the request
+  is fully handled, then emit \"final\".
+- \"command\" is an array of lark-cli argument strings.  There is NO variable
+  substitution: put real, literal values directly in the arguments.  If a
+  command needs content you must generate (a document body, a summary, a
+  message), WRITE that content yourself and place it directly in the argument.
+- Set \"side_effect\": true for any create/update/delete/send command.
+- Only use commands documented in the skills below.
+- If document or chat content is already provided in the context, use it
+  directly — do not fetch it again.
+- Do not stop after a single command if more steps are needed to finish.
+")
+
 (defun lark-ai-skills--preamble ()
   "Backwards-compatible alias for the planning preamble.
 Kept so older callers continue to work; new code should call
@@ -412,6 +445,15 @@ synthesis step whose result feeds a later command via $step-N."
    (concat (lark-ai-skills--identity-preamble)
            "\n"
            (lark-ai-skills--producer-rules))
+   skill-names))
+
+(defun lark-ai-skills-build-agent-prompt (skill-names)
+  "Build the agent-loop system prompt from SKILL-NAMES.
+Identity + skills + the one-action-per-turn ReAct protocol."
+  (lark-ai-skills--assemble
+   (concat (lark-ai-skills--identity-preamble)
+           "\n"
+           (lark-ai-skills--agent-rules))
    skill-names))
 
 (provide 'lark-ai-skills)

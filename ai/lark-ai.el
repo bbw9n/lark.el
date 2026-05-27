@@ -30,6 +30,7 @@
 (require 'lark-ai-protocol)   ; debug log + plan parse + interpolate + user-message
 (require 'lark-ai-llm)        ; backend dispatch (gptel/http) + streaming
 (require 'lark-ai-runner)     ; plan executor
+(require 'lark-ai-agent)      ; agentic loop executor (default; see `lark-ai-strategy')
 
 ;; Forward declarations for IM module
 (defvar lark-im--chat-id)
@@ -706,7 +707,16 @@ receives a deduplicated list that includes lark-shared."
 (defun lark-ai--run-planning (prompt context history session skill-names)
   "Build the planning prompt from SKILL-NAMES and run plan→execute.
 PROMPT, CONTEXT, HISTORY and SESSION carry the turn state.  This is
-the second half of `lark-ai-ask', invoked once skills are selected."
+the second half of `lark-ai-ask', invoked once skills are selected.
+
+When `lark-ai-strategy' is `agent', delegate to the iterative agent
+loop instead of the upfront-plan executor."
+  (if (eq lark-ai-strategy 'agent)
+      (lark-ai-agent--run prompt context history session skill-names)
+    (lark-ai--run-planning-1 prompt context history session skill-names)))
+
+(defun lark-ai--run-planning-1 (prompt context history session skill-names)
+  "Upfront-plan strategy: plan via the LLM, review, execute, synthesize."
   (let* ((system-prompt (lark-ai-skills-build-system-prompt skill-names))
          ;; Synthesis pass uses a different system prompt (no JSON
          ;; mandate) so the model produces prose.  Built once here

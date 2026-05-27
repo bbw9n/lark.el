@@ -300,6 +300,7 @@ Returns list of (field NAME), (index N), or (wildcard REST)."
   (callback nil)          ; pending callback for plan-execute
   (step-status nil)       ; alist (INDEX . STATUS) — pending/running/done/skipped
   (step-results nil)      ; alist (INDEX . RESULT) from execution
+  (agent-steps nil)       ; agent loop transcript: list of (ACTION-alist . OBSERVATION)
   (input-region-start nil) ; marker at start of the input region (separator)
   (input-start nil))      ; marker at start of editable input body
 
