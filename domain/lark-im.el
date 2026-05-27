@@ -449,39 +449,30 @@ messages can be loaded one page at a time with `lark-im-load-older'."
   (when lark-im--chat-id
     (lark-im-messages lark-im--chat-id lark-im--chat-name)))
 
-(defun lark-im--hint-text ()
-  "Return the older-messages hint text, reflecting any loading state."
-  (if lark-im--loading-older
-      (format "%s loading older messages…"
-              (or lark-im--spinner-frame (aref lark-spinner-frames 0)))
-    "[press o to load older messages]"))
+(defun lark-im--header-line ()
+  "Build the header-line string for a chat buffer from buffer-local state.
+While older messages load, the spinner animates here — the header line
+is its own display region, so the glyph's `lark-spinner' face is never
+clobbered by buffer text faces.  Otherwise it shows the \"press o\"
+affordance when more history is available."
+  (concat
+   (format " Lark Chat: %s — %d message(s)"
+           (or lark-im--chat-name "")
+           (length lark-im--messages))
+   (cond
+    (lark-im--loading-older
+     (concat "  "
+             (or lark-im--spinner-frame (aref lark-spinner-frames 0))
+             " loading older…"))
+    (lark-im--has-more " (older available, press o)")
+    (t ""))))
 
-(defun lark-im--render-header (chat-name has-more)
-  "Insert the chat header for CHAT-NAME at point.
-When HAS-MORE is non-nil, include a hint line about loading older
-messages.  The hint line is tagged with the `lark-im-hint' text
-property so the loading spinner can update it in place."
+(defun lark-im--render-header (chat-name)
+  "Insert the chat title block for CHAT-NAME at point.
+The older-messages affordance and the loading spinner live on the
+header line (see `lark-im--header-line'), not in the buffer body."
   (lark-ui-insert-title chat-name 1)
-  (when has-more
-    (insert (propertize (lark-im--hint-text)
-                        'face 'font-lock-comment-face
-                        'lark-im-hint t)
-            "\n"))
   (insert "\n"))
-
-(defun lark-im--update-hint-line ()
-  "Re-render the older-messages hint line in place, if present."
-  (save-excursion
-    (let ((beg (text-property-any (point-min) (point-max) 'lark-im-hint t)))
-      (when beg
-        (let ((end (or (next-single-property-change beg 'lark-im-hint)
-                       (point-max)))
-              (inhibit-read-only t))
-          (delete-region beg end)
-          (goto-char beg)
-          (insert (propertize (lark-im--hint-text)
-                              'face 'font-lock-comment-face
-                              'lark-im-hint t)))))))
 
 (defun lark-im--spinner-stop ()
   "Stop the loading spinner in the current chat buffer."
@@ -489,11 +480,12 @@ property so the loading spinner can update it in place."
   (setq lark-im--spinner-timer nil))
 
 (defun lark-im--spinner-start ()
-  "Start the older-messages loading spinner in the current chat buffer.
-Built on the shared `lark-spinner-start' engine: it animates the hint
+  "Start the older-messages loading spinner on the chat buffer's header line.
+Built on the shared `lark-spinner-start' engine: it animates the header
 line while loading and self-cleans if loading finishes, the buffer
 dies, or the safety timeout elapses (e.g. when the fetch errors without
-ever invoking its callback)."
+ever invoking its callback).  Each tick stores the frame and forces a
+header-line redisplay; `lark-im--header-line' renders it."
   (lark-im--spinner-stop)
   (let ((buf (current-buffer)))
     (setq lark-im--spinner-timer
@@ -503,7 +495,7 @@ ever invoking its callback)."
                         (buffer-local-value 'lark-im--loading-older buf))
                (with-current-buffer buf
                  (setq lark-im--spinner-frame frame)
-                 (lark-im--update-hint-line))
+                 (force-mode-line-update))
                t))
            nil nil nil
            ;; On auto-stop (timeout / buffer death): clear stuck state.
@@ -512,7 +504,7 @@ ever invoking its callback)."
                (with-current-buffer buf
                  (setq lark-im--loading-older nil
                        lark-im--spinner-timer nil)
-                 (lark-im--update-hint-line))))))))
+                 (force-mode-line-update))))))))
 
 (defun lark-im--display-messages (data chat-id chat-name)
   "Display the latest message history DATA for CHAT-ID with CHAT-NAME.
@@ -533,16 +525,13 @@ so they render chronologically with the newest at the bottom."
             lark-im--loading-older nil)
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (lark-im--render-header chat-name has-more)
+        (lark-im--render-header chat-name)
         (if (null messages)
             (insert "(no messages)\n")
           (dolist (msg messages)
             (lark-im--insert-message msg)))
         (goto-char (point-max)))
-      (setq header-line-format
-            (format " Lark Chat: %s — %d message(s)%s"
-                    chat-name (length messages)
-                    (if has-more " (older available, press o)" ""))))
+      (setq header-line-format '(:eval (lark-im--header-line))))
     (pop-to-buffer buf)))
 
 (defun lark-im--header-end ()
@@ -579,14 +568,10 @@ so they render chronologically with the newest at the bottom."
         (let ((hend (lark-im--header-end)))
           (delete-region (point-min) hend))
         (goto-char (point-min))
-        (lark-im--render-header lark-im--chat-name has-more)
+        (lark-im--render-header lark-im--chat-name)
         (dolist (msg older)
           (lark-im--insert-message msg))))
-    (setq header-line-format
-          (format " Lark Chat: %s — %d message(s)%s"
-                  lark-im--chat-name
-                  (length lark-im--messages)
-                  (if has-more " (older available, press o)" "")))
+    (setq header-line-format '(:eval (lark-im--header-line)))
     (when anchor
       (let (found)
         (save-excursion

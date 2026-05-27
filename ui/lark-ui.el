@@ -30,9 +30,20 @@
 
 ;;;; Loading spinner
 
+(defface lark-spinner
+  '((t :inherit warning))
+  "Face for lark.el loading-spinner glyphs.
+Inherits `warning' (yellow in stock themes) so the animated glyph
+stands out from surrounding text."
+  :group 'lark)
+
 (defconst lark-spinner-frames
-  ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"]
-  "Default braille frames cycled by lark.el loading spinners.")
+  (apply #'vector
+         (mapcar (lambda (glyph) (propertize glyph 'face 'lark-spinner))
+                 '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")))
+  "Default braille frames cycled by lark.el loading spinners.
+Each glyph carries the `lark-spinner' face so the spinner renders in a
+salient colour wherever it is displayed.")
 
 (defun lark-spinner-start (render-fn &optional interval frames max-ticks on-stop)
   "Animate a loading spinner by repeatedly calling RENDER-FN.
