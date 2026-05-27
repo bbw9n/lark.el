@@ -294,6 +294,57 @@ the separator, used to delete the whole region) and `input-start'
       (push (cons "user" prompt) (lark-ai-session-history session)))
     (display-buffer buf)))
 
+;;; Live stream preview — a small rolling tail under "Waiting for LLM
+;;; response…" so a slow call visibly progresses instead of looking hung.
+
+(defcustom lark-ai-stream-tail-lines 4
+  "How many recent lines of the live LLM stream to preview while waiting.
+Shown under \"Waiting for LLM response…\" in the plan fragment as a
+small rolling tail, so the user can see the request is in progress
+rather than hung.  Set to 0 to disable the preview."
+  :type 'integer
+  :group 'lark-ai)
+
+(defun lark-ai--stream-tail (text n)
+  "Return a bounded tail of TEXT for the loading preview.
+Roughly the last N lines; newline-poor streams (e.g. one-line JSON) are
+clipped to the last N*80 characters so the preview stays a few lines
+tall rather than one ever-growing line."
+  (when (and text (> n 0) (not (string-empty-p text)))
+    (let* ((maxchars (* n 80))
+           (clip (if (> (length text) maxchars)
+                     (concat "…" (substring text (- (length text) maxchars)))
+                   text))
+           (lines (seq-remove #'string-empty-p (split-string clip "\n"))))
+      (string-join (last lines n) "\n"))))
+
+(defun lark-ai--stream-preview-handler ()
+  "Return a streaming chunk-handler that previews the live LLM output.
+The returned closure accumulates chunks and updates the plan fragment
+to \"Waiting for LLM response…\" plus a rolling tail of the last
+`lark-ai-stream-tail-lines' lines.  Use it as the CHUNK-HANDLER arg of
+`lark-ai--call-llm-stream'."
+  (let ((acc ""))
+    (lambda (chunk)
+      (setq acc (concat acc chunk))
+      (when-let ((buf (get-buffer lark-ai--buf-name)))
+        (with-current-buffer buf
+          (when (lark-ai-ui-find-fragment (lark-ai--frag "plan"))
+            (let ((tail (lark-ai--stream-tail acc lark-ai-stream-tail-lines)))
+              (lark-ai-ui-update-fragment
+               (lark-ai--frag "plan") nil
+               (concat
+                (propertize "Waiting for LLM response…\n"
+                            'face 'font-lock-comment-face)
+                (and tail (propertize tail 'face 'shadow)))))))))))
+
+(defun lark-ai--clear-waiting ()
+  "Clear the loading preview in the current turn's plan fragment."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (when (lark-ai-ui-find-fragment (lark-ai--frag "plan"))
+        (lark-ai-ui-update-fragment (lark-ai--frag "plan") nil "")))))
+
 ;;; Plan display — update the plan fragment
 
 (defun lark-ai--display-plan (steps callback)
@@ -808,13 +859,9 @@ loop instead of the upfront-plan executor."
                ;; review the plan first.
                (unless (eq lark-ai-execute-mode 'review)
                  (lark-ai-plan-execute)))))))
-     ;; Chunk handler — stream raw planning JSON into the log
-     ;; fragment so the user sees the model generating.  Wrapped
-     ;; in the comment face to blend with progress lines.
-     (lambda (chunk)
-       (lark-ai-ui-append-fragment
-        (lark-ai--frag "log")
-        (propertize chunk 'face 'font-lock-comment-face))))))
+     ;; Chunk handler — preview a rolling tail of the streamed plan JSON
+     ;; under "Waiting for LLM response…" so the user sees progress.
+     (lark-ai--stream-preview-handler))))
 
 ;;;###autoload
 (defun lark-ai-act ()

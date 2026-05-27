@@ -830,5 +830,37 @@ a `$step-N' sentinel."
     (should (= cli-calls 1))
     (should (equal presented "Summary after limit."))))
 
+;;;; Live stream preview
+
+(ert-deftest lark-ai-test-stream-tail ()
+  "`lark-ai--stream-tail' returns a bounded tail of the stream."
+  (should (equal "c\nd" (lark-ai--stream-tail "a\nb\nc\nd" 2)))
+  (should (null (lark-ai--stream-tail "" 4)))
+  (should (null (lark-ai--stream-tail "x" 0)))
+  ;; Newline-poor input is clipped to roughly N*80 chars (+ the … marker).
+  (should (<= (length (lark-ai--stream-tail (make-string 1000 ?z) 3)) 241)))
+
+(ert-deftest lark-ai-test-stream-preview-updates-plan ()
+  "The preview handler shows a rolling tail under the waiting line."
+  (with-current-buffer (lark-ai--get-buffer)
+    (setq lark-ai--session (make-lark-ai-session))
+    (setf (lark-ai-session-turn lark-ai--session) 1)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (lark-ai-ui-insert-fragment (lark-ai--frag "plan") 'plan nil
+                                  "Waiting for LLM response...\n"))
+    (let ((h (lark-ai--stream-preview-handler)))
+      (funcall h "alpha\n")
+      (funcall h "beta gamma"))
+    (let* ((region (lark-ai-ui-find-fragment (lark-ai--frag "plan")))
+           (text (buffer-substring-no-properties (car region) (cdr region))))
+      (should (string-match-p "Waiting for LLM response" text))
+      (should (string-match-p "beta gamma" text)))
+    ;; `lark-ai--clear-waiting' removes the preview from the buffer.
+    (lark-ai--clear-waiting)
+    (should-not (string-match-p
+                 "beta gamma"
+                 (buffer-substring-no-properties (point-min) (point-max))))))
+
 (provide 'lark-ai-test)
 ;;; lark-ai-test.el ends here

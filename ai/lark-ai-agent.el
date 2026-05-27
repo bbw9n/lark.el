@@ -42,6 +42,8 @@
 (declare-function lark-ai--frag "lark-ai" (suffix))
 (declare-function lark-ai--progress-log "lark-ai" (fmt &rest args))
 (declare-function lark-ai--present "lark-ai" (content &optional skip-history))
+(declare-function lark-ai--stream-preview-handler "lark-ai" ())
+(declare-function lark-ai--clear-waiting "lark-ai" ())
 (declare-function lark-ai-ui-append-fragment "lark-ai-ui" (id text))
 
 ;;;; Customization
@@ -206,16 +208,17 @@ selects the skills whose docs are included in the system prompt."
        (lambda (response)
          (lark-ai-agent--handle-response
           response prompt context history session iter))
-       ;; Stream raw action tokens into the log fragment (greyed),
-       ;; mirroring the planning pass; the final answer goes to the
-       ;; output fragment via `lark-ai--present'.
-       (lambda (chunk)
-         (lark-ai-ui-append-fragment
-          (lark-ai--frag "log")
-          (propertize chunk 'face 'font-lock-comment-face))))))))
+       ;; Preview a rolling tail of the streamed action under "Waiting
+       ;; for LLM response…" so each step visibly progresses.
+       (lark-ai--stream-preview-handler))))))
 
 (defun lark-ai-agent--handle-response (response prompt context history session iter)
-  "Dispatch the model's RESPONSE for iteration ITER."
+  "Dispatch the model's RESPONSE for iteration ITER.
+The \"Waiting…/stream tail\" preview is left in place: the next step's
+stream overwrites it, and the loop's terminal `lark-ai-agent--finish' /
+`lark-ai-agent--force-final' clear it.  Clearing it here (mid-loop)
+would empty the plan fragment and lose its anchor, so a later preview
+update would create a duplicate."
   (let ((action (lark-ai-agent--parse-action response)))
     (pcase (and action (alist-get 'action action))
       ("final"
@@ -277,6 +280,7 @@ selects the skills whose docs are included in the system prompt."
 (defun lark-ai-agent--finish (session answer)
   "End the loop and present ANSWER to the user."
   (setf (lark-ai-session-phase session) 'done)
+  (lark-ai--clear-waiting)
   (lark-ai--progress-log "Agent loop complete.")
   (lark-ai--present answer))
 
