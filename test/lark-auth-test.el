@@ -57,5 +57,35 @@
   ;; A bare error shape with no user / token fields anywhere.
   (should-not (lark-auth--login-success-p '((ok . :false) (error . ((code . 1)))))))
 
+;;;; Shape-tolerant user extraction (the auth-status fix)
+
+(ert-deftest lark-auth-test-extract-user-top-level ()
+  "Top-level user fields are found."
+  (should (equal "alice" (lark-auth--extract-user '((userName . "alice")))))
+  (should (equal "bob"   (lark-auth--extract-user '((user_name . "bob")))))
+  (should (equal "carol" (lark-auth--extract-user '((name . "carol")))))
+  (should (equal "dave"  (lark-auth--extract-user '((displayName . "dave"))))))
+
+(ert-deftest lark-auth-test-extract-user-data-envelope ()
+  "User fields nested under `data' (the {ok, identity, data: {…}} envelope) are found."
+  (should (equal "eve"  (lark-auth--extract-user
+                         '((ok . t) (identity . "user")
+                           (data . ((userName . "eve")))))))
+  (should (equal "frank" (lark-auth--extract-user
+                          '((data . ((user_name . "frank"))))))))
+
+(ert-deftest lark-auth-test-extract-user-nested-user ()
+  "User fields under a `user' sub-object (top-level or under data) are found."
+  (should (equal "grace" (lark-auth--extract-user '((user . ((name . "grace")))))))
+  (should (equal "henry"
+                 (lark-auth--extract-user
+                  '((data . ((user . ((userName . "henry"))))))))))
+
+(ert-deftest lark-auth-test-extract-user-rejects-empty ()
+  "No user fields → nil."
+  (should-not (lark-auth--extract-user nil))
+  (should-not (lark-auth--extract-user '((ok . :false))))
+  (should-not (lark-auth--extract-user '((error . ((message . "not authed")))))))
+
 (provide 'lark-auth-test)
 ;;; lark-auth-test.el ends here

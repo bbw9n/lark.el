@@ -28,6 +28,33 @@
 
 ;;;; Auth status
 
+(defun lark-auth--user-from-alist (obj)
+  "Return the first user-name-like field in alist OBJ, or nil."
+  (when (listp obj)
+    (or (alist-get 'userName obj)
+        (alist-get 'user_name obj)
+        (alist-get 'name obj)
+        (alist-get 'displayName obj)
+        (alist-get 'display_name obj))))
+
+(defun lark-auth--extract-user (result)
+  "Return the authenticated user name from RESULT, or nil.
+Tolerates several response shapes: a user-name field at the top level,
+or nested one level deep under `data' or `user', or two levels deep at
+`data.user' — the `{ok, identity, data: {...}}' envelope lark-cli uses
+for many endpoints means we can't assume the user field is at the top."
+  (or (lark-auth--user-from-alist result)
+      (lark-auth--user-from-alist (alist-get 'data result))
+      (lark-auth--user-from-alist (alist-get 'user result))
+      (lark-auth--user-from-alist
+       (alist-get 'user (alist-get 'data result)))))
+
+(defun lark-auth--extract-field (result key)
+  "Look up KEY in RESULT and one level deep under `data'."
+  (or (alist-get key result)
+      (and (listp (alist-get 'data result))
+           (alist-get key (alist-get 'data result)))))
+
 ;;;###autoload
 (defun lark-auth-status ()
   "Display lark-cli authentication status."
@@ -36,32 +63,38 @@
   (lark--run-command
    '("auth" "status")
    (lambda (result)
-     (if (null result)
-         (progn
-           (setq lark-auth--authenticated-p nil)
-           (message "Lark: not authenticated (no config)"))
-       (let ((user (or (alist-get 'userName result)
-                       (alist-get 'user_name result)
-                       (alist-get 'name result)))
-             (identity (alist-get 'identity result))
-             (status (alist-get 'tokenStatus result)))
-         (if user
-             (progn
-               (setq lark-auth--authenticated-p t)
-               (message "Lark: authenticated as %s (identity: %s, token: %s)"
-                        user (or identity "?") (or status "?")))
-           (setq lark-auth--authenticated-p nil)
-           (message "Lark: not authenticated")))))
-   nil
-   :literal t :no-error t))
+     (lark-auth--log "status response: %S" result)
+     (let ((user (lark-auth--extract-user result)))
+       (cond
+        ((null result)
+         (setq lark-auth--authenticated-p nil)
+         (message "Lark: not authenticated (no config — see *lark-log*)"))
+        (user
+         (setq lark-auth--authenticated-p t)
+         (message "Lark: authenticated as %s (identity: %s, token: %s)"
+                  user
+                  (or (lark-auth--extract-field result 'identity) "?")
+                  (or (lark-auth--extract-field result 'tokenStatus)
+                      (lark-auth--extract-field result 'token_status) "?")))
+        (t
+         (setq lark-auth--authenticated-p nil)
+         (message
+          "Lark: not authenticated (response shape unrecognised — see *lark-log*)")))))
+   nil :literal t :no-error t
+   :on-error
+   (lambda (exit-code msg)
+     (lark-auth--log "status error: exit %s: %s" exit-code msg)
+     (setq lark-auth--authenticated-p nil)
+     (message "Lark: auth status failed (exit %s) — see *lark-log*" exit-code))))
 
 (defun lark-auth--check-sync ()
   "Check auth status synchronously.  Return non-nil if authenticated."
   (condition-case nil
       (let ((result (lark--run-command-sync
                      '("auth" "status") nil :literal t :no-error t)))
+        (lark-auth--log "status (sync) response: %S" result)
         (setq lark-auth--authenticated-p
-              (and result (alist-get 'userName result) t)))
+              (and (lark-auth--extract-user result) t)))
     (error
      (setq lark-auth--authenticated-p nil))))
 
@@ -135,19 +168,15 @@ hard to diagnose without them."
 
 (defun lark-auth--login-success-p (result)
   "Return non-nil when RESULT from a device-code poll indicates success.
-Accepts any of: explicit `ok: t' at top level, or a user/token field at
-top level or nested under `data' — the polling endpoint's success shape
-isn't fully pinned down, so this errs on the side of recognising more."
+Accepts any of: explicit `ok: t' at top level, a recognised user-name
+field via `lark-auth--extract-user', or an access token at the top
+level or under `data' — the polling endpoint's success shape isn't
+fully pinned down, so this errs on the side of recognising more."
   (when (listp result)
-    (let ((data (or (and (listp (alist-get 'data result))
-                         (alist-get 'data result))
-                    result)))
-      (or (eq (alist-get 'ok result) t)
-          (alist-get 'userName data)
-          (alist-get 'user_name data)
-          (alist-get 'name data)
-          (alist-get 'access_token data)
-          (alist-get 'accessToken data)))))
+    (or (eq (alist-get 'ok result) t)
+        (lark-auth--extract-user result)
+        (lark-auth--extract-field result 'access_token)
+        (lark-auth--extract-field result 'accessToken))))
 
 (defun lark-auth--stop-polling ()
   "Cancel the device-code polling timer if one is running."
@@ -161,12 +190,7 @@ Idempotent — extra polling responses arriving after success are no-ops."
   (when lark-auth--polling-timer
     (lark-auth--stop-polling)
     (setq lark-auth--authenticated-p t)
-    (let* ((data (or (and (listp (alist-get 'data result))
-                          (alist-get 'data result))
-                     result))
-           (user (or (alist-get 'userName data)
-                     (alist-get 'user_name data)
-                     (alist-get 'name data))))
+    (let ((user (lark-auth--extract-user result)))
       (lark-auth--log "login complete; user=%S" user)
       (message "Lark: login successful%s"
                (if user (format " as %s" user) "!")))))
@@ -180,10 +204,7 @@ source, so consulting it covers any CLI response we don't recognise."
    '("auth" "status")
    (lambda (result)
      (lark-auth--log "status check: %S" result)
-     (when (and result
-                (or (alist-get 'userName result)
-                    (alist-get 'user_name result)
-                    (alist-get 'name result)))
+     (when (lark-auth--extract-user result)
        (lark-auth--finish-login result)))
    nil :literal t :no-error t))
 
@@ -231,6 +252,17 @@ completion if the polling response shape changes."
                (lark-auth--log "polling timed out after %d attempts" attempts)
                (message "Lark: login timed out — run `M-x lark-auth-login' to retry"))
               (t (lark-auth--poll-once device-code))))))))
+
+;;;###autoload
+(defun lark-auth-show-log ()
+  "Pop up the *lark-log* buffer to inspect auth traces.
+Use this after a failing `lark-auth-status' or login attempt to see the
+raw response shapes recorded by `lark-auth--log'."
+  (interactive)
+  (let ((buf (get-buffer "*lark-log*")))
+    (if buf
+        (pop-to-buffer buf)
+      (user-error "No *lark-log* buffer yet — run an auth command first"))))
 
 ;;;; Logout
 
