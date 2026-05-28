@@ -61,6 +61,7 @@ jobs:
             --eval "(require 'package)" \
             --eval "(package-initialize)" \
             -l lark-core-test \
+            -l lark-auth-test \
             -l lark-ui-test \
             -l lark-calendar-test \
             -l lark-tasks-test \

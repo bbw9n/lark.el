@@ -125,38 +125,112 @@ Opens the authorization URL in a browser and polls for completion."
      nil
      :literal t :no-error t)))
 
+(defun lark-auth--log (fmt &rest args)
+  "Append a timestamped auth entry to *lark-log*.
+Bypasses `lark--debug' so login traces are always recorded — auth
+runs rarely and silent failures (see `lark-auth--start-polling') are
+hard to diagnose without them."
+  (let ((lark--debug t))
+    (apply #'lark--log (concat "auth: " fmt) args)))
+
+(defun lark-auth--login-success-p (result)
+  "Return non-nil when RESULT from a device-code poll indicates success.
+Accepts any of: explicit `ok: t' at top level, or a user/token field at
+top level or nested under `data' — the polling endpoint's success shape
+isn't fully pinned down, so this errs on the side of recognising more."
+  (when (listp result)
+    (let ((data (or (and (listp (alist-get 'data result))
+                         (alist-get 'data result))
+                    result)))
+      (or (eq (alist-get 'ok result) t)
+          (alist-get 'userName data)
+          (alist-get 'user_name data)
+          (alist-get 'name data)
+          (alist-get 'access_token data)
+          (alist-get 'accessToken data)))))
+
+(defun lark-auth--stop-polling ()
+  "Cancel the device-code polling timer if one is running."
+  (when (timerp lark-auth--polling-timer)
+    (cancel-timer lark-auth--polling-timer))
+  (setq lark-auth--polling-timer nil))
+
+(defun lark-auth--finish-login (result)
+  "Mark login complete, stop polling, and notify the user.
+Idempotent — extra polling responses arriving after success are no-ops."
+  (when lark-auth--polling-timer
+    (lark-auth--stop-polling)
+    (setq lark-auth--authenticated-p t)
+    (let* ((data (or (and (listp (alist-get 'data result))
+                          (alist-get 'data result))
+                     result))
+           (user (or (alist-get 'userName data)
+                     (alist-get 'user_name data)
+                     (alist-get 'name data))))
+      (lark-auth--log "login complete; user=%S" user)
+      (message "Lark: login successful%s"
+               (if user (format " as %s" user) "!")))))
+
+(defun lark-auth--check-status-async ()
+  "Query `auth status' asynchronously; finish login if it reports a user.
+Used as a fallback when the device-code poll's response shape doesn't
+match `lark-auth--login-success-p' — auth status is the authoritative
+source, so consulting it covers any CLI response we don't recognise."
+  (lark--run-command
+   '("auth" "status")
+   (lambda (result)
+     (lark-auth--log "status check: %S" result)
+     (when (and result
+                (or (alist-get 'userName result)
+                    (alist-get 'user_name result)
+                    (alist-get 'name result)))
+       (lark-auth--finish-login result)))
+   nil :literal t :no-error t))
+
+(defun lark-auth--poll-once (device-code)
+  "Run one device-code poll iteration."
+  (lark--run-command
+   (list "auth" "login" "--device-code" device-code "--json")
+   (lambda (result)
+     (lark-auth--log "poll response: %S" result)
+     (if (lark-auth--login-success-p result)
+         (lark-auth--finish-login result)
+       ;; Response didn't look like success — cross-check with
+       ;; `auth status' in case the CLI returned a shape we don't
+       ;; recognise but did actually authenticate.
+       (lark-auth--check-status-async)))
+   nil :literal t :no-error t
+   ;; Without :on-error, non-zero exits during the pending phase are
+   ;; silently dropped (the success callback never fires), so failures
+   ;; would be invisible.  Log and still consult `auth status'.
+   :on-error
+   (lambda (exit-code msg)
+     (lark-auth--log "poll error: exit %s: %s" exit-code msg)
+     (lark-auth--check-status-async))))
+
 (defun lark-auth--start-polling (device-code)
   "Poll for device-code auth completion.
-DEVICE-CODE is the code to check."
-  (when lark-auth--polling-timer
-    (cancel-timer lark-auth--polling-timer))
+DEVICE-CODE is the code returned by the initial `auth login --no-wait'.
+Each tick fires `lark-auth--poll-once', which both drives the CLI's
+device-code exchange and cross-checks `auth status' so we don't miss
+completion if the polling response shape changes."
+  (lark-auth--stop-polling)
   (let ((attempts 0)
         (max-attempts 120)              ; 10 minutes at 5s intervals
         (interval 5))
+    (lark-auth--log "polling started (device-code=%s)" device-code)
     (setq lark-auth--polling-timer
           (run-with-timer
            interval interval
            (lambda ()
              (setq attempts (1+ attempts))
-             (if (>= attempts max-attempts)
-                 (progn
-                   (cancel-timer lark-auth--polling-timer)
-                   (setq lark-auth--polling-timer nil)
-                   (message "Lark: login timed out"))
-               (lark--run-command
-                (list "auth" "login"
-                      "--device-code" device-code
-                      "--json")
-                (lambda (result)
-                  ;; Success: {ok: true, ...} or has userName
-                  (let ((ok (alist-get 'ok result)))
-                    (when (eq ok t)
-                      (cancel-timer lark-auth--polling-timer)
-                      (setq lark-auth--polling-timer nil
-                            lark-auth--authenticated-p t)
-                      (message "Lark: login successful!"))))
-                nil
-                :literal t :no-error t)))))))
+             (cond
+              ((null lark-auth--polling-timer) nil)   ; finished elsewhere
+              ((>= attempts max-attempts)
+               (lark-auth--stop-polling)
+               (lark-auth--log "polling timed out after %d attempts" attempts)
+               (message "Lark: login timed out — run `M-x lark-auth-login' to retry"))
+              (t (lark-auth--poll-once device-code))))))))
 
 ;;;; Logout
 

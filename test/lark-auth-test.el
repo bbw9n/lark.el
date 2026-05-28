@@ -1,0 +1,61 @@
+;;; lark-auth-test.el --- Tests for lark-auth.el -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 bbw9n
+
+;; Author: bbw9n <bbw9nio@gmail.com>
+
+;;; Commentary:
+
+;; ERT tests for lark.el's auth helpers — currently focused on the
+;; device-code polling success detector, which previously missed
+;; completion when the CLI's response shape didn't include `ok: t'.
+
+;;; Code:
+
+(require 'ert)
+(require 'cl-lib)
+
+;; Add project directories to load-path.
+(let ((root (expand-file-name ".." (file-name-directory
+                                    (or load-file-name (buffer-file-name))))))
+  (dolist (sub '("." "core" "ui" "domain" "ai"))
+    (add-to-list 'load-path (expand-file-name sub root))))
+
+(require 'lark-auth)
+
+;;;; Login success detection
+
+(ert-deftest lark-auth-test-success-explicit-ok ()
+  "An explicit `ok: t' is recognised as success."
+  (should (lark-auth--login-success-p '((ok . t))))
+  (should (lark-auth--login-success-p '((ok . t) (data . ((some . "thing")))))))
+
+(ert-deftest lark-auth-test-success-user-fields ()
+  "A user field at the top level (any of several names) means success."
+  (should (lark-auth--login-success-p '((userName . "alice"))))
+  (should (lark-auth--login-success-p '((user_name . "bob"))))
+  (should (lark-auth--login-success-p '((name . "carol")))))
+
+(ert-deftest lark-auth-test-success-nested-data ()
+  "User / token fields nested under `data' also count."
+  (should (lark-auth--login-success-p '((data . ((user_name . "dave"))))))
+  (should (lark-auth--login-success-p '((data . ((userName . "eve"))))))
+  (should (lark-auth--login-success-p '((data . ((access_token . "tok"))))))
+  (should (lark-auth--login-success-p '((data . ((accessToken . "tok")))))))
+
+(ert-deftest lark-auth-test-success-access-token-top ()
+  "An access token at the top level is also accepted."
+  (should (lark-auth--login-success-p '((access_token . "abc"))))
+  (should (lark-auth--login-success-p '((accessToken . "abc")))))
+
+(ert-deftest lark-auth-test-success-rejects-pending ()
+  "Pending / error / nil responses are NOT treated as success."
+  (should-not (lark-auth--login-success-p nil))
+  (should-not (lark-auth--login-success-p '((ok . :false))))
+  (should-not (lark-auth--login-success-p
+               '((error . ((message . "authorization_pending"))))))
+  ;; A bare error shape with no user / token fields anywhere.
+  (should-not (lark-auth--login-success-p '((ok . :false) (error . ((code . 1)))))))
+
+(provide 'lark-auth-test)
+;;; lark-auth-test.el ends here
