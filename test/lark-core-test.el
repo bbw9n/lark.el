@@ -127,6 +127,27 @@
     (should result)
     (should (equal (alist-get 'items result) '(1 2)))))
 
+(ert-deftest lark-test-strip-debug-lines-removes-warning ()
+  "Strip `warning:' prefix lines — `im +chat-messages-list' now emits
+\"warning: reactions_partial_failed: …\" before the JSON body, which
+made the response unparseable."
+  (let ((input "warning: reactions_partial_failed: 1 message(s) failed ([om_xx])\n{\"ok\": true}"))
+    (should (equal (string-trim (lark--strip-debug-lines input))
+                   "{\"ok\": true}"))))
+
+(ert-deftest lark-test-strip-debug-lines-removes-other-log-levels ()
+  "Strip info/debug/error log levels too."
+  (dolist (prefix '("info: starting" "debug: x=1" "error: y"))
+    (let* ((input (concat prefix "\n{\"ok\": true}"))
+           (out (string-trim (lark--strip-debug-lines input))))
+      (should (equal "{\"ok\": true}" out)))))
+
+(ert-deftest lark-test-strip-debug-lines-drops-unknown-leading-prefix ()
+  "Unknown leading non-JSON lines are dropped until the first `{' or `['."
+  (let ((input "Some future prefix lark-cli might emit\n  another fluff line\n[1, 2, 3]"))
+    (should (equal (string-trim (lark--strip-debug-lines input))
+                   "[1, 2, 3]"))))
+
 (ert-deftest lark-test-strip-debug-lines-preserves-title-field ()
   "JSON containing a key like `title' is not stripped."
   (let ((input "{\"title\": \"tips for success\"}"))

@@ -141,17 +141,35 @@ buffer, different concern."
 ;;;; JSON parsing
 
 (defun lark--strip-debug-lines (string)
-  "Remove CLI debug/log lines from STRING.
-Lines matching `[command +subcommand]' prefixes (e.g. `[vc +recording] ...')
-and `tip:' hint lines from lark-cli are stripped so the remaining text is
-valid JSON."
-  (let ((lines (split-string string "\n")))
-    (mapconcat #'identity
-               (seq-remove (lambda (line)
-                             (or (string-match-p "^\\[[-a-zA-Z0-9_]+ \\+[-a-zA-Z0-9_]+\\]" line)
-                                 (string-match-p "^tip[ :]" line)))
-                           lines)
-               "\n")))
+  "Remove CLI debug/log lines from STRING so the rest is valid JSON.
+
+Two passes:
+1. Strip lines matching known noisy prefixes anywhere in the output —
+   `[command +subcommand]` traces (e.g. `[vc +recording] …`), `tip:`
+   hint lines, and `warning:` / `info:` / `debug:` / `error:` log
+   levels.  lark-cli occasionally prepends one of these to stdout
+   before the JSON body (recent example: `warning:
+   reactions_partial_failed: …` from `im +chat-messages-list`), which
+   makes the response unparseable.
+2. As a defence against unknown future prefixes, drop any remaining
+   leading lines before the first line whose first non-whitespace
+   character is `{` or `[` (the start of a JSON value)."
+  (let* ((lines (split-string string "\n"))
+         (kept (seq-remove
+                (lambda (line)
+                  (or (string-match-p "^\\[[-a-zA-Z0-9_]+ \\+[-a-zA-Z0-9_]+\\]" line)
+                      (string-match-p "^tip[ :]" line)
+                      (string-match-p "^\\(warning\\|info\\|debug\\|error\\)[ :]"
+                                      line)))
+                lines))
+         (trimmed (let ((p kept))
+                    (while (and p
+                                (let ((ln (string-trim-left (car p))))
+                                  (and (not (string-empty-p ln))
+                                       (not (memq (aref ln 0) '(?\{ ?\[))))))
+                      (setq p (cdr p)))
+                    p)))
+    (mapconcat #'identity (or trimmed '()) "\n")))
 
 (defun lark--parse-json (string)
   "Parse STRING as JSON, returning an alist.
