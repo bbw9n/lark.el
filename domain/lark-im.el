@@ -212,6 +212,21 @@ Truncates to \"YYYY-MM-DD HH:MM\" for display."
       (alist-get 'type msg)
       "text"))
 
+(defconst lark-im--textual-msg-types '("text" "post" "markdown")
+  "Message types whose `content' field is already human-readable text.
+For these, `lark-im--insert-message' renders the content directly
+instead of wrapping it with a \"[type message]: …\" prefix.  Anything
+not in this list (image/file/sticker/share_chat/etc.) is treated as a
+non-text affordance and labelled.")
+
+(defun lark-im--msg-textual-p (msg)
+  "Return non-nil when MSG's content should be rendered as plain text."
+  (member (lark-im--msg-type msg) lark-im--textual-msg-types))
+
+(defun lark-im--msg-deleted-p (msg)
+  "Return non-nil when MSG is marked deleted in the response."
+  (eq (alist-get 'deleted msg) t))
+
 (defun lark-im--messages-container (data)
   "Return the alist that holds messages plus pagination metadata in DATA.
 Falls back to nil when DATA is not a recognized response shape."
@@ -227,18 +242,22 @@ Falls back to nil when DATA is not a recognized response shape."
    (t nil)))
 
 (defun lark-im--extract-messages (data)
-  "Extract message list from lark-cli response DATA."
-  (let ((c (lark-im--messages-container data)))
-    (cond
-     ((and c (alist-get 'items c)) (alist-get 'items c))
-     ((and c (alist-get 'messages c)) (alist-get 'messages c))
-     ((and (listp data) (listp (car-safe data))
-           (or (alist-get 'message_id (car data))
-               (alist-get 'sender_name (car data))))
-      data)
-     ((and c (listp c) (not (assq 'has_more c)) (not (assq 'page_token c)))
-      c)
-     (t nil))))
+  "Extract message list from lark-cli response DATA.
+Filters out messages marked `deleted: true' (which the new
+`im +chat-messages-list' shape still includes) so they don't render
+as empty/stale entries."
+  (let* ((c (lark-im--messages-container data))
+         (raw (cond
+               ((and c (alist-get 'items c)) (alist-get 'items c))
+               ((and c (alist-get 'messages c)) (alist-get 'messages c))
+               ((and (listp data) (listp (car-safe data))
+                     (or (alist-get 'message_id (car data))
+                         (alist-get 'sender_name (car data))))
+                data)
+               ((and c (listp c) (not (assq 'has_more c)) (not (assq 'page_token c)))
+                c)
+               (t nil))))
+    (seq-remove #'lark-im--msg-deleted-p raw)))
 
 (defun lark-im--truthy-p (v)
   "Return non-nil if V is a truthy JSON value (t, \"true\", non-zero)."
@@ -626,7 +645,7 @@ so they render chronologically with the newest at the bottom."
   "Insert a formatted MSG into the current buffer."
   (let ((sender (lark-im--msg-sender msg))
         (time (lark-im--msg-time msg))
-        (content (lark-im--msg-content msg))
+        (content (or (lark-im--msg-content msg) ""))
         (type (lark-im--msg-type msg))
         (id (lark-im--msg-id msg))
         (beg (point)))
@@ -634,12 +653,21 @@ so they render chronologically with the newest at the bottom."
             "  "
             (propertize time 'face 'font-lock-comment-face)
             "\n")
-    (if (equal type "text")
-        (insert content "\n")
+    (cond
+     ;; Textual types (text / post / markdown) come back from lark-cli as
+     ;; readable text — render the content directly so the buffer doesn't
+     ;; look wrapped in "[post message]: …" labels.
+     ((and (lark-im--msg-textual-p msg) (not (string-empty-p content)))
+      (insert content "\n"))
+     ;; Non-text affordances (image, file, sticker, share_chat, …) — label
+     ;; them, and include any payload string the CLI returned.
+     ((not (string-empty-p content))
+      (insert (propertize (format "[%s] " type) 'face 'font-lock-type-face)
+              content "\n"))
+     (t
       (insert (propertize (format "[%s message]" type)
                           'face 'font-lock-type-face)
-              (if (string-empty-p content) "" (format ": %s" content))
-              "\n"))
+              "\n")))
     (insert "\n")
     (put-text-property beg (point) 'lark-message-id id)))
 

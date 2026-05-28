@@ -118,5 +118,52 @@
       (should (equal (get-text-property (point) 'lark-chat-id) "c1"))
       (should (equal (get-text-property (point) 'lark-chat-name) "Dev Team")))))
 
+;;;; Schema fixes: textual types and deleted filter
+
+(ert-deftest lark-im-test-msg-textual-p ()
+  "Text, post, and markdown are textual; image/file/sticker are not."
+  (should (lark-im--msg-textual-p '((msg_type . "text"))))
+  (should (lark-im--msg-textual-p '((msg_type . "post"))))
+  (should (lark-im--msg-textual-p '((msg_type . "markdown"))))
+  (should-not (lark-im--msg-textual-p '((msg_type . "image"))))
+  (should-not (lark-im--msg-textual-p '((msg_type . "file"))))
+  (should-not (lark-im--msg-textual-p '((msg_type . "sticker")))))
+
+(ert-deftest lark-im-test-msg-deleted-p ()
+  "Only `deleted: t' counts as deleted (not :false, not missing)."
+  (should     (lark-im--msg-deleted-p '((deleted . t))))
+  (should-not (lark-im--msg-deleted-p '((deleted . :false))))
+  (should-not (lark-im--msg-deleted-p '((other . "field")))))
+
+(ert-deftest lark-im-test-extract-messages-filters-deleted ()
+  "`extract-messages' drops messages flagged `deleted: t'."
+  (let ((data `((data . ((has_more . :false)
+                         (messages . (((message_id . "m1") (deleted . :false))
+                                      ((message_id . "m2") (deleted . t))
+                                      ((message_id . "m3") (deleted . :false)))))))))
+    (let ((extracted (lark-im--extract-messages data)))
+      (should (= 2 (length extracted)))
+      (should (equal '("m1" "m3")
+                     (mapcar (lambda (m) (alist-get 'message_id m)) extracted))))))
+
+(ert-deftest lark-im-test-insert-message-post-no-prefix ()
+  "A `post' message renders content directly, no \"[post message]: \" prefix."
+  (with-temp-buffer
+    (lark-im--insert-message
+     '((message_id . "m1") (msg_type . "post") (create_time . "2026-05-27 20:17")
+       (sender . ((name . "陈大伟"))) (content . "Hello readable text")))
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (should     (string-match-p "Hello readable text" text))
+      (should-not (string-match-p "\\[post message\\]" text)))))
+
+(ert-deftest lark-im-test-insert-message-image-labelled ()
+  "An `image' message is still labelled (since the content is metadata, not body)."
+  (with-temp-buffer
+    (lark-im--insert-message
+     '((message_id . "m2") (msg_type . "image") (create_time . "2026-05-27 20:17")
+       (sender . ((name . "alice"))) (content . "{\"image_key\":\"abc\"}")))
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (should (string-match-p "\\[image\\]" text)))))
+
 (provide 'lark-im-test)
 ;;; lark-im-test.el ends here
