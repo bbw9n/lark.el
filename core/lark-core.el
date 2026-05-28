@@ -35,6 +35,13 @@
 (defvar lark--process-output-alist nil
   "Alist mapping process objects to accumulated output strings.")
 
+(defconst lark--log-buffer-name "*lark-log*"
+  "Name of the Lark activity log buffer.
+This is the focused, always-on record of lark-cli traffic (CLI
+requests/responses/errors, auth events).  The AI-internals trace
+\(`*Lark AI Debug*' — LLM streams, plan parsing, agent step
+orchestration) is a separate buffer with a separate toggle.")
+
 ;;;; Executable resolution
 
 (defun lark--executable ()
@@ -88,13 +95,48 @@ lark-cli already defaults to json and not all subcommands support it."
 ;;;; Logging
 
 (defun lark--log (format-string &rest args)
-  "Log FORMAT-STRING with ARGS to the *lark-log* buffer when debugging."
+  "Append a verbose trace line to `*lark-log*' when `lark--debug' is on.
+Plain timestamped lines; for the always-on labelled activity log
+\(CLI requests/responses, auth events) see `lark--cli-log'."
   (when lark--debug
-    (with-current-buffer (get-buffer-create "*lark-log*")
+    (with-current-buffer (get-buffer-create lark--log-buffer-name)
       (goto-char (point-max))
       (insert (format-time-string "[%H:%M:%S] ")
               (apply #'format format-string args)
               "\n"))))
+
+(defun lark--cli-log (label fmt &rest args)
+  "Append a labelled, timestamped section to `*lark-log*'.
+LABEL is a short tag (e.g. \"CLI REQUEST\", \"CLI RESPONSE\", \"AUTH\");
+FMT and ARGS are passed to `format' to produce the body.  Always on —
+this buffer is intentionally a permanent activity record so failures
+can be diagnosed without flipping a debug flag first."
+  (let ((entry (apply #'format fmt args)))
+    (with-current-buffer (get-buffer-create lark--log-buffer-name)
+      (goto-char (point-max))
+      (insert (format "\n=== [%s] %s ===\n%s\n"
+                      (format-time-string "%H:%M:%S.%3N")
+                      label entry)))))
+
+(defun lark--cli-log-output (output)
+  "Return OUTPUT clipped to a sane length for the activity log."
+  (let ((s (or output "")))
+    (if (> (length s) 8000)
+        (concat (substring s 0 8000) "\n…[truncated]")
+      s)))
+
+;;;###autoload
+(defun lark-show-log ()
+  "Pop up the `*lark-log*' buffer (Lark activity: CLI + auth traffic).
+For AI-internals (LLM streams, plan parsing, agent steps), see
+`lark-ai-show-debug' / `lark-ai-toggle-debug' instead — different
+buffer, different concern."
+  (interactive)
+  (let ((buf (get-buffer lark--log-buffer-name)))
+    (if buf
+        (pop-to-buffer buf)
+      (user-error "No %s buffer yet — make a lark command first"
+                  lark--log-buffer-name))))
 
 ;;;; JSON parsing
 
@@ -250,6 +292,7 @@ Returns the process object."
          (proc-name (format "lark-%s" (string-join cmd-args "-")))
          proc timer)
     (lark--log "Running: %s %s" exe (string-join full-args " "))
+    (lark--cli-log "CLI REQUEST" "lark-cli %s" (string-join full-args " "))
     (setq proc
           (make-process
            :name proc-name
@@ -268,6 +311,12 @@ Returns the process object."
                              (lark--log "Process %s exited (%s): %s"
                                         (process-name proc) exit-code
                                         (string-trim event))
+                             (lark--cli-log
+                              (if (and (integerp exit-code) (zerop exit-code))
+                                  "CLI RESPONSE" "CLI ERROR")
+                              "exit %s\n%s"
+                              exit-code
+                              (lark--cli-log-output output))
                              (lark--dispatch-result
                               exit-code output event no-error raw callback on-error))
                          (setf (alist-get proc lark--process-output-alist nil t) nil)))))
@@ -305,12 +354,16 @@ KEYS are keyword arguments:
          (output-buf (generate-new-buffer " *lark-sync*"))
          exit-code output)
     (lark--log "Running (sync): %s %s" exe (string-join full-args " "))
+    (lark--cli-log "CLI REQUEST" "lark-cli %s" (string-join full-args " "))
     (unwind-protect
         (progn
           (setq exit-code
                 (apply #'call-process exe nil output-buf nil full-args))
           (setq output (with-current-buffer output-buf (buffer-string)))
           (lark--log "Sync exit %d: %s" exit-code (truncate-string-to-width output 200))
+          (lark--cli-log
+           (if (zerop exit-code) "CLI RESPONSE" "CLI ERROR")
+           "exit %d\n%s" exit-code (lark--cli-log-output output))
           (if (not (zerop exit-code))
               (unless no-error
                 (user-error "Lark CLI error (exit %d): %s"

@@ -97,6 +97,13 @@ nil means either no older page is known yet, or no more older messages.")
       (alist-get 'type chat)
       ""))
 
+(defun lark-im--chat-mode (chat)
+  "Extract the chat mode from CHAT (e.g. \"group\" / \"topic\").
+This is what `lark-cli im +chat-list' returns under `chat_mode' for
+each chat in the current response shape."
+  (or (alist-get 'chat_mode chat)
+      ""))
+
 (defun lark-im--chat-member-count (chat)
   "Extract member count from CHAT."
   (let ((count (or (alist-get 'member_count chat)
@@ -152,6 +159,7 @@ Truncates to \"YYYY-MM-DD HH:MM\" for display."
   (let ((id (lark-im--chat-id-of chat))
         (name (lark-im--chat-name-of chat))
         (type (lark-im--chat-type chat))
+        (mode (lark-im--chat-mode chat))
         (owner (lark-im--chat-owner-name chat))
         (desc (lark-im--chat-description chat))
         (created (lark-im--chat-create-time chat))
@@ -159,6 +167,7 @@ Truncates to \"YYYY-MM-DD HH:MM\" for display."
         (beg (point)))
     (insert (propertize name 'face 'bold) "\n")
     (lark-im--insert-chat-field "Type" type)
+    (lark-im--insert-chat-field "Mode" mode)
     (lark-im--insert-chat-field "Owner" owner)
     (lark-im--insert-chat-field "Description" desc)
     (lark-im--insert-chat-field "Created" created)

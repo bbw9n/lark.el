@@ -156,6 +156,20 @@
       (should     (string-match-p "Hello readable text" text))
       (should-not (string-match-p "\\[post message\\]" text)))))
 
+(ert-deftest lark-im-test-chat-mode ()
+  "`lark-im--chat-mode' reads the `chat_mode' field (group/topic)."
+  (should (equal "group" (lark-im--chat-mode '((chat_mode . "group")))))
+  (should (equal "topic" (lark-im--chat-mode '((chat_mode . "topic")))))
+  (should (equal ""      (lark-im--chat-mode '()))))
+
+(ert-deftest lark-im-test-insert-chat-shows-mode ()
+  "`insert-chat' renders a Mode: line populated from `chat_mode'."
+  (with-temp-buffer
+    (lark-im--insert-chat '((chat_id . "c1") (name . "Demo") (chat_mode . "topic")))
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (should (string-match-p "Mode" text))
+      (should (string-match-p "topic" text)))))
+
 (ert-deftest lark-im-test-insert-message-image-labelled ()
   "An `image' message is still labelled (since the content is metadata, not body)."
   (with-temp-buffer

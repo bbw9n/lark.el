@@ -187,12 +187,11 @@ Opens the authorization URL in a browser and polls for completion."
      :literal t :no-error t)))
 
 (defun lark-auth--log (fmt &rest args)
-  "Append a timestamped auth entry to *lark-log*.
-Bypasses `lark--debug' so login traces are always recorded — auth
-runs rarely and silent failures (see `lark-auth--start-polling') are
-hard to diagnose without them."
-  (let ((lark--debug t))
-    (apply #'lark--log (concat "auth: " fmt) args)))
+  "Append a labelled auth entry to `*lark-log*'.
+Always on (auth runs rarely and silent failures are hard to diagnose
+without a trace).  Lands in the same focused activity log as the CLI
+REQUEST/RESPONSE entries, labelled \"AUTH\" so it's easy to scan."
+  (apply #'lark--cli-log "AUTH" fmt args))
 
 (defun lark-auth--login-success-p (result)
   "Return non-nil when RESULT from a device-code poll indicates success.
@@ -281,16 +280,11 @@ completion if the polling response shape changes."
                (message "Lark: login timed out — run `M-x lark-auth-login' to retry"))
               (t (lark-auth--poll-once device-code))))))))
 
-;;;###autoload
-(defun lark-auth-show-log ()
-  "Pop up the *lark-log* buffer to inspect auth traces.
-Use this after a failing `lark-auth-status' or login attempt to see the
-raw response shapes recorded by `lark-auth--log'."
-  (interactive)
-  (let ((buf (get-buffer "*lark-log*")))
-    (if buf
-        (pop-to-buffer buf)
-      (user-error "No *lark-log* buffer yet — run an auth command first"))))
+;; `lark-auth-show-log' was folded into `lark-show-log' (in `lark-core').
+;; The activity log lives in one buffer; CLI requests/responses and AUTH
+;; traces are labelled distinctly inside it.
+
+(define-obsolete-function-alias 'lark-auth-show-log 'lark-show-log "0.2.0")
 
 ;;;; Logout
 

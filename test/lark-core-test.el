@@ -394,5 +394,25 @@ unwinds the caller — `lark--run-command' never reaches `make-process'."
   "Unrecognized input is passed through."
   (should (equal (lark--parse-time-input "tomorrow") "tomorrow")))
 
+;;;; Activity log (*lark-log*)
+
+(ert-deftest lark-core-test-cli-log-writes-labelled-section ()
+  "`lark--cli-log' appends a timestamped labelled section to `*lark-log*'."
+  (with-current-buffer (get-buffer-create lark--log-buffer-name)
+    (let ((inhibit-read-only t)) (erase-buffer))
+    (lark--cli-log "CLI REQUEST" "lark-cli %s %s" "auth" "status")
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (should (string-match-p "=== \\[[0-9:.]+\\] CLI REQUEST ===" text))
+      (should (string-match-p "lark-cli auth status" text)))))
+
+(ert-deftest lark-core-test-cli-log-output-truncation ()
+  "`lark--cli-log-output' clips long output and appends an ellipsis."
+  (should (equal "" (lark--cli-log-output nil)))
+  (should (equal "abc" (lark--cli-log-output "abc")))
+  (let* ((big (make-string 9000 ?x))
+         (out (lark--cli-log-output big)))
+    (should (= (+ 8000 (length "\n…[truncated]")) (length out)))
+    (should (string-suffix-p "\n…[truncated]" out))))
+
 (provide 'lark-core-test)
 ;;; lark-core-test.el ends here
