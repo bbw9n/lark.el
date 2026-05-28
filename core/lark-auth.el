@@ -37,21 +37,49 @@
         (alist-get 'displayName obj)
         (alist-get 'display_name obj))))
 
+(defun lark-auth--active-identity (result)
+  "Return the active identity alist from a lark-cli `auth status' RESULT.
+The CLI wraps each identity (user/bot) under `identities', with the
+active one named by the top-level `identity' field.  Returns nil when
+the response doesn't use this shape (e.g. a login-poll response)."
+  (when (listp result)
+    (let ((identity (alist-get 'identity result))
+          (identities (alist-get 'identities result)))
+      (when (listp identities)
+        (or (and (stringp identity)
+                 (alist-get (intern identity) identities))
+            ;; Defensive: no explicit `identity' field — credit whichever
+            ;; sub-identity actually carries a userName.
+            (let ((u (alist-get 'user identities)))
+              (and (lark-auth--user-from-alist u) u))
+            (let ((b (alist-get 'bot identities)))
+              (and (lark-auth--user-from-alist b) b)))))))
+
 (defun lark-auth--extract-user (result)
   "Return the authenticated user name from RESULT, or nil.
-Tolerates several response shapes: a user-name field at the top level,
-or nested one level deep under `data' or `user', or two levels deep at
-`data.user' — the `{ok, identity, data: {...}}' envelope lark-cli uses
-for many endpoints means we can't assume the user field is at the top."
-  (or (lark-auth--user-from-alist result)
+Primary shape — what `lark-cli auth status' actually returns:
+
+  ((identity . \"user\")
+   (identities . ((user . ((userName . \"…\") (tokenStatus . \"valid\") …))
+                  (bot  . ((status . \"ready\") …))))
+   …)
+
+Falls back to simpler shapes used by other endpoints (top level, or
+nested under `data', `user', `data.user') so the same extractor works
+for login-poll responses too."
+  (or (lark-auth--user-from-alist (lark-auth--active-identity result))
+      (lark-auth--user-from-alist result)
       (lark-auth--user-from-alist (alist-get 'data result))
       (lark-auth--user-from-alist (alist-get 'user result))
       (lark-auth--user-from-alist
        (alist-get 'user (alist-get 'data result)))))
 
 (defun lark-auth--extract-field (result key)
-  "Look up KEY in RESULT and one level deep under `data'."
+  "Look up KEY in RESULT — top level, the active identity, or under `data'.
+The active identity is where `auth status' puts `tokenStatus' and other
+per-identity fields, so consult it before falling back."
   (or (alist-get key result)
+      (alist-get key (lark-auth--active-identity result))
       (and (listp (alist-get 'data result))
            (alist-get key (alist-get 'data result)))))
 

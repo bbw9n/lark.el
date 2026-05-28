@@ -87,5 +87,32 @@
   (should-not (lark-auth--extract-user '((ok . :false))))
   (should-not (lark-auth--extract-user '((error . ((message . "not authed")))))))
 
+(ert-deftest lark-auth-test-extract-user-auth-status-shape ()
+  "The real `lark-cli auth status' shape (identities.<identity>.userName)."
+  (let ((real '((appId . "cli_xxx")
+                (brand . "feishu")
+                (defaultAs . "auto")
+                (identity . "user")
+                (identities . ((bot . ((status . "ready") (available . t)
+                                       (message . "Bot identity: ready")))
+                               (user . ((status . "ready") (available . t)
+                                        (userName . "Zhenjun Wang")
+                                        (tokenStatus . "valid")
+                                        (openId . "ou_xxx"))))))))
+    (should (equal "Zhenjun Wang" (lark-auth--extract-user real)))
+    (should (equal "valid" (lark-auth--extract-field real 'tokenStatus)))
+    (should (equal "user"  (lark-auth--extract-field real 'identity)))))
+
+(ert-deftest lark-auth-test-extract-user-auth-status-bot ()
+  "When the active identity is `bot' and only `bot' has a userName."
+  (let ((bot-active '((identity . "bot")
+                      (identities . ((bot  . ((status . "ready")
+                                              (userName . "bot-acct")
+                                              (tokenStatus . "valid")))
+                                     (user . ((status . "ready")
+                                              (available . :false))))))))
+    (should (equal "bot-acct" (lark-auth--extract-user bot-active)))
+    (should (equal "valid"    (lark-auth--extract-field bot-active 'tokenStatus)))))
+
 (provide 'lark-auth-test)
 ;;; lark-auth-test.el ends here
