@@ -862,5 +862,20 @@ a `$step-N' sentinel."
                  "beta gamma"
                  (buffer-substring-no-properties (point-min) (point-max))))))
 
+;;;; Context content clipping
+
+(ert-deftest lark-ai-test-context-clip ()
+  "`lark-ai-context--clip' honors the char limit and keep direction."
+  ;; nil limit (default) → whole content, regardless of length.
+  (let ((lark-ai-context-content-max-chars nil))
+    (should (equal "abcdef" (lark-ai-context--clip "abcdef" 'tail)))
+    (should (equal "abcdef" (lark-ai-context--clip "abcdef" 'head))))
+  (let ((lark-ai-context-content-max-chars 3))
+    ;; head keeps the first chars; tail keeps the last (recent) chars.
+    (should (equal "abc…" (lark-ai-context--clip "abcdef" 'head)))
+    (should (equal "…def" (lark-ai-context--clip "abcdef" 'tail)))
+    ;; Under the limit → unchanged.
+    (should (equal "ab" (lark-ai-context--clip "ab" 'tail)))))
+
 (provide 'lark-ai-test)
 ;;; lark-ai-test.el ends here

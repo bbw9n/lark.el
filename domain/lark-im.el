@@ -350,6 +350,9 @@ the CLI."
                       :message-count msg-count
                       :has-older has-more)
           :content content
+          ;; Messages render oldest→newest top→bottom, so if the content
+          ;; is ever clipped keep the recent end (the bottom), not the top.
+          :content-keep 'tail
           :summary (format "Chat: %s — %d message(s) loaded%s%s"
                            (or chat-name chat-id "unknown")
                            msg-count

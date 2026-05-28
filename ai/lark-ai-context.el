@@ -26,6 +26,20 @@
 (require 'cl-lib)
 (require 'lark-core)
 
+;;;; Customization
+
+(defcustom lark-ai-context-content-max-chars nil
+  "Maximum characters of buffer `:content' fed into the LLM prompt.
+nil (the default) means no limit — the whole captured buffer content is
+sent, so the model sees everything that is on screen.  Set a positive
+integer to clip very large buffers.  When clipping, a provider may set
+`:content-keep' to `tail' (keep the most recent end — e.g. the newest
+chat messages at the bottom) or `head' (keep the beginning, the default
+\— e.g. the start of a document)."
+  :type '(choice (const :tag "No limit (whole content)" nil)
+                 (integer :tag "Max characters"))
+  :group 'lark-ai)
+
 ;;;; Provider registration
 
 (defun lark-ai-context-register (mode provider)
@@ -79,6 +93,18 @@ Returns a plist with:
 
 ;;;; Context formatting for LLM
 
+(defun lark-ai-context--clip (content keep)
+  "Clip CONTENT to `lark-ai-context-content-max-chars'.
+Returns CONTENT unchanged when the limit is nil or not exceeded.
+Otherwise keeps the last chars when KEEP is `tail' (marking the cut with
+a leading \"…\") and the first chars otherwise (trailing \"…\")."
+  (let ((max lark-ai-context-content-max-chars))
+    (if (or (null max) (<= (length content) max))
+        content
+      (if (eq keep 'tail)
+          (concat "…" (substring content (- (length content) max)))
+        (concat (substring content 0 max) "…")))))
+
 (defun lark-ai-context-format ()
   "Format current buffer context as a string for the LLM prompt."
   (let ((ctx (lark-ai-context)))
@@ -91,7 +117,7 @@ Returns a plist with:
           (if content
               (format "%s\n\nThe document content is already available (no need to fetch it):\n\n%s"
                       base
-                      (truncate-string-to-width content 8000 nil nil "…"))
+                      (lark-ai-context--clip content (plist-get ctx :content-keep)))
             base))
       "")))
 
