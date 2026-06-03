@@ -862,6 +862,93 @@ a `$step-N' sentinel."
                  "beta gamma"
                  (buffer-substring-no-properties (point-min) (point-max))))))
 
+;;;; Tool-call cards
+
+(ert-deftest lark-ai-test-format-cmd-body-multiline ()
+  "`lark-ai--format-cmd-body' groups positional args, then per-flag pairs."
+  (should (equal "lark-cli docs +create \\\n  --title Foo \\\n  --content Hello"
+                 (lark-ai--format-cmd-body
+                  '("docs" "+create" "--title" "Foo" "--content" "Hello")))))
+
+(ert-deftest lark-ai-test-format-cmd-body-no-flags ()
+  "Plain positional-only commands render on a single line."
+  (should (equal "lark-cli im +chats-list"
+                 (lark-ai--format-cmd-body '("im" "+chats-list")))))
+
+(ert-deftest lark-ai-test-tool-call-label-status ()
+  "Status icon varies but the command head is always present."
+  (let ((running (lark-ai--tool-call-label '("docs" "+create") 'running))
+        (done    (lark-ai--tool-call-label '("docs" "+create") 'done))
+        (skipped (lark-ai--tool-call-label '("docs" "+create") 'skipped)))
+    (dolist (l (list running done skipped))
+      (should (string-match-p "lark-cli docs \\+create" l)))
+    (should (string-match-p "⟳" running))
+    (should (string-match-p "✓" done))
+    (should (string-match-p "⊘" skipped))))
+
+(ert-deftest lark-ai-test-render-tool-call-inserts-and-updates ()
+  "First call inserts a fragment; second call only updates the label."
+  (with-current-buffer (lark-ai--get-buffer)
+    (setq lark-ai--session (make-lark-ai-session))
+    (setf (lark-ai-session-turn lark-ai--session) 1)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      ;; Plan fragment is the insertion anchor; render-tool-call should
+      ;; insert its card just before it.
+      (lark-ai-ui-insert-fragment (lark-ai--frag "plan") 'plan nil
+                                  "Waiting...\n"))
+    (let ((cmd '("docs" "+create" "--title" "Hi" "--content" "Body")))
+      (lark-ai--render-tool-call 0 cmd 'running)
+      (let* ((id (lark-ai--frag "tool-0"))
+             (region (lark-ai-ui-find-fragment id)))
+        (should region)
+        (let ((text (buffer-substring-no-properties (car region) (cdr region))))
+          ;; Label has the running icon, body has the multi-line cmd.
+          (should (string-match-p "⟳" text))
+          (should (string-search "lark-cli docs +create" text))
+          (should (string-match-p "--title" text))
+          (should (string-match-p "--content" text)))
+        ;; A user-fold (invisibility on the body) survives a label-only
+        ;; status update — this is what `update-label' is for.
+        (let* ((label-end (next-single-property-change
+                           (car region) 'lark-ai-ui-section
+                           nil (cdr region)))
+               (inhibit-read-only t))
+          (put-text-property label-end (cdr region) 'invisible t))
+        (lark-ai--render-tool-call 0 cmd 'done)
+        (let* ((region (lark-ai-ui-find-fragment id))
+               (label-end (next-single-property-change
+                           (car region) 'lark-ai-ui-section
+                           nil (cdr region)))
+               (text (buffer-substring-no-properties (car region) (cdr region))))
+          (should (string-match-p "✓" text))
+          ;; Body is still folded — invisibility preserved.
+          (should (eq t (get-text-property label-end 'invisible))))))))
+
+(ert-deftest lark-ai-test-tool-call-nav ()
+  "n/p navigation jumps between tool-call fragments."
+  (with-current-buffer (lark-ai--get-buffer)
+    (setq lark-ai--session (make-lark-ai-session))
+    (setf (lark-ai-session-turn lark-ai--session) 1)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (lark-ai-ui-insert-fragment "log"  'log    "Log" "log body\n")
+      (lark-ai-ui-insert-fragment "t1"   'tool-call "  ⟳ lark-cli a" "lark-cli a")
+      (lark-ai-ui-insert-fragment "mid"  'log    "Mid" "mid body\n")
+      (lark-ai-ui-insert-fragment "t2"   'tool-call "  ⟳ lark-cli b" "lark-cli b")
+      (lark-ai-ui-insert-fragment "tail" 'log    "Tail" "tail body\n"))
+    (goto-char (point-min))
+    (lark-ai-ui-next-tool-call)
+    (should (equal "t1" (get-text-property (point) 'lark-ai-ui-id)))
+    (lark-ai-ui-next-tool-call)
+    (should (equal "t2" (get-text-property (point) 'lark-ai-ui-id)))
+    ;; No further tool-call: signals user-error and point stays put.
+    (let ((here (point)))
+      (should-error (lark-ai-ui-next-tool-call) :type 'user-error)
+      (should (= here (point))))
+    (lark-ai-ui-prev-tool-call)
+    (should (equal "t1" (get-text-property (point) 'lark-ai-ui-id)))))
+
 ;;;; Context content clipping
 
 (ert-deftest lark-ai-test-context-clip ()

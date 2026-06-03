@@ -171,5 +171,34 @@
           (should (looking-at-p "Alpha")))
       (kill-buffer buf))))
 
+;;;; Code-block panes
+
+(ert-deftest lark-test-ui-block-bg-face-fallback ()
+  "`lark-ui-block-bg-face' falls back to `lark-ui-block-bg' outside Org/Markdown."
+  (with-temp-buffer
+    (fundamental-mode)
+    (should (eq 'lark-ui-block-bg (lark-ui-block-bg-face)))))
+
+(ert-deftest lark-test-ui-block-bg-face-org ()
+  "`lark-ui-block-bg-face' returns `org-block' in Org buffers."
+  (skip-unless (require 'org nil t))
+  (with-temp-buffer
+    (let ((org-inhibit-startup t)) (delay-mode-hooks (org-mode)))
+    (should (eq 'org-block (lark-ui-block-bg-face)))))
+
+(ert-deftest lark-test-ui-fontify-block-writes-font-lock-face ()
+  "`lark-ui-fontify-block' writes `font-lock-face' onto the region.
+The destination buffer never runs the source MODE — only the
+resulting face properties land on the original text."
+  (with-temp-buffer
+    (fundamental-mode)
+    (let ((start (point)))
+      (insert "echo hello")
+      (lark-ui-fontify-block 'sh-mode start (point))
+      ;; sh-mode marks `echo' as a builtin / function-name; we don't pin
+      ;; the exact face, but *some* font-lock-face must be written.
+      (should (text-property-not-all
+               start (point) 'font-lock-face nil)))))
+
 (provide 'lark-ui-test)
 ;;; lark-ui-test.el ends here

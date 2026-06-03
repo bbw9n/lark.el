@@ -44,6 +44,7 @@
 (declare-function lark-ai--present "lark-ai" (content &optional skip-history))
 (declare-function lark-ai--stream-preview-handler "lark-ai" ())
 (declare-function lark-ai--clear-waiting "lark-ai" ())
+(declare-function lark-ai--render-tool-call "lark-ai" (iter cmd status))
 (declare-function lark-ai-ui-append-fragment "lark-ai-ui" (id text))
 
 ;;;; Customization
@@ -238,40 +239,51 @@ update would create a duplicate."
        (lark-ai-agent--step prompt context history session (1+ iter))))))
 
 (defun lark-ai-agent--dispatch-command (action prompt context history session iter)
-  "Validate and run the \"command\" ACTION, then continue the loop."
+  "Validate and run the \"command\" ACTION, then continue the loop.
+Renders a tool-call card per dispatched command — inserted in the
+running state before the CLI fires, then updated with the terminal
+status (`done', `error', or `skipped') so the user has a visible,
+collapsible record of each action."
   (let* ((cmd (lark-ai-agent--command-list (alist-get 'command action)))
          (side-effect (eq (alist-get 'side_effect action) t))
-         (advance (lambda (obs)
+         (advance (lambda (status obs)
+                    (when cmd
+                      (lark-ai--render-tool-call iter cmd status))
                     (lark-ai-agent--record session action obs)
                     (lark-ai-agent--step prompt context history session (1+ iter)))))
     (cond
      ((null cmd)
-      (funcall advance
+      (funcall advance 'error
                "ERROR: \"command\" must be a non-empty array of lark-cli arguments."))
      ((and side-effect (lark-ai-agent--empty-content-p cmd))
-      (funcall advance
+      (funcall advance 'error
                (concat "ERROR: this command writes content but the content"
                        " argument is empty. Provide the full content inline.")))
      ((and side-effect lark-ai-agent-confirm-writes
            (not (yes-or-no-p (format "Agent: run lark-cli %s? "
                                      (string-join cmd " ")))))
-      (funcall advance "(skipped by user)"))
+      (funcall advance 'skipped "(skipped by user)"))
      (t
       (lark-ai--progress-log "Agent: lark-cli %s" (string-join cmd " "))
+      ;; Show the card in `running' state before dispatch so the user
+      ;; sees the action immediately, even if the CLI takes seconds.
+      (lark-ai--render-tool-call iter cmd 'running)
       (lark-ai-agent--run-cli cmd advance)))))
 
 (defun lark-ai-agent--run-cli (cmd done-fn)
-  "Run lark-cli CMD, calling DONE-FN with a formatted observation string."
+  "Run lark-cli CMD, calling DONE-FN with (STATUS OBSERVATION).
+STATUS is `done' on success, `error' on a non-zero exit / timeout —
+passed through so the tool-call card can mark each step accurately."
   (lark--run-command
    cmd
    (lambda (result)
-     (funcall done-fn (lark-ai-agent--format-observation result)))
+     (funcall done-fn 'done (lark-ai-agent--format-observation result)))
    nil
    :no-error t
    :timeout lark-ai-step-timeout
    :on-error
    (lambda (exit-code msg)
-     (funcall done-fn
+     (funcall done-fn 'error
               (lark-ai-agent--format-observation
                (list (cons 'error (if (and msg (not (string-empty-p msg)))
                                       msg "command failed"))

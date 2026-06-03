@@ -187,6 +187,61 @@ lines follow the rule (default 2)."
           (lark-ui-separator (min (or max-width 60) (max 20 (length title))))
           (make-string (or trailing-newlines 2) ?\n)))
 
+;;;; Code-block panes
+;;
+;; A small toolkit for rendering "inline code-ish" sections (a CLI
+;; command, an elisp expression, a JSON blob) the way the user's theme
+;; would render an Org/Markdown code block — so the chat surface inherits
+;; the same visual cues as the rest of the user's Emacs.
+
+(defface lark-ui-block-bg
+  '((t :inherit mode-line-inactive :extend t))
+  "Background face for code-block-like content panes.
+Inherits `mode-line-inactive' so the chosen theme drives the shade;
+`:extend t' fills the colour across the whole line, not just the glyphs."
+  :group 'lark)
+
+(defun lark-ui-block-bg-face ()
+  "Return a face suitable for a code-block content background.
+Picks the buffer's mode-appropriate block face when one exists
+\(`org-block' in Org buffers, `markdown-code-face' in Markdown) and
+falls back to `lark-ui-block-bg' otherwise — so a rendered pane reads
+as a code block under whatever theme the user has chosen."
+  (cond
+   ((derived-mode-p 'org-mode) 'org-block)
+   ((derived-mode-p 'markdown-mode) 'markdown-code-face)
+   (t 'lark-ui-block-bg)))
+
+(defun lark-ui-fontify-block (mode start end)
+  "Apply MODE's syntax highlighting to the buffer region START..END.
+
+Copies the region into a temp buffer, activates MODE there, runs
+`font-lock-ensure', and writes the resulting `face' values back onto
+the original region as `font-lock-face' so they survive any later
+refontification by the destination buffer's own mode.
+
+Adapted from gptel-agent's tool-preview rendering: the trick is that
+the destination buffer doesn't itself run MODE — fontification happens
+in isolation, and only the resulting face properties are copied over."
+  (let ((src (current-buffer)))
+    (with-temp-buffer
+      (insert-buffer-substring-no-properties src start end)
+      ;; A trailing sentinel guarantees a property change at point-max so
+      ;; the last span's faces are written back.
+      (insert " ")
+      (delay-mode-hooks (funcall mode))
+      (font-lock-ensure)
+      (let ((pos (point-min)))
+        (while (< pos (1- (point-max)))
+          (let* ((next (next-property-change pos nil (1- (point-max))))
+                 (face-prop (get-text-property pos 'face)))
+            (when face-prop
+              (put-text-property
+               (+ start (- pos (point-min)))
+               (+ start (- (or next (1- (point-max))) (point-min)))
+               'font-lock-face face-prop src))
+            (setq pos (or next (1- (point-max))))))))))
+
 ;;;; Section navigation
 ;;
 ;; A "section" is a maximal run of consecutive characters that share the

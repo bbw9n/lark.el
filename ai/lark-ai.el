@@ -413,6 +413,92 @@ to \"Waiting for LLM response…\" plus a rolling tail of the last
       (when (lark-ai-ui-find-fragment (lark-ai--frag "plan"))
         (lark-ai-ui-update-fragment (lark-ai--frag "plan") nil "")))))
 
+;;; Tool-call cards — per-action panes in the agent loop.
+;;
+;; Each dispatched lark-cli command gets its own collapsible fragment
+;; sh-fontified and tinted with the theme's code-block background
+;; (`lark-ui-block-bg-face').  The card is inserted in the running
+;; state and its label is then updated as the command completes —
+;; preserving body fold state across the status transition.
+
+(defun lark-ai--tool-call-label (cmd status)
+  "Build the label line for a tool-call card.
+CMD is the lark-cli argument list; STATUS is `running', `done',
+`error', or `skipped'."
+  (let* ((head (mapconcat #'identity
+                          (seq-take (or cmd nil) 2)
+                          " "))
+         (icon (pcase status
+                 ('running (propertize "⟳" 'face 'warning))
+                 ('done    (propertize "✓" 'face 'success))
+                 ('error   (propertize "✗" 'face 'error))
+                 ('skipped (propertize "⊘" 'face 'shadow))
+                 (_        "·"))))
+    (concat "  " icon " "
+            (propertize (concat "lark-cli " head)
+                        'face 'font-lock-function-name-face))))
+
+(defun lark-ai--shell-quote (arg)
+  "Return ARG with minimal display-time shell quoting.
+Args that consist only of typical lark-cli token characters
+\(alphanumerics plus . / + - _ : = , @ % # *) pass through verbatim
+— so flags like `+chats-list' or `--page-size=20' read naturally —
+and only arguments containing whitespace or shell metacharacters get
+the heavier `shell-quote-argument' treatment.  This is purely cosmetic;
+the rendered string is never re-executed by a shell."
+  (if (string-match-p "\\`[A-Za-z0-9_./+:=,@%#*-]+\\'" arg)
+      arg
+    (shell-quote-argument arg)))
+
+(defun lark-ai--format-cmd-body (cmd)
+  "Pretty-print CMD onto multiple lines for a tool-call card body.
+Leading positional args stay on the first line; each --flag and its
+value follow on continuation lines with a two-space indent and a
+trailing backslash — the same shape a person would type at a shell."
+  (let ((head nil) (groups nil) (cur nil))
+    (dolist (arg cmd)
+      (if (string-prefix-p "--" arg)
+          (progn
+            (cond ((null head) (setq head (nreverse cur)))
+                  (cur         (push (nreverse cur) groups)))
+            (setq cur (list arg)))
+        (push arg cur)))
+    (cond ((null head) (setq head (nreverse cur)))
+          (cur         (push (nreverse cur) groups)))
+    (let ((head-line (concat "lark-cli "
+                             (mapconcat #'lark-ai--shell-quote head " ")))
+          (group-lines (mapcar (lambda (g)
+                                 (concat "  "
+                                         (mapconcat #'lark-ai--shell-quote
+                                                    g " ")))
+                               (nreverse groups))))
+      (if group-lines
+          (concat head-line " \\\n"
+                  (mapconcat #'identity group-lines " \\\n"))
+        head-line))))
+
+(defun lark-ai--render-tool-call (iter cmd status)
+  "Insert or update the tool-call card for agent iteration ITER.
+On first call (STATUS=`running'), inserts a fragment just above the
+plan fragment containing the sh-fontified command body.  On subsequent
+calls, updates only the label — so a user-folded body stays folded
+across the running → done/error transition."
+  (when-let ((buf (get-buffer lark-ai--buf-name)))
+    (with-current-buffer buf
+      (let ((id (lark-ai--frag (format "tool-%d" iter)))
+            (label (lark-ai--tool-call-label cmd status)))
+        (cond
+         ((lark-ai-ui-find-fragment id)
+          (lark-ai-ui-update-label id label))
+         (t
+          (let ((plan-region (lark-ai-ui-find-fragment
+                              (lark-ai--frag "plan"))))
+            (save-excursion
+              (goto-char (if plan-region (car plan-region) (point-max)))
+              (lark-ai-ui-insert-fragment
+               id 'tool-call label
+               (lark-ai--format-cmd-body cmd))))))))))
+
 ;;; Plan display — update the plan fragment
 
 (defun lark-ai--display-plan (steps callback)
