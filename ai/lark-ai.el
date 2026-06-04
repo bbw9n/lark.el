@@ -32,6 +32,7 @@
 (require 'lark-ai-llm)        ; backend dispatch (gptel/http) + streaming
 (require 'lark-ai-runner)     ; plan executor
 (require 'lark-ai-agent)      ; agentic loop executor (default; see `lark-ai-strategy')
+(require 'lark-ai-context-graph) ; cross-domain topic gatherer (lark-ai-brief-on)
 
 ;; Forward declarations for IM module
 (defvar lark-im--chat-id)
@@ -1033,6 +1034,93 @@ loop instead of the upfront-plan executor."
      ;; Chunk handler — preview a rolling tail of the streamed plan JSON
      ;; under "Waiting for LLM response…" so the user sees progress.
      (lark-ai--stream-preview-handler))))
+
+;;;; Topic brief — cross-domain context provider
+;;
+;; `lark-ai-brief-on' is the first workflow built on the context-graph
+;; substrate.  Given a TOPIC, it asks every registered provider (v1:
+;; docs + messages) for matching snippets, then streams a synthesised
+;; brief into the AI chat — so a follow-up like "draft a status update
+;; from this" reuses the same gathered context for free.
+
+(defcustom lark-ai-brief-on-prompt
+  (concat
+   "You are a productivity assistant building a topic brief from"
+   " retrieved snippets across the user's docs and chat history.\n\n"
+   "Rules:\n"
+   "- Be terse — the reader is busy.\n"
+   "- Keep the existing section headings (`## Docs', `## Messages', …)"
+   " and write a short synthesis under each one.\n"
+   "- Always preserve source links from the snippets so the reader"
+   " can click through.\n"
+   "- Highlight what's actionable, recent, or decided; downplay"
+   " incidental matches.\n"
+   "- If a section has no useful signal, omit it.\n"
+   "- Output markdown only.")
+  "System prompt for `lark-ai-brief-on'.
+The synthesised brief is rendered straight into the AI buffer, so
+any structural conventions (headings, link style) the prompt asks
+for shape what the user sees."
+  :type 'string
+  :group 'lark-ai)
+
+;;;###autoload
+(defun lark-ai-brief-on (topic)
+  "Build a cross-domain context brief for TOPIC and synthesise it.
+Fans out to every provider in `lark-ai-context-graph-providers' (v1:
+docs + messages), aggregates their results, and streams a structured
+brief into the AI chat buffer.  Because the gathered context is then
+in the chat's conversation history, a follow-up question (\"draft a
+status update from this\", \"who owns this work?\") reuses it without
+re-fetching."
+  (interactive "sBrief on topic: ")
+  (let ((topic (string-trim (or topic ""))))
+    (when (string-empty-p topic)
+      (user-error "Empty topic"))
+    (let ((buf (lark-ai--get-buffer))
+          (session (lark-ai--session)))
+      (lark-ai--show-loading
+       (format "Brief on: %s" topic) '("lark-shared"))
+      (setf (lark-ai-session-phase session) 'executing)
+      (lark-ai--progress-log "Gathering context for \"%s\"…" topic)
+      (lark-ai-context-graph-gather
+       topic
+       (lambda (context-text)
+         ;; Cancellation guard: the user may have aborted between hops.
+         (let* ((alive (buffer-live-p buf))
+                (s (and alive
+                        (buffer-local-value 'lark-ai--session buf))))
+           (when (and s (eq (lark-ai-session-phase s) 'executing))
+             (lark-ai--brief-on-synthesize topic context-text))))))))
+
+(defun lark-ai--brief-on-synthesize (topic context-text)
+  "Stream a brief for TOPIC built from CONTEXT-TEXT.
+Empty CONTEXT-TEXT yields a short \"no results\" reply rather than
+firing the LLM at nothing; otherwise we hand the synthesis off to the
+streaming LLM path so chunks land directly in the output fragment."
+  (lark-ai--progress-log
+   "Gathered %d chars; calling LLM…" (length (or context-text "")))
+  (lark-ai--clear-waiting)
+  (let* ((empty-p (string-empty-p (string-trim (or context-text ""))))
+         (user-msg
+          (if empty-p
+              (format
+               "## Topic\n%s\n\nNo results were retrieved across the\
+ enabled providers. Tell the user no relevant docs or messages were\
+ found, in one sentence, and suggest broadening the topic." topic)
+            (format
+             "## Topic\n%s\n\n## Retrieved snippets\n%s\n\nWrite the\
+ brief now."
+             topic context-text))))
+    (lark-ai--call-llm-stream
+     lark-ai-brief-on-prompt user-msg
+     (lambda (text)
+       (when-let ((buf (get-buffer lark-ai--buf-name)))
+         (with-current-buffer buf
+           (push (cons "assistant" text)
+                 (lark-ai-session-history (lark-ai--session)))
+           (lark-ai--mark-all-done)
+           (lark-ai--ensure-input-area)))))))
 
 ;;;###autoload
 (defun lark-ai-act ()

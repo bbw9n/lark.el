@@ -992,6 +992,51 @@ content values don't flood the tool-call card."
     (lark-ai-ui-prev-tool-call)
     (should (equal "t1" (get-text-property (point) 'lark-ai-ui-id)))))
 
+;;;; Topic brief end-to-end
+
+(ert-deftest lark-ai-test-brief-on-end-to-end ()
+  "`lark-ai-brief-on' gathers context and synthesises into the AI chat.
+Both the gatherer and the streaming LLM call are stubbed; we verify
+the wiring: the user turn appears, the synthesised text lands in
+conversation history, and an editable input area follows."
+  (let ((gathered nil)
+        (synth-user-msg nil))
+    (cl-letf*
+        (((symbol-function 'lark-ai-context-graph-gather)
+          (lambda (topic done-fn)
+            (setq gathered topic)
+            (funcall done-fn (format "## Docs\n\n- doc about %s" topic))))
+         ((symbol-function 'lark-ai--call-llm-stream)
+          (lambda (_sys user cb &optional _chunk)
+            (setq synth-user-msg user)
+            (funcall cb (format "BRIEF: %s" gathered))))
+         ((symbol-function 'lark-ai--progress-log) (lambda (&rest _) nil)))
+      ;; Fresh AI buffer for a clean run.
+      (with-current-buffer (lark-ai--get-buffer)
+        (let ((inhibit-read-only t)) (erase-buffer))
+        (setq lark-ai--session (make-lark-ai-session)))
+      (lark-ai-brief-on "Q2 budget")
+      ;; The gatherer was invoked with the topic.
+      (should (equal "Q2 budget" gathered))
+      ;; The synthesis user msg embeds the topic AND the gathered text.
+      (should (string-match-p "Q2 budget" synth-user-msg))
+      (should (string-match-p "doc about Q2 budget" synth-user-msg))
+      ;; The streamed text was pushed onto conversation history.
+      (let* ((session (with-current-buffer (lark-ai--get-buffer)
+                        lark-ai--session))
+             (history (lark-ai-session-history session)))
+        (should (assoc "assistant" history))
+        (should (string-match-p
+                 "BRIEF: Q2 budget"
+                 (cdr (assoc "assistant" history))))))))
+
+(ert-deftest lark-ai-test-brief-on-empty-topic-errors ()
+  "An empty or whitespace topic refuses to fire — no LLM call."
+  (cl-letf (((symbol-function 'lark-ai-context-graph-gather)
+             (lambda (&rest _) (error "should not gather"))))
+    (should-error (lark-ai-brief-on "   ") :type 'user-error)
+    (should-error (lark-ai-brief-on "")    :type 'user-error)))
+
 ;;;; Context content clipping
 
 (ert-deftest lark-ai-test-context-clip ()

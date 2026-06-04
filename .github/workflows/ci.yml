@@ -51,6 +51,7 @@ jobs:
             domain/lark-whiteboard.el \
             ai/lark-ai-skills.el \
             ai/lark-ai-context.el \
+            ai/lark-ai-context-graph.el \
             ai/lark-ai-agent.el \
             ai/lark-ai.el \
             lark.el
@@ -74,4 +75,5 @@ jobs:
             -l lark-meetings-test \
             -l lark-whiteboard-test \
             -l lark-ai-test \
+            -l lark-ai-context-graph-test \
             -f ert-run-tests-batch-and-exit
