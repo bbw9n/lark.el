@@ -445,17 +445,32 @@ Args that consist only of typical lark-cli token characters
 — so flags like `+chats-list' or `--page-size=20' read naturally —
 and only arguments containing whitespace or shell metacharacters get
 the heavier `shell-quote-argument' treatment.  This is purely cosmetic;
-the rendered string is never re-executed by a shell."
-  (if (string-match-p "\\`[A-Za-z0-9_./+:=,@%#*-]+\\'" arg)
-      arg
-    (shell-quote-argument arg)))
+the rendered string is never re-executed by a shell.
+
+ARG values that carry the `lark-ai-preview' text property (produced
+by `lark-ai-agent--preview-string') are wrapped in display quotes
+without escaping — the ellipsis and `[N chars]' tail would otherwise
+get mangled by shell-quoting."
+  (cond
+   ((and (> (length arg) 0)
+         (get-text-property 0 'lark-ai-preview arg))
+    (concat "\"" (substring-no-properties arg) "\""))
+   ((string-match-p "\\`[A-Za-z0-9_./+:=,@%#*-]+\\'" arg)
+    arg)
+   (t (shell-quote-argument arg))))
 
 (defun lark-ai--format-cmd-body (cmd)
   "Pretty-print CMD onto multiple lines for a tool-call card body.
 Leading positional args stay on the first line; each --flag and its
 value follow on continuation lines with a two-space indent and a
-trailing backslash — the same shape a person would type at a shell."
-  (let ((head nil) (groups nil) (cur nil))
+trailing backslash — the same shape a person would type at a shell.
+
+Content-flag values (--content, --markdown, --body, --text, --message)
+are clipped to a one-line preview via `lark-ai-agent-abbreviate-cmd'
+so a multi-KB doc body doesn't flood the card.  The CLI invocation
+still receives the original, unabbreviated command."
+  (let ((cmd (lark-ai-agent-abbreviate-cmd cmd))
+        (head nil) (groups nil) (cur nil))
     (dolist (arg cmd)
       (if (string-prefix-p "--" arg)
           (progn

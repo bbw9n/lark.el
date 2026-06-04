@@ -864,6 +864,49 @@ a `$step-N' sentinel."
 
 ;;;; Tool-call cards
 
+(ert-deftest lark-ai-test-abbreviate-cmd-clips-content ()
+  "Content-flag values are clipped; other args pass through verbatim."
+  (let* ((long (make-string 500 ?x))
+         (abbr (lark-ai-agent-abbreviate-cmd
+                `("docs" "+create" "--title" "Foo" "--content" ,long))))
+    (should (equal '("docs" "+create" "--title" "Foo") (seq-take abbr 4)))
+    ;; Position 5 is the clipped --content value: short head + tail.
+    (should (< (length (nth 5 abbr)) 100))
+    (should (string-match-p "\\[500 chars\\]" (nth 5 abbr)))))
+
+(ert-deftest lark-ai-test-abbreviate-cmd-multiline ()
+  "Multi-line content is reduced to its first line + clip tail."
+  (let* ((body "line one\nline two\nline three")
+         (abbr (lark-ai-agent-abbreviate-cmd
+                `("im" "+send" "--text" ,body))))
+    (should (string-match-p "^line one" (nth 3 abbr)))
+    (should (string-match-p (format "\\[%d chars\\]" (length body))
+                            (nth 3 abbr)))
+    (should-not (string-match-p "line three" (nth 3 abbr)))))
+
+(ert-deftest lark-ai-test-abbreviate-cmd-short-passthrough ()
+  "A short single-line content value passes through unchanged."
+  (should (equal '("im" "+send" "--text" "hi")
+                 (lark-ai-agent-abbreviate-cmd
+                  '("im" "+send" "--text" "hi")))))
+
+(ert-deftest lark-ai-test-abbreviate-cmd-non-content-flags-untouched ()
+  "Values after non-content flags are NEVER clipped (they're parameters,
+not body content)."
+  (let* ((long (make-string 500 ?x))
+         (abbr (lark-ai-agent-abbreviate-cmd
+                `("docs" "+open" "--token" ,long))))
+    (should (equal long (nth 3 abbr)))))
+
+(ert-deftest lark-ai-test-format-cmd-body-clips-content ()
+  "`lark-ai--format-cmd-body' uses the abbreviated form so multi-KB
+content values don't flood the tool-call card."
+  (let* ((long (make-string 800 ?x))
+         (body (lark-ai--format-cmd-body
+                `("docs" "+create" "--title" "T" "--content" ,long))))
+    (should-not (string-match-p (regexp-quote long) body))
+    (should (string-match-p "\\[800 chars\\]" body))))
+
 (ert-deftest lark-ai-test-format-cmd-body-multiline ()
   "`lark-ai--format-cmd-body' groups positional args, then per-flag pairs."
   (should (equal "lark-cli docs +create \\\n  --title Foo \\\n  --content Hello"
