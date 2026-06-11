@@ -1235,13 +1235,17 @@ Templates can use {domain}, {summary}, {id}, and {custom} prompt."
              ,(format "Share file %s. Ask me who to share with."
                       (plist-get item :file-token))))))
        ("meetings"
-        (when (plist-get item :meeting-id)
-          `(("Get meeting notes" .
-             ,(format "Fetch meeting notes for meeting %s."
-                      (plist-get item :meeting-id)))
-            ("Summarize this meeting" .
-             ,(format "Summarize meeting %s."
-                      (plist-get item :meeting-id))))))
+        (append
+         (when (plist-get item :has-transcript)
+           `(("Summarize transcript into a Lark doc" .
+              ,(lark-ai--meeting-transcript-summary-prompt item))))
+         (when (plist-get item :meeting-id)
+           `(("Get meeting notes" .
+              ,(format "Fetch meeting notes for meeting %s."
+                       (plist-get item :meeting-id)))
+             ("Summarize this meeting" .
+              ,(format "Summarize meeting %s."
+                       (plist-get item :meeting-id)))))))
        ("sheets"
         `(("Read sheet data" .
            ,(format "Read data from spreadsheet %s."
@@ -1409,12 +1413,29 @@ to draft a reply, and opens a compose buffer for editing before send."
   (interactive)
   (lark-ai-ask "Generate a standup report for today: show my calendar agenda and open tasks, detect any scheduling conflicts, and list free time slots."))
 
+(defun lark-ai--meeting-transcript-summary-prompt (item)
+  "Build the transcript-summarisation prompt for a meeting detail ITEM.
+ITEM is the :item plist from the meeting-detail AI context."
+  (format "Summarize this meeting's transcript (already provided in the context — do not fetch it) into structured meeting minutes: key topics discussed, decisions made, and action items with owners where identifiable. Start the summary with the meeting's basic meta info from the context (title, meeting ID, time, duration). Then create a new Lark doc titled \"Meeting Summary: %s\" containing that summary, and give me the doc link."
+          (or (plist-get item :title)
+              (plist-get item :meeting-id)
+              "Untitled")))
+
 ;;;###autoload
 (defun lark-ai-workflow-meeting-summary (&optional days)
-  "Summarise meetings from the past DAYS days (default 7)."
+  "Summarise meetings from the past DAYS days (default 7).
+When invoked from a meeting detail buffer whose transcript has
+already been fetched, instead summarise that transcript together
+with the meeting's basic meta info and create a Lark doc holding
+the summary."
   (interactive "P")
-  (let ((n (or days 7)))
-    (lark-ai-ask (format "Summarise my meetings from the past %d days. For each meeting, include the title, time, and any meeting notes available." n))))
+  (let* ((ctx (lark-ai-context))
+         (item (plist-get ctx :item)))
+    (if (and (equal (plist-get ctx :buffer-type) "meeting-detail")
+             (plist-get item :has-transcript))
+        (lark-ai-ask (lark-ai--meeting-transcript-summary-prompt item))
+      (let ((n (or days 7)))
+        (lark-ai-ask (format "Summarise my meetings from the past %d days. For each meeting, include the title, time, and any meeting notes available." n))))))
 
 ;;;###autoload
 (defun lark-ai-workflow-schedule (description)

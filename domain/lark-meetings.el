@@ -243,6 +243,38 @@ week through tomorrow."
 ;;;; Meeting detail
 ;; CLI: vc meeting get --params '{"meeting_id":"X"}'
 
+(defvar-local lark-meetings--detail-meeting nil
+  "The meeting alist shown in this detail buffer.")
+
+(defvar-local lark-meetings--detail-transcripts nil
+  "Alist of (MINUTE-TOKEN . TRANSCRIPT-TEXT) fetched for this detail buffer.")
+
+(define-derived-mode lark-meetings-detail-mode special-mode
+  "Lark Meeting"
+  "Major mode for a single Lark meeting detail buffer.")
+
+(defun lark-meetings--detail-ai-context ()
+  "Return the AI context plist for a meeting detail buffer.
+Exposes the meeting's basic meta info in :summary and the full
+rendered buffer (meta, recording info, and any fetched transcripts)
+as :content so the LLM can use the transcript without re-fetching."
+  (let* ((meeting lark-meetings--detail-meeting)
+         (id (lark-meetings--meeting-id meeting))
+         (title (lark-meetings--meeting-title meeting))
+         (transcripts lark-meetings--detail-transcripts))
+    (list :domain "meetings"
+          :buffer-type "meeting-detail"
+          :item (list :meeting-id id
+                      :title title
+                      :has-transcript (and transcripts t))
+          :summary (format "Meeting detail: %s (ID: %s)%s"
+                           title id
+                           (if transcripts " — transcript fetched" ""))
+          :content (buffer-substring-no-properties (point-min) (point-max)))))
+
+(put 'lark-meetings-detail-mode 'lark-ai-context-provider
+     #'lark-meetings--detail-ai-context)
+
 (defun lark-meetings-open ()
   "Open the meeting at point — show full display info.
 Automatically queries for recordings and appends them if found,
@@ -257,6 +289,8 @@ then downloads and renders the transcript for each minute token."
            (link (lark-meetings--meeting-app-link meeting))
            (buf (get-buffer-create (format "*Lark Meeting: %s*" title))))
       (with-current-buffer buf
+        (lark-meetings-detail-mode)
+        (setq lark-meetings--detail-meeting meeting)
         (let ((inhibit-read-only t))
           (erase-buffer)
           (lark-ui-insert-title title)
@@ -267,7 +301,6 @@ then downloads and renders the transcript for each minute token."
             (insert "\n" (propertize "Full Info" 'face 'bold) "\n"
                     (lark-ui-separator 40) "\n"
                     info "\n")))
-        (special-mode)
         (goto-char (point-min)))
       (pop-to-buffer buf)
       ;; Async: check for recording and append if found
@@ -505,6 +538,10 @@ the temporary directory."
                              (insert-file-contents file)
                              (buffer-string))))
                  (with-current-buffer buf
+                   (setf (alist-get minute-token
+                                    lark-meetings--detail-transcripts
+                                    nil nil #'equal)
+                         text)
                    (let ((inhibit-read-only t))
                      (save-excursion
                        (goto-char (point-max))
