@@ -245,7 +245,8 @@ week through tomorrow."
 
 (defun lark-meetings-open ()
   "Open the meeting at point — show full display info.
-Automatically queries for recordings and appends them if found."
+Automatically queries for recordings and appends them if found,
+then downloads and renders the transcript for each minute token."
   (interactive)
   (let ((meeting (lark-meetings--meeting-at-point)))
     (unless meeting (user-error "No meeting at point"))
@@ -292,7 +293,10 @@ Automatically queries for recordings and appends them if found."
                          (when (> idx 0)
                            (insert "\n" (lark-ui-separator 40) "\n\n"))
                          (lark-meetings--insert-recording rec)
-                         (setq idx (1+ idx))))))))))
+                         (setq idx (1+ idx))))))
+                 ;; Async: fetch and append transcripts for each minute_token
+                 (dolist (tok (lark-meetings--minute-tokens items))
+                   (lark-meetings--fetch-transcript tok buf))))))
          nil :no-error t)))))
 
 ;;;; Meeting notes
@@ -464,6 +468,84 @@ Optional OUTPUT-DIR specifies where to save; prompts if interactive."
       (when (and mt (not (string-empty-p mt)))
         (insert "\n")
         (lark-meetings--insert-download-link mt)))))
+
+;;;; Transcript
+;; CLI: vc +notes --minute-tokens X --output-dir DIR
+;; Downloads artifact files (transcript.txt) into a temp directory,
+;; then renders the transcript into the meeting detail buffer.
+
+(defun lark-meetings--minute-tokens (recordings)
+  "Return the unique non-empty minute tokens from RECORDINGS."
+  (let (tokens)
+    (dolist (rec recordings)
+      (let ((mt (lark-meetings--format-value (alist-get 'minute_token rec))))
+        (when (and (not (string-empty-p mt)) (not (member mt tokens)))
+          (push mt tokens))))
+    (nreverse tokens)))
+
+(defun lark-meetings--fetch-transcript (minute-token buf)
+  "Download the transcript for MINUTE-TOKEN and append it to BUF.
+Runs `vc +notes --minute-tokens X --output-dir DIR' in a temporary
+directory (the CLI only accepts output paths relative to its CWD),
+reads the transcript file reported in the response, then deletes
+the temporary directory."
+  (let* ((tmp-dir (make-temp-file "lark-minutes-" t))
+         (default-directory tmp-dir))
+    (lark--run-command
+     (list "vc" "+notes"
+           "--minute-tokens" minute-token
+           "--output-dir" "./artifacts")
+     (lambda (data)
+       (unwind-protect
+           (let* ((note (car (lark--get-nested data 'data 'notes)))
+                  (rel (lark--get-nested note 'artifacts 'transcript_file))
+                  (file (and rel (expand-file-name rel tmp-dir))))
+             (when (and file (file-readable-p file) (buffer-live-p buf))
+               (let ((text (with-temp-buffer
+                             (insert-file-contents file)
+                             (buffer-string))))
+                 (with-current-buffer buf
+                   (let ((inhibit-read-only t))
+                     (save-excursion
+                       (goto-char (point-max))
+                       (insert "\n" (propertize "Transcript" 'face 'bold)
+                               (propertize (format "  (%s)" minute-token)
+                                           'face 'font-lock-comment-face)
+                               "\n" (lark-ui-separator 40) "\n\n")
+                       (lark-meetings--insert-transcript text)))))))
+         (delete-directory tmp-dir t)))
+     nil :no-error t
+     :on-error (lambda (_code _msg)
+                 (ignore-errors (delete-directory tmp-dir t))))))
+
+(defun lark-meetings--insert-transcript (text)
+  "Insert transcript TEXT with structured rendering.
+The transcript format is: a `DATE|DURATION' header line, an optional
+Keywords section, then `SPEAKER HH:MM:SS.mmm' blocks each followed
+by the spoken text."
+  (let ((first-line t))
+    (dolist (line (split-string text "\n"))
+      (cond
+       ;; Header: "2026-06-11 16:34:33 CST|34min 54s"
+       ((and first-line (string-match "\\`\\(.+\\)|\\(.+\\)\\'" line))
+        (lark-meetings--insert-field "Time" (match-string 1 line))
+        (lark-meetings--insert-field "Duration" (match-string 2 line)))
+       ;; Speaker line: "Speaker 1 00:00:01.670"
+       ((string-match "\\`\\(.+?\\) \\([0-9]+:[0-9][0-9]:[0-9][0-9]\\(?:\\.[0-9]+\\)?\\)[ \t]*\\'" line)
+        (insert (propertize (match-string 1 line) 'face 'font-lock-function-name-face)
+                "  "
+                (propertize (match-string 2 line) 'face 'font-lock-comment-face)
+                "\n"))
+       ;; "Keywords:" section label
+       ((string-match "\\`\\([A-Za-z ]+\\):[ \t]*\\'" line)
+        (insert (propertize (match-string 1 line) 'face 'bold) "\n"))
+       ;; Blank line
+       ((string-empty-p (string-trim line))
+        (insert "\n"))
+       ;; Spoken text / other content
+       (t
+        (insert "  " line "\n")))
+      (setq first-line nil))))
 
 ;;;###autoload
 (defun lark-meetings-recording (meeting-id)
