@@ -1419,7 +1419,10 @@ to draft a reply, and opens a compose buffer for editing before send."
 (defun lark-ai--meeting-transcript-summary-prompt (item)
   "Build the transcript-summarisation prompt for a meeting detail ITEM.
 ITEM is the :item plist from the meeting-detail AI context."
-  (format "Summarize this meeting's transcript (already provided in the context — do not fetch it) into structured meeting minutes: key topics discussed, decisions made, and action items with owners where identifiable. Start the summary with the meeting's basic meta info from the context (title, meeting ID, time, duration). Then create a new Lark doc titled \"Meeting Summary: %s\" containing that summary, and give me the doc link."
+  (format "Summarize this meeting's transcript (already provided in the context — do not fetch it) into structured meeting minutes: key topics discussed, decisions made, and action items with owners where identifiable. Start the summary with the meeting's basic meta info from the context (title, meeting ID, time, duration). Write the entire summary in the dominant language of the transcript — the language most of the spoken text is in (e.g. Chinese if the discussion is mostly Chinese), regardless of the language of this instruction. Then create a new Lark doc containing that summary, and give me the doc link. The doc title should also be in that language: \"Meeting Summary: %s\" or its equivalent (e.g. \"会议纪要：%s\" for Chinese)."
+          (or (plist-get item :title)
+              (plist-get item :meeting-id)
+              "Untitled")
           (or (plist-get item :title)
               (plist-get item :meeting-id)
               "Untitled")))
