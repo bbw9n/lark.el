@@ -21,6 +21,7 @@
 
 (require 'cl-lib)
 (require 'text-property-search) ; text-property-search-{forward,backward}
+(require 'lark-core)             ; lark--log
 (require 'lark-ui)               ; lark-ui-fontify-block + lark-ui-block-bg-face
 
 ;;;; Fragment data model
@@ -151,28 +152,35 @@ appears even in a `fundamental-mode'-derived chat buffer — and
 
 (defun lark-ai-ui-update-fragment (id &optional label body)
   "Replace the content of fragment ID.
-If LABEL is non-nil, update the label.  BODY replaces the body."
-  (lark-ai-ui--ensure-store)
-  (let ((region (lark-ai-ui-find-fragment id)))
-    (if region
-        (let ((inhibit-read-only t))
-          (when body
-            (puthash id body lark-ai-ui--content-store))
-          (delete-region (car region) (cdr region))
-          (goto-char (car region))
-          (lark-ai-ui-insert-fragment
-           id
-           (or (get-text-property (car region) 'lark-ai-ui-type)
-               'default)
-           label
-           (or body (gethash id lark-ai-ui--content-store ""))))
-      ;; Fragment doesn't exist yet — insert at end
-      (goto-char (point-max))
-      (when body
-        (puthash id (or body "") lark-ai-ui--content-store))
-      (lark-ai-ui-insert-fragment
-       id 'default label
-       (or body "")))))
+If LABEL is non-nil, update the label.  BODY replaces the body.
+Must be called with a `lark-ai-ui-mode' buffer current; in any
+other buffer this is a no-op — async callbacks can fire with an
+arbitrary buffer current, and the insert-at-end fallback must
+never write into a user's buffer."
+  (if (not (derived-mode-p 'lark-ai-ui-mode))
+      (lark--log "AI UI: dropped fragment %S update — current buffer %s is not an AI buffer"
+                 id (buffer-name))
+    (lark-ai-ui--ensure-store)
+    (let ((region (lark-ai-ui-find-fragment id)))
+      (if region
+          (let ((inhibit-read-only t))
+            (when body
+              (puthash id body lark-ai-ui--content-store))
+            (delete-region (car region) (cdr region))
+            (goto-char (car region))
+            (lark-ai-ui-insert-fragment
+             id
+             (or (get-text-property (car region) 'lark-ai-ui-type)
+                 'default)
+             label
+             (or body (gethash id lark-ai-ui--content-store ""))))
+        ;; Fragment doesn't exist yet — insert at end
+        (goto-char (point-max))
+        (when body
+          (puthash id (or body "") lark-ai-ui--content-store))
+        (lark-ai-ui-insert-fragment
+         id 'default label
+         (or body ""))))))
 
 (defun lark-ai-ui-update-label (id label)
   "Replace just the LABEL line of fragment ID, preserving the body.

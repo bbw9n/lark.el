@@ -892,9 +892,12 @@ it, and presents results."
          (lark-ai--debug-log
           "SKILLS" "prev=%S matched=%S → final=%S"
           prev-skills matched-skills skill-names)
-         (lark-ai-ui-update-fragment
-          (lark-ai--frag "skills")
-          (concat "Skills: " (string-join skill-names " · ")))
+         ;; The routing callback may fire with the triggering buffer
+         ;; current — fragment updates must target the AI buffer.
+         (with-current-buffer (lark-ai--get-buffer)
+           (lark-ai-ui-update-fragment
+            (lark-ai--frag "skills")
+            (concat "Skills: " (string-join skill-names " · "))))
          (lark-ai--run-planning prompt context history session skill-names))))))
 
 (defun lark-ai--select-skills (prompt context callback)
