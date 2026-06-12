@@ -70,7 +70,9 @@ loop makes one final LLM call to write the user-facing answer."
   "When non-nil, the agent loop prompts before each side-effecting command.
 The prompt shows the exact resolved command.  Recommended: the agent's
 command arguments are model-generated, so a human gate catches a bad
-write before it happens."
+write before it happens.  Commands matching
+`lark-ai-auto-execute-commands' (e.g. \"docs +create\") run without
+the prompt even when this is non-nil."
   :type 'boolean
   :group 'lark-ai)
 
@@ -315,6 +317,8 @@ collapsible record of each action."
                (concat "ERROR: this command writes content but the content"
                        " argument is empty. Provide the full content inline.")))
      ((and side-effect lark-ai-agent-confirm-writes
+           ;; Whitelisted writes (e.g. "docs +create") skip the prompt.
+           (not (lark-ai--command-auto-p cmd))
            (not (yes-or-no-p
                  (format "Agent: run lark-cli %s? "
                          (string-join

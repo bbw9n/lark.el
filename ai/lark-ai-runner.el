@@ -56,7 +56,9 @@
 Each entry is a space-separated command prefix matched against the
 leading tokens of a step's lark-cli command — e.g. \"docs +create\"
 matches the step `(\"docs\" \"+create\" \"--api-version\" \"v2\" …)'.
-Only consulted when `lark-ai-execute-mode' is `confirm-writes'."
+Consulted by the plan runner when `lark-ai-execute-mode' is
+`confirm-writes', and by the agent loop when
+`lark-ai-agent-confirm-writes' is non-nil."
   :type '(repeat string)
   :group 'lark-ai)
 

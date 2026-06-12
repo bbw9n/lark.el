@@ -378,12 +378,20 @@ rather than hung.  Set to 0 to disable the preview."
   "Return a bounded tail of TEXT for the loading preview.
 Roughly the last N lines; newline-poor streams (e.g. one-line JSON) are
 clipped to the last N*80 characters so the preview stays a few lines
-tall rather than one ever-growing line."
+tall rather than one ever-growing line.  The stream is usually a JSON
+action object, so common string escapes (\\n, \\t, \\\") are decoded
+first — display-only and best-effort — so streamed content shows real
+line breaks instead of literal backslash sequences."
   (when (and text (> n 0) (not (string-empty-p text)))
-    (let* ((maxchars (* n 80))
-           (clip (if (> (length text) maxchars)
-                     (concat "…" (substring text (- (length text) maxchars)))
-                   text))
+    (let* ((decoded (replace-regexp-in-string
+                     "\\\\[nt\"]"
+                     (lambda (m)
+                       (pcase m ("\\n" "\n") ("\\t" "\t") ("\\\"" "\"")))
+                     text t t))
+           (maxchars (* n 80))
+           (clip (if (> (length decoded) maxchars)
+                     (concat "…" (substring decoded (- (length decoded) maxchars)))
+                   decoded))
            (lines (seq-remove #'string-empty-p (split-string clip "\n"))))
       (string-join (last lines n) "\n"))))
 

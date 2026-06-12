@@ -84,11 +84,13 @@ Returns (BEG . END) or nil."
                   'lark-ai-ui-id id #'equal)))
       (when match
         (let ((beg (prop-match-beginning match)))
-          ;; Find end: next fragment or end of buffer
+          ;; Find end: next fragment or end of buffer.  The predicate
+          ;; receives (VALUE PROP-AT-POS) — match on the position's
+          ;; property, not the constant VALUE argument.
           (goto-char (prop-match-end match))
           (let ((next (text-property-search-forward
                        'lark-ai-ui-id nil
-                       (lambda (val _) (and val (not (equal val id)))))))
+                       (lambda (_ val) (and val (not (equal val id)))))))
             (cons beg (if next
                          (prop-match-beginning next)
                        (point-max)))))))))
@@ -117,8 +119,11 @@ header text, BODY is the content string."
                            'lark-ai-ui-id id)
         (put-text-property body-beg (point)
                            'lark-ai-ui-section 'body)))
-    ;; Spacing
-    (insert "\n")
+    ;; Spacing — carries the fragment id so even a label-less,
+    ;; empty-body fragment (e.g. the log placeholder) is findable by
+    ;; `lark-ai-ui-find-fragment' and terminates the previous
+    ;; fragment's region instead of being absorbed into it.
+    (insert (propertize "\n" 'lark-ai-ui-id id))
     ;; Mark entire fragment as read-only and attach the fragment
     ;; keymap (TAB → toggle).  Putting it as a text property here
     ;; keeps it off the buffer mode-map, so the input area at the
