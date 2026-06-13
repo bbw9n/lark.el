@@ -29,6 +29,15 @@
 ;; Prerequisites:
 ;;   - lark-cli installed and on PATH (https://github.com/larksuite/cli)
 ;;   - Emacs 28.1+ (for built-in transient)
+;;
+;; Dependencies:
+;;   - org-lark (https://github.com/bbw9n/org-lark) — provides Org
+;;     rendering and export of fetched documents.  It is declared in
+;;     Package-Requires, so a package-manager install of lark.el pulls
+;;     it in automatically.  It is also soft-required at runtime: if you
+;;     install lark.el from source without org-lark present, the Docs
+;;     domain still loads and works, rendering documents as markdown
+;;     until org-lark is available.
 
 ;;; Code:
 

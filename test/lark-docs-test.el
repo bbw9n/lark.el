@@ -126,14 +126,20 @@
 ;;;; org-lark integration
 
 (ert-deftest lark-docs-test-render-mode-org ()
-  "Org render mode returns t."
+  "Org render mode uses Org only when the optional org-lark is available."
   (let ((lark-docs-render-mode 'org))
-    (should (lark-docs--use-org-p))))
+    ;; org-lark present: render as Org.
+    (cl-letf (((symbol-function 'lark-docs--org-available-p) (lambda () t)))
+      (should (lark-docs--use-org-p)))
+    ;; org-lark absent: fall back to markdown even in org mode.
+    (cl-letf (((symbol-function 'lark-docs--org-available-p) (lambda () nil)))
+      (should-not (lark-docs--use-org-p)))))
 
 (ert-deftest lark-docs-test-render-mode-markdown ()
-  "Markdown render mode returns nil."
+  "Markdown render mode returns nil regardless of org-lark availability."
   (let ((lark-docs-render-mode 'markdown))
-    (should-not (lark-docs--use-org-p))))
+    (cl-letf (((symbol-function 'lark-docs--org-available-p) (lambda () t)))
+      (should-not (lark-docs--use-org-p)))))
 
 (ert-deftest lark-docs-test-toggle-render-mode ()
   "Toggle cycles between org and markdown."
@@ -171,13 +177,28 @@
       (kill-buffer buf))))
 
 (ert-deftest lark-docs-test-fetch-routes-to-org ()
-  "lark-docs-fetch delegates to fetch-as-org when render mode is org."
+  "lark-docs-fetch delegates to fetch-as-org when org mode and org-lark present."
   (let ((lark-docs-render-mode 'org)
         (called-with nil))
-    (cl-letf (((symbol-function 'lark-docs-fetch-as-org)
+    (cl-letf (((symbol-function 'lark-docs--org-available-p) (lambda () t))
+              ((symbol-function 'lark-docs-fetch-as-org)
                (lambda (doc) (setq called-with doc))))
       (lark-docs-fetch "my-doc-token")
       (should (equal called-with "my-doc-token")))))
+
+(ert-deftest lark-docs-test-fetch-falls-back-without-org-lark ()
+  "In org mode without org-lark, fetch takes the markdown route."
+  (let ((lark-docs-render-mode 'org)
+        (ran-command nil)
+        (routed-to-org nil))
+    (cl-letf (((symbol-function 'lark-docs--org-available-p) (lambda () nil))
+              ((symbol-function 'lark-docs-fetch-as-org)
+               (lambda (_doc) (setq routed-to-org t)))
+              ((symbol-function 'lark--run-command)
+               (lambda (&rest _) (setq ran-command t))))
+      (lark-docs-fetch "my-doc-token")
+      (should ran-command)
+      (should-not routed-to-org))))
 
 (ert-deftest lark-docs-test-fetch-routes-to-markdown ()
   "lark-docs-fetch uses lark--run-command when render mode is markdown."

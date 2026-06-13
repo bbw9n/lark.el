@@ -28,9 +28,23 @@
 
 (require 'lark-core)
 (require 'lark-ui)
-(require 'org-lark)
 (require 'json)
 (require 'transient)
+
+;; org-lark provides Lark Markdown → Org conversion
+;; (https://github.com/bbw9n/org-lark).  It is a declared dependency in
+;; lark.el's Package-Requires, so a package-manager install pulls it in
+;; automatically.  It is nonetheless soft-required here so that a
+;; from-source install without org-lark degrades gracefully — Org
+;; rendering falls back to plain markdown — instead of breaking the
+;; whole Docs domain on load.  The `declare-function'/`defvar' forms
+;; keep byte-compilation clean when org-lark is absent.
+(require 'org-lark nil t)
+(declare-function org-lark-fetch-async "org-lark" (doc callback))
+(declare-function org-lark-export-async "org-lark" (doc output-file callback))
+(declare-function org-lark--pipeline-async "org-lark" (markdown fetched doc state callback))
+(declare-function make-org-lark--state "org-lark")
+(defvar org-lark-cli-program)
 
 ;;;; Customization
 
@@ -55,9 +69,11 @@ avoid re-downloading images across sessions."
 
 (defcustom lark-docs-render-mode 'org
   "How to render fetched document content.
-`org' renders via org-lark (Lark tags, code blocks, tables converted).
+`org' renders via the optional org-lark package (Lark tags, code
+blocks, tables converted).  When org-lark is not installed, `org'
+transparently falls back to markdown.
 `markdown' displays raw markdown in markdown-mode or special-mode."
-  :type '(choice (const :tag "Org (via org-lark)" org)
+  :type '(choice (const :tag "Org (via org-lark, falls back to markdown)" org)
                  (const :tag "Markdown" markdown))
   :group 'lark-docs)
 
@@ -596,13 +612,21 @@ Optional OUTPUT is the local save path."
        (message "Lark: whiteboard updated")))))
 
 ;;;; org-lark integration
-;; org-lark is an external MELPA dependency that provides Lark
-;; Markdown → Org conversion (Lark tags, code blocks, tables, media
-;; download).
+;; org-lark is an optional dependency that provides Lark Markdown → Org
+;; conversion (Lark tags, code blocks, tables, media download).  When it
+;; is not installed, Org rendering transparently falls back to markdown.
+
+(defun lark-docs--org-available-p ()
+  "Return non-nil if the optional org-lark package is loaded."
+  (featurep 'org-lark))
 
 (defun lark-docs--use-org-p ()
-  "Return non-nil if documents should be rendered as Org."
-  (eq lark-docs-render-mode 'org))
+  "Return non-nil if documents should be rendered as Org.
+Requires both `lark-docs-render-mode' set to `org' and the optional
+org-lark package to be available; otherwise rendering falls back to
+markdown."
+  (and (eq lark-docs-render-mode 'org)
+       (lark-docs--org-available-p)))
 
 (defun lark-docs--safe-dirname (s)
   "Sanitize S for use as a directory name."
@@ -620,34 +644,42 @@ all happen in background processes so Emacs stays responsive."
   (interactive "sDocument URL or token: ")
   (when (string-empty-p doc)
     (user-error "Document URL or token is required"))
-  (lark-docs--sync-org-lark-config)
-  (message "Lark: fetching document as org...")
-  (org-lark-fetch-async
-   doc
-   (lambda (err fetched)
-     (cond
-      (err (message "Lark: fetch failed: %s" err))
-      (t
-       (let ((markdown (alist-get 'markdown fetched))
-             (title (or (alist-get 'title fetched) doc))
-             (doc-id (or (alist-get 'doc_id fetched) doc)))
-         (if (or (null markdown) (string-empty-p markdown))
-             (message "Lark: document has no content")
-           (let* ((cache-dir (expand-file-name
-                              (concat "lark-docs/" (lark-docs--safe-dirname doc-id))
-                              (or lark-docs-cache-directory
-                                  (expand-file-name "lark.el/" temporary-file-directory))))
-                  (st (make-org-lark--state
-                       :output-file (expand-file-name "doc.org" cache-dir)
-                       :asset-dir (expand-file-name "assets/" cache-dir))))
-             (message "Lark: converting to org...")
-             (org-lark--pipeline-async
-              markdown fetched doc st
-              (lambda (err2 org-content)
-                (cond
-                 (err2 (message "Lark: conversion failed: %s" err2))
-                 (t (lark-docs--display-org-buffer
-                     org-content title doc-id cache-dir)))))))))))))
+  (if (not (lark-docs--org-available-p))
+      ;; Called directly (or via `lark-docs-fetch') without org-lark
+      ;; installed — fall back to markdown rendering instead of erroring.
+      (progn
+        (message "Lark: org-lark not installed; rendering as markdown (see https://github.com/bbw9n/org-lark)")
+        (lark--run-command
+         (list "docs" "+fetch" "--doc" doc)
+         (lambda (data) (lark-docs--display-document-markdown-from-data data doc))))
+    (lark-docs--sync-org-lark-config)
+    (message "Lark: fetching document as org...")
+    (org-lark-fetch-async
+     doc
+     (lambda (err fetched)
+       (cond
+        (err (message "Lark: fetch failed: %s" err))
+        (t
+         (let ((markdown (alist-get 'markdown fetched))
+               (title (or (alist-get 'title fetched) doc))
+               (doc-id (or (alist-get 'doc_id fetched) doc)))
+           (if (or (null markdown) (string-empty-p markdown))
+               (message "Lark: document has no content")
+             (let* ((cache-dir (expand-file-name
+                                (concat "lark-docs/" (lark-docs--safe-dirname doc-id))
+                                (or lark-docs-cache-directory
+                                    (expand-file-name "lark.el/" temporary-file-directory))))
+                    (st (make-org-lark--state
+                         :output-file (expand-file-name "doc.org" cache-dir)
+                         :asset-dir (expand-file-name "assets/" cache-dir))))
+               (message "Lark: converting to org...")
+               (org-lark--pipeline-async
+                markdown fetched doc st
+                (lambda (err2 org-content)
+                  (cond
+                   (err2 (message "Lark: conversion failed: %s" err2))
+                   (t (lark-docs--display-org-buffer
+                       org-content title doc-id cache-dir))))))))))))))
 
 (defun lark-docs--display-org-buffer (org-content title token &optional base-dir)
   "Display ORG-CONTENT in an org-mode buffer named after TITLE.
@@ -678,6 +710,10 @@ conversion, and media download in background processes."
    (list (read-string "Document URL or token: "
                       (when lark-docs--doc-token lark-docs--doc-token))
          (read-file-name "Write Org file: " nil nil nil "lark-export.org")))
+  ;; Org export has no markdown fallback — it produces an .org file —
+  ;; so require org-lark and point the user at it if missing.
+  (unless (lark-docs--org-available-p)
+    (user-error "Org export requires the org-lark package: https://github.com/bbw9n/org-lark"))
   (lark-docs--sync-org-lark-config)
   (message "Lark: exporting document...")
   (org-lark-export-async
