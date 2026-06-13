@@ -151,19 +151,23 @@
 ;;;; Response extraction
 
 (defun lark-wiki--extract-spaces (data)
-  "Extract the space list from a `+space-list' response DATA."
-  (or (lark--get-nested data 'data 'items)
+  "Extract the space list from a `+space-list' response DATA.
+The CLI returns the list under `data.spaces' (both single-page and
+`--page-all' aggregated)."
+  (or (lark--get-nested data 'data 'spaces)
+      (alist-get 'spaces data)
+      ;; Defensive fallbacks for alternate shapes.
+      (lark--get-nested data 'data 'items)
       (alist-get 'items data)))
 
 (defun lark-wiki--extract-nodes (data)
-  "Extract the node list from a `+node-list' response DATA."
-  (or (lark--get-nested data 'data 'items)
+  "Extract the node list from a `+node-list' response DATA.
+The CLI returns the list under `data.nodes'."
+  (or (lark--get-nested data 'data 'nodes)
+      (alist-get 'nodes data)
+      ;; Defensive fallbacks for alternate shapes.
+      (lark--get-nested data 'data 'items)
       (alist-get 'items data)))
-
-(defun lark-wiki--extract-node (data)
-  "Extract a single node from a `+node-get'/`+node-create' response DATA."
-  (or (lark--get-nested data 'data 'node)
-      (alist-get 'node data)))
 
 ;;;; Spaces list mode
 
@@ -552,19 +556,18 @@ backing document viewer (see `lark-wiki-view-content')."
      #'lark-wiki--detail-ai-context)
 
 (defun lark-wiki-node-detail ()
-  "Fetch and show full details for the node at point."
+  "Show full details for the node at point.
+Renders the node alist already obtained from `+node-list', which
+carries every field the API exposes for a node.  (The `+node-get'
+shortcut is not used: its `--node-token' heuristic only recognises
+`wik'-prefixed tokens and misresolves the node tokens that
+`+node-list' returns.)"
   (interactive)
   (let ((node (lark-wiki--node-at-point)))
     (unless node (user-error "No node at point"))
     (when (equal (lark-wiki--obj-type node) "parent")
       (user-error "Not a content node"))
-    (let ((token (lark-wiki--node-token node)))
-      (message "Lark: fetching node details...")
-      (lark--run-command
-       (list "wiki" "+node-get" "--as" "user" "--node-token" token)
-       (lambda (data)
-         (lark-wiki--show-node-detail (or (lark-wiki--extract-node data) node)))
-       nil :no-error t))))
+    (lark-wiki--show-node-detail node)))
 
 (defun lark-wiki--detail-field (label value)
   "Insert LABEL: VALUE if VALUE is non-empty."
@@ -651,9 +654,13 @@ Created in the current buffer's space, under the current parent node."
         (user-error "Aborted"))
       (message "Lark: deleting wiki node...")
       (lark--run-command
+       ;; --obj-type wiki declares that --node-token is a wiki node
+       ;; token; the CLI requires it because these tokens are not
+       ;; `wik'-prefixed and would otherwise be read as obj_tokens.
        (list "wiki" "+node-delete" "--as" "user"
              "--node-token" token
              "--space-id" lark-wiki--space-id
+             "--obj-type" "wiki"
              "--yes")
        (lambda (_data)
          (message "Lark: node \"%s\" deleted" title)

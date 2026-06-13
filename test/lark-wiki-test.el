@@ -63,22 +63,24 @@
 ;;;; Response extraction
 
 (ert-deftest lark-wiki-test-extract-spaces ()
+  ;; Real CLI shape: data.spaces (single-page and --page-all).
   (should (equal (lark-wiki--extract-spaces
-                  '((data . ((items . (((space_id . "s1")) ((space_id . "s2"))))))))
+                  '((data . ((spaces . (((space_id . "s1")) ((space_id . "s2"))))))))
                  '(((space_id . "s1")) ((space_id . "s2")))))
-  ;; Top-level items fallback.
-  (should (equal (lark-wiki--extract-spaces '((items . (((space_id . "s3"))))))
+  ;; Defensive fallback to data.items.
+  (should (equal (lark-wiki--extract-spaces
+                  '((data . ((items . (((space_id . "s3"))))))))
                  '(((space_id . "s3"))))))
 
 (ert-deftest lark-wiki-test-extract-nodes ()
+  ;; Real CLI shape: data.nodes.
   (should (equal (lark-wiki--extract-nodes
-                  '((data . ((items . (((node_token . "n1"))))))))
-                 '(((node_token . "n1"))))))
-
-(ert-deftest lark-wiki-test-extract-node ()
-  (should (equal (lark-wiki--extract-node
-                  '((data . ((node . ((node_token . "n1") (title . "T")))))))
-                 '((node_token . "n1") (title . "T")))))
+                  '((data . ((nodes . (((node_token . "n1"))))))))
+                 '(((node_token . "n1")))))
+  ;; Defensive fallback to data.items.
+  (should (equal (lark-wiki--extract-nodes
+                  '((data . ((items . (((node_token . "n2"))))))))
+                 '(((node_token . "n2"))))))
 
 ;;;; Synthetic personal library
 
