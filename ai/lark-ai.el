@@ -1264,6 +1264,19 @@ Templates can use {domain}, {summary}, {id}, and {custom} prompt."
           ("Analyze sheet" .
            ,(format "Analyze the data in spreadsheet %s."
                     (or (plist-get item :token) "this")))))
+       ("wiki"
+        (append
+         (when (plist-get item :space-id)
+           `(("List nodes in this space" .
+              ,(format "List the wiki nodes in space %s."
+                       (plist-get item :space-id)))))
+         (when (plist-get item :node-token)
+           `(("Summarize this wiki node" .
+              ,(format "Summarize the wiki node %s."
+                       (plist-get item :node-token)))
+             ("Create a node here" .
+              ,(format "Create a new wiki node under %s. Ask me for the title."
+                       (plist-get item :node-token)))))))
        (_ nil))
      ;; Always available: free-form input
      '(("Other..." . nil))))

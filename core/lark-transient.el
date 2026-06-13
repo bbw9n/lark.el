@@ -25,6 +25,7 @@
 (autoload 'lark-sheets-dispatch "lark-sheets" nil t)
 (autoload 'lark-meetings-dispatch "lark-meetings" nil t)
 (autoload 'lark-whiteboard-dispatch "lark-whiteboard" nil t)
+(autoload 'lark-wiki-dispatch "lark-wiki" nil t)
 
 ;; Autoloads for AI layer
 (autoload 'lark-ai-ask "lark-ai" nil t)
@@ -109,7 +110,7 @@
 ;; lark-drive-dispatch is now provided by lark-drive.el
 (lark--define-stub-dispatch lark-base-dispatch "Base")
 ;; lark-sheets-dispatch is now provided by lark-sheets.el
-(lark--define-stub-dispatch lark-wiki-dispatch "Wiki")
+;; lark-wiki-dispatch is now provided by lark-wiki.el
 ;; lark-contacts-dispatch is now provided by lark-contact.el
 ;; lark-meetings-dispatch is now provided by lark-meetings.el
 
