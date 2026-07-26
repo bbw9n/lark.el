@@ -6,10 +6,13 @@
 
 ;;; Commentary:
 
-;; Backend dispatch for LLM calls.  Two backends are supported:
+;; Backend dispatch for LLM calls.  Three backends are supported:
 ;;
 ;;   `gptel' — uses the gptel package (multi-provider, streaming).
 ;;   `http'  — raw `url-retrieve' against an OpenAI-compatible endpoint.
+;;   `acp'   — a local ACP agent (Claude Code, Gemini CLI, …) via
+;;             acp.el, the way agent-shell drives them; no API key,
+;;             reuses the agent's own login.  See `lark-ai-acp.el'.
 ;;
 ;; Public entry points (used by lark-ai-runner / lark-ai):
 ;;
@@ -32,6 +35,7 @@
 
 (require 'lark-ai-protocol)
 (require 'lark-ai-skills)   ; `lark-ai-skills-abbreviate-for-log' for debug output
+(require 'lark-ai-acp)      ; `acp' backend (acp.el itself is soft-required there)
 (require 'lark-core)
 (require 'json)
 
@@ -64,8 +68,10 @@
 (defcustom lark-ai-backend 'gptel
   "LLM backend for AI features.
 `gptel' uses the gptel package (supports many providers).
-`http' uses `url-retrieve' against an OpenAI-compatible endpoint."
-  :type '(choice (const gptel) (const http))
+`http' uses `url-retrieve' against an OpenAI-compatible endpoint.
+`acp' drives a local Agent Client Protocol agent (Claude Code,
+Gemini CLI, …) via acp.el — no API key; see `lark-ai-acp-command'."
+  :type '(choice (const gptel) (const http) (const acp))
   :group 'lark-ai)
 
 (defcustom lark-ai-model nil
@@ -98,6 +104,7 @@ Call CALLBACK with the response text."
   (pcase lark-ai-backend
     ('gptel (lark-ai--call-gptel system-prompt user-message callback))
     ('http  (lark-ai--call-http system-prompt user-message callback))
+    ('acp   (lark-ai-acp-call system-prompt user-message callback))
     (_      (user-error "Unknown lark-ai-backend: %s" lark-ai-backend))))
 
 (defun lark-ai--call-gptel (system-prompt user-message callback)
@@ -174,6 +181,9 @@ non-streaming call (CHUNK-HANDLER is not invoked)."
     ('gptel
      (lark-ai--call-gptel-stream system-prompt user-message
                                  callback chunk-handler))
+    ('acp
+     (lark-ai--call-acp-stream system-prompt user-message
+                               callback chunk-handler))
     (_
      ;; Fallback: non-streaming
      (lark-ai--call-llm system-prompt user-message callback))))
@@ -235,6 +245,27 @@ find and cancel the in-flight stream."
                         "STREAM ERROR" "response=%S info=%S" response info)
                        (lark-ai--progress-log
                         "LLM stream error"))))))))
+
+(defun lark-ai--call-acp-stream (system-prompt user-message callback
+                                                &optional chunk-handler)
+  "Call the LLM via a local ACP agent with streaming.
+Same chunk-destination rules as `lark-ai--call-gptel-stream':
+without CHUNK-HANDLER, chunks append to the output fragment;
+with one, the handler receives each chunk instead."
+  (unless chunk-handler
+    (lark-ai--ensure-output-fragment))
+  (lark-ai--debug-log
+   "STREAM REQUEST (acp)" "--- system ---\n%s\n--- user ---\n%s"
+   (lark-ai-skills-abbreviate-for-log system-prompt) user-message)
+  (lark-ai-acp-call
+   system-prompt user-message callback
+   (lambda (chunk)
+     (when-let ((buf (get-buffer lark-ai--buf-name)))
+       (with-current-buffer buf
+         (if chunk-handler
+             (funcall chunk-handler chunk)
+           (lark-ai-ui-append-fragment
+            (lark-ai--frag "output") chunk)))))))
 
 (provide 'lark-ai-llm)
 ;;; lark-ai-llm.el ends here

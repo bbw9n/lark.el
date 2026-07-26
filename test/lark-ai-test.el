@@ -1052,5 +1052,117 @@ conversation history, and an editable input area follows."
     ;; Under the limit → unchanged.
     (should (equal "ab" (lark-ai-context--clip "ab" 'tail)))))
 
+;;;; ACP backend
+
+(ert-deftest lark-ai-test-acp-notification-chunk ()
+  "Chunk extraction picks out agent message chunks and nothing else."
+  ;; A real agent_message_chunk → (session-id . text).
+  (should (equal '("sess-1" . "Hello")
+                 (lark-ai-acp--notification-chunk
+                  '((method . "session/update")
+                    (params . ((sessionId . "sess-1")
+                               (update . ((sessionUpdate . "agent_message_chunk")
+                                          (content . ((type . "text")
+                                                      (text . "Hello")))))))))))
+  ;; Thought chunks and tool-call updates are ignored.
+  (should-not (lark-ai-acp--notification-chunk
+               '((method . "session/update")
+                 (params . ((sessionId . "sess-1")
+                            (update . ((sessionUpdate . "agent_thought_chunk")
+                                       (content . ((text . "hmm"))))))))))
+  (should-not (lark-ai-acp--notification-chunk
+               '((method . "session/update")
+                 (params . ((sessionId . "sess-1")
+                            (update . ((sessionUpdate . "tool_call"))))))))
+  ;; Other notification methods are ignored.
+  (should-not (lark-ai-acp--notification-chunk
+               '((method . "something/else") (params . ((x . 1))))))
+  ;; Missing text degrades to the empty string, not nil.
+  (should (equal '("sess-1" . "")
+                 (lark-ai-acp--notification-chunk
+                  '((method . "session/update")
+                    (params . ((sessionId . "sess-1")
+                               (update . ((sessionUpdate . "agent_message_chunk"))))))))))
+
+(ert-deftest lark-ai-test-acp-reject-option-id ()
+  "Permission auto-decline prefers reject_once, falls back to reject_always."
+  (let ((options [((optionId . "allow") (kind . "allow_once"))
+                  ((optionId . "reject") (kind . "reject_once"))
+                  ((optionId . "reject-forever") (kind . "reject_always"))]))
+    (should (equal "reject" (lark-ai-acp--reject-option-id options))))
+  (should (equal "reject-forever"
+                 (lark-ai-acp--reject-option-id
+                  [((optionId . "allow") (kind . "allow_once"))
+                   ((optionId . "reject-forever") (kind . "reject_always"))])))
+  (should-not (lark-ai-acp--reject-option-id
+               [((optionId . "allow") (kind . "allow_once"))]))
+  (should-not (lark-ai-acp--reject-option-id [])))
+
+(ert-deftest lark-ai-test-acp-prompt-text ()
+  "System prompt is prepended in a tagged block; empty system passes through."
+  (let ((combined (lark-ai-acp--prompt-text "Be terse." "List my docs")))
+    (should (string-match-p "<system-instructions>\nBe terse.\n</system-instructions>" combined))
+    (should (string-suffix-p "List my docs" combined)))
+  (should (equal "List my docs" (lark-ai-acp--prompt-text "" "List my docs")))
+  (should (equal "List my docs" (lark-ai-acp--prompt-text nil "List my docs"))))
+
+(ert-deftest lark-ai-test-acp-backend-dispatch ()
+  "`lark-ai-backend' `acp' routes both call seams to `lark-ai-acp-call'."
+  (let ((lark-ai-backend 'acp)
+        calls)
+    (cl-letf (((symbol-function 'lark-ai-acp-call)
+               (lambda (system user callback &optional on-chunk)
+                 (push (list system user on-chunk) calls)
+                 (funcall callback "acp says hi")))
+              ;; Streaming path touches the AI buffer's output fragment.
+              ((symbol-function 'lark-ai--ensure-output-fragment) #'ignore))
+      ;; Non-streaming.
+      (let (got)
+        (lark-ai--call-llm "SYS" "USER" (lambda (text) (setq got text)))
+        (should (equal "acp says hi" got))
+        (should (equal '("SYS" "USER" nil) (car calls))))
+      ;; Streaming with an explicit chunk handler: the acp path wraps it,
+      ;; so a non-nil handler is passed through to `lark-ai-acp-call'.
+      (let (got)
+        (lark-ai--call-llm-stream "SYS2" "USER2"
+                                  (lambda (text) (setq got text))
+                                  (lambda (_chunk) nil))
+        (should (equal "acp says hi" got))
+        (pcase-let ((`(,system ,user ,on-chunk) (car calls)))
+          (should (equal "SYS2" system))
+          (should (equal "USER2" user))
+          (should (functionp on-chunk)))))))
+
+(ert-deftest lark-ai-test-acp-finish-and-abort ()
+  "Accumulate → finish invokes the callback; abort drops it; cancel is silent."
+  (let ((lark-ai-acp--requests nil)
+        (chunks nil)
+        (final nil))
+    ;; Simulate a session/new success registering the request.
+    (push (cons "s1" (list :accumulated ""
+                           :on-chunk (lambda (c) (push c chunks))
+                           :callback (lambda (text) (setq final text))))
+          lark-ai-acp--requests)
+    ;; Two streamed chunks arrive.
+    (dolist (text '("Hello, " "world"))
+      (lark-ai-acp--on-notification
+       `((method . "session/update")
+         (params . ((sessionId . "s1")
+                    (update . ((sessionUpdate . "agent_message_chunk")
+                               (content . ((text . ,text))))))))))
+    (should (equal '("world" "Hello, ") chunks))
+    ;; end_turn → callback fires with the accumulated text.
+    (lark-ai-acp--finish "s1" "end_turn")
+    (should (equal "Hello, world" final))
+    (should-not lark-ai-acp--requests)
+    ;; A cancelled turn never calls back.
+    (setq final nil)
+    (push (cons "s2" (list :accumulated "partial"
+                           :callback (lambda (text) (setq final text))))
+          lark-ai-acp--requests)
+    (lark-ai-acp--finish "s2" "cancelled")
+    (should-not final)
+    (should-not lark-ai-acp--requests)))
+
 (provide 'lark-ai-test)
 ;;; lark-ai-test.el ends here

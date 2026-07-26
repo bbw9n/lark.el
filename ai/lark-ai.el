@@ -190,6 +190,7 @@ Self-stops once the session phase is no longer `loading' or `executing'
 ;;; Session lifecycle commands
 
 (declare-function gptel-abort "gptel" (&optional buf))
+(declare-function lark-ai-acp-abort "lark-ai-acp")
 
 ;;;###autoload
 (defun lark-ai-abort ()
@@ -199,6 +200,7 @@ reality.  Bound to \\[lark-ai-abort] in `lark-ai-plan-mode-map'."
   (interactive)
   (when (fboundp 'gptel-abort)
     (ignore-errors (gptel-abort (lark-ai--get-buffer))))
+  (ignore-errors (lark-ai-acp-abort))
   (lark-ai--stop-bar)
   (let ((session (lark-ai--session)))
     (setf (lark-ai-session-phase session) 'idle
@@ -224,6 +226,7 @@ Aborts any in-flight request and discards all session state
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (when (fboundp 'gptel-abort)
       (ignore-errors (gptel-abort buf)))
+    (ignore-errors (lark-ai-acp-abort))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer))

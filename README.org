@@ -455,7 +455,8 @@ require explicit confirmation before execution.
 
 ** Prerequisites
 
-- An LLM backend: [[https://github.com/karthink/gptel][gptel]] (recommended) or any OpenAI-compatible HTTP endpoint
+- An LLM backend: [[https://github.com/karthink/gptel][gptel]] (recommended), a local ACP agent such as Claude Code or
+  Gemini CLI via [[https://github.com/xenodium/acp.el][acp.el]], or any OpenAI-compatible HTTP endpoint
 - lark-cli skills installed in =~/.agent/skills/=:
 
 #+begin_src shell
@@ -474,6 +475,27 @@ npx skills add larksuite/cli -g -y
 
 (setq lark-ai-backend 'gptel)  ;; this is the default
 #+end_src
+
+*** With a local ACP agent (no API key)
+
+Drives a locally installed [[https://agentclientprotocol.com][Agent Client Protocol]] agent — the same
+mechanism [[https://github.com/xenodium/agent-shell][agent-shell]] uses — so the agent's own login is reused and no
+API key is needed.  Requires the [[https://github.com/xenodium/acp.el][acp.el]] package and an ACP agent binary.
+
+#+begin_src emacs-lisp
+;; Claude Code (npm install -g @zed-industries/claude-code-acp):
+(setq lark-ai-backend 'acp)  ;; default agent is claude-code-acp
+
+;; Or Gemini CLI:
+(setq lark-ai-backend 'acp
+      lark-ai-acp-command "gemini"
+      lark-ai-acp-command-params '("--experimental-acp"))
+#+end_src
+
+The agent process is started on first use and kept alive;
+=M-x lark-ai-acp-shutdown= kills it.  Each LLM call runs in a fresh
+ACP session, and the agent's own tools are disabled — it acts purely
+as the text engine behind lark's agent loop.
 
 *** With a raw HTTP endpoint
 
@@ -626,7 +648,7 @@ All options are under =M-x customize-group RET lark=.
 | =lark-im-message-limit=    | =50=           | Messages to fetch in chat history     |
 | =lark-mail-page-size=      | =20=           | Emails per page                       |
 | =lark-calendar-default-days= | =1=          | Days in agenda view                   |
-| =lark-ai-backend=          | =gptel=        | LLM backend (=gptel= or =http=)      |
+| =lark-ai-backend=          | =gptel=        | LLM backend (=gptel=, =acp=, or =http=) |
 | =lark-ai-model=            | =nil=          | Model ID (nil uses backend default)   |
 | =lark-ai-skills-directory= | =~/.agents/skills/= | Path to lark-cli SKILL.md files |
 | =lark-ai-skill-routing=    | =llm=          | Skill picker: =llm= (ask the model) or =keyword= |
@@ -636,6 +658,9 @@ All options are under =M-x customize-group RET lark=.
 | =lark-ai-auto-execute-commands= | =("docs +create" "docs +update")= | Write cmds that skip the confirm prompt |
 | =lark-ai-http-endpoint=    | =nil=          | URL for the =http= backend            |
 | =lark-ai-http-api-key=     | =nil=          | API key (or set =LARK_AI_API_KEY=)    |
+| =lark-ai-acp-command=      | ="claude-code-acp"= | ACP agent binary for the =acp= backend |
+| =lark-ai-acp-command-params= | =nil=        | Extra args for the ACP agent (e.g. =--experimental-acp=) |
+| =lark-ai-acp-cwd=          | ="~"=          | Working directory for ACP sessions   |
 
 * Troubleshooting
 
@@ -709,6 +734,8 @@ ai/
   lark-ai.el                    AI: prompt -> plan -> execute -> synthesize -> present
   lark-ai-skills.el             AI: skill registry, loader, system prompt assembly
   lark-ai-context.el            AI: buffer context extraction for all domain modes
+  lark-ai-llm.el                AI: LLM backend dispatch (gptel / acp / http)
+  lark-ai-acp.el                AI: ACP agent backend (Claude Code, Gemini CLI, ... via acp.el)
 
 test/
   lark-*-test.el                ERT tests for each module
