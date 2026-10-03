@@ -110,6 +110,12 @@ plain typing in the follow-up input area below isn't intercepted.")
   "Get or create the AI buffer."
   (let ((buf (get-buffer-create lark-ai--buf-name)))
     (with-current-buffer buf
+      ;; The buffer inherits `default-directory' from whichever buffer
+      ;; was current at creation — possibly a doc buffer pointing at a
+      ;; purged temp cache dir.  Backends spawn processes from this
+      ;; buffer (gptel's curl, the ACP agent), which errors in a dead
+      ;; directory, so sanitize it here.
+      (setq-local default-directory (lark--safe-default-directory))
       (unless (derived-mode-p 'lark-ai-plan-mode)
         (lark-ai-plan-mode)))
     buf))

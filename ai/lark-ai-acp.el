@@ -40,6 +40,7 @@
 (require 'map)
 (require 'seq)
 (require 'lark-ai-protocol)   ; `lark-ai--debug-log'
+(require 'lark-core)          ; `lark--safe-default-directory'
 
 ;; acp.el forward declarations — soft-required in
 ;; `lark-ai-acp--ensure-client'.
@@ -249,8 +250,15 @@ answering directly."
 Call CALLBACK with the full response text when the turn ends.
 When ON-CHUNK is non-nil, it also receives each streamed text
 chunk as it arrives.  Opens a fresh ACP session per call (see
-Commentary)."
-  (let ((client (lark-ai-acp--ensure-client)))
+Commentary).
+
+`default-directory' is rebound to a safe existing directory for
+the dynamic extent of the call: the first request spawns the
+agent process, and spawning from a buffer whose directory was
+purged (e.g. a doc buffer's temp cache dir) fails with
+\"Setting current directory: No such file or directory\"."
+  (let ((default-directory (lark--safe-default-directory))
+        (client (lark-ai-acp--ensure-client)))
     (lark-ai-acp--with-initialized
      client
      (lambda ()

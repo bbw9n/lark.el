@@ -92,6 +92,18 @@ lark-cli already defaults to json and not all subcommands support it."
             (when format (list "--format" format))
             (when dry-run (list "--dry-run")))))
 
+(defun lark--safe-default-directory ()
+  "Return `default-directory' if it still exists, else a safe fallback.
+Some lark buffers point `default-directory' at a temp cache dir
+\(e.g. a doc buffer's image dir under `temporary-file-directory')
+that the OS may purge.  Spawning a process from such a buffer
+fails with \"Setting current directory: No such file or
+directory\", so every spawn site binds `default-directory' to
+this value first."
+  (if (and default-directory (file-directory-p default-directory))
+      default-directory
+    (expand-file-name "~/")))
+
 ;;;; Logging
 
 (defun lark--log (format-string &rest args)
@@ -312,32 +324,33 @@ Returns the process object."
     (lark--log "Running: %s %s" exe (string-join full-args " "))
     (lark--cli-log "CLI REQUEST" "lark-cli %s" (string-join full-args " "))
     (setq proc
-          (make-process
-           :name proc-name
-           :command (cons exe full-args)
-           :connection-type 'pipe
-           :noquery t
-           :filter (lambda (proc output)
-                     (let ((existing (alist-get proc lark--process-output-alist)))
-                       (setf (alist-get proc lark--process-output-alist)
-                             (concat (or existing "") output))))
-           :sentinel (lambda (proc event)
-                       (unwind-protect
-                           (let ((output (alist-get proc lark--process-output-alist))
-                                 (exit-code (process-exit-status proc)))
-                             (when (timerp timer) (cancel-timer timer))
-                             (lark--log "Process %s exited (%s): %s"
-                                        (process-name proc) exit-code
-                                        (string-trim event))
-                             (lark--cli-log
-                              (if (and (integerp exit-code) (zerop exit-code))
-                                  "CLI RESPONSE" "CLI ERROR")
-                              "exit %s\n%s"
-                              exit-code
-                              (lark--cli-log-output output))
-                             (lark--dispatch-result
-                              exit-code output event no-error raw callback on-error))
-                         (setf (alist-get proc lark--process-output-alist nil t) nil)))))
+          (let ((default-directory (lark--safe-default-directory)))
+            (make-process
+             :name proc-name
+             :command (cons exe full-args)
+             :connection-type 'pipe
+             :noquery t
+             :filter (lambda (proc output)
+                       (let ((existing (alist-get proc lark--process-output-alist)))
+                         (setf (alist-get proc lark--process-output-alist)
+                               (concat (or existing "") output))))
+             :sentinel (lambda (proc event)
+                         (unwind-protect
+                             (let ((output (alist-get proc lark--process-output-alist))
+                                   (exit-code (process-exit-status proc)))
+                               (when (timerp timer) (cancel-timer timer))
+                               (lark--log "Process %s exited (%s): %s"
+                                          (process-name proc) exit-code
+                                          (string-trim event))
+                               (lark--cli-log
+                                (if (and (integerp exit-code) (zerop exit-code))
+                                    "CLI RESPONSE" "CLI ERROR")
+                                "exit %s\n%s"
+                                exit-code
+                                (lark--cli-log-output output))
+                               (lark--dispatch-result
+                                exit-code output event no-error raw callback on-error))
+                           (setf (alist-get proc lark--process-output-alist nil t) nil))))))
     (when (and timeout (numberp timeout) (> timeout 0))
       (setq timer
             (run-with-timer
@@ -376,7 +389,8 @@ KEYS are keyword arguments:
     (unwind-protect
         (progn
           (setq exit-code
-                (apply #'call-process exe nil output-buf nil full-args))
+                (let ((default-directory (lark--safe-default-directory)))
+                  (apply #'call-process exe nil output-buf nil full-args)))
           (setq output (with-current-buffer output-buf (buffer-string)))
           (lark--log "Sync exit %d: %s" exit-code (truncate-string-to-width output 200))
           (lark--cli-log

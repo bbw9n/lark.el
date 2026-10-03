@@ -435,5 +435,39 @@ unwinds the caller — `lark--run-command' never reaches `make-process'."
     (should (= (+ 8000 (length "\n…[truncated]")) (length out)))
     (should (string-suffix-p "\n…[truncated]" out))))
 
+;;;; Stale default-directory guard
+
+(ert-deftest lark-core-test-safe-default-directory ()
+  "Falls back to an existing dir when `default-directory' was purged."
+  ;; Existing directory passes through untouched.
+  (let ((default-directory temporary-file-directory))
+    (should (equal temporary-file-directory (lark--safe-default-directory))))
+  ;; Deleted directory falls back to something that exists.
+  (let* ((dir (make-temp-file "lark-core-test-dir" t))
+         (default-directory (file-name-as-directory dir)))
+    (delete-directory dir)
+    (let ((safe (lark--safe-default-directory)))
+      (should-not (equal default-directory safe))
+      (should (file-directory-p safe)))))
+
+(ert-deftest lark-core-test-run-command-from-dead-directory ()
+  "Spawning from a buffer whose directory was deleted must not error.
+Regression: a doc buffer's temp cache dir gets purged by the OS;
+`make-process' then fails with \"Setting current directory: No
+such file or directory\" unless the spawn site rebinds
+`default-directory'."
+  (let* ((dir (make-temp-file "lark-core-test-dir" t))
+         (default-directory (file-name-as-directory dir))
+         (done nil))
+    (delete-directory dir)
+    (cl-letf (((symbol-function 'lark--executable) (lambda () "true"))
+              ((symbol-function 'lark--ensure-auth-for) #'ignore))
+      (lark--run-command '("noop") (lambda (_result) (setq done t))
+                         nil :no-error t)
+      (let ((deadline (+ (float-time) 5)))
+        (while (and (not done) (< (float-time) deadline))
+          (accept-process-output nil 0.05))))
+    (should done)))
+
 (provide 'lark-core-test)
 ;;; lark-core-test.el ends here
