@@ -455,8 +455,9 @@ require explicit confirmation before execution.
 
 ** Prerequisites
 
-- An LLM backend: [[https://github.com/karthink/gptel][gptel]] (recommended), a local ACP agent such as Claude Code or
-  Gemini CLI via [[https://github.com/xenodium/acp.el][acp.el]], or any OpenAI-compatible HTTP endpoint
+- An LLM backend: a local ACP agent such as Claude Code or Gemini CLI via
+  [[https://github.com/xenodium/acp.el][acp.el]] (recommended, the default — no API key), [[https://github.com/karthink/gptel][gptel]], or any
+  OpenAI-compatible HTTP endpoint
 - lark-cli skills installed in =~/.agent/skills/=:
 
 #+begin_src shell
@@ -465,30 +466,23 @@ npx skills add larksuite/cli -g -y
 
 ** Setup
 
-*** With gptel (recommended)
+*** With a local ACP agent (default, no API key)
 
-#+begin_src emacs-lisp
-(use-package gptel
-  :config
-  ;; configure your preferred provider
-  (setq gptel-model 'claude-sonnet-4-20250514))
+The default backend drives a locally installed [[https://agentclientprotocol.com][Agent Client Protocol]]
+agent — the same mechanism [[https://github.com/xenodium/agent-shell][agent-shell]] uses — so the agent's own login
+is reused and no API key is needed.  Requires the [[https://github.com/xenodium/acp.el][acp.el]] package and an
+ACP agent binary:
 
-(setq lark-ai-backend 'gptel)  ;; this is the default
+#+begin_src shell
+npm install -g @zed-industries/claude-code-acp   # Claude Code adapter
 #+end_src
 
-*** With a local ACP agent (no API key)
-
-Drives a locally installed [[https://agentclientprotocol.com][Agent Client Protocol]] agent — the same
-mechanism [[https://github.com/xenodium/agent-shell][agent-shell]] uses — so the agent's own login is reused and no
-API key is needed.  Requires the [[https://github.com/xenodium/acp.el][acp.el]] package and an ACP agent binary.
-
 #+begin_src emacs-lisp
-;; Claude Code (npm install -g @zed-industries/claude-code-acp):
-(setq lark-ai-backend 'acp)  ;; default agent is claude-code-acp
+;; Nothing to configure: `lark-ai-backend' defaults to `acp' and the
+;; default agent is claude-code-acp.
 
-;; Or Gemini CLI:
-(setq lark-ai-backend 'acp
-      lark-ai-acp-command "gemini"
+;; To use Gemini CLI instead:
+(setq lark-ai-acp-command "gemini"
       lark-ai-acp-command-params '("--experimental-acp"))
 #+end_src
 
@@ -496,6 +490,17 @@ The agent process is started on first use and kept alive;
 =M-x lark-ai-acp-shutdown= kills it.  Each LLM call runs in a fresh
 ACP session, and the agent's own tools are disabled — it acts purely
 as the text engine behind lark's agent loop.
+
+*** With gptel
+
+#+begin_src emacs-lisp
+(use-package gptel
+  :config
+  ;; configure your preferred provider
+  (setq gptel-model 'claude-sonnet-4-20250514))
+
+(setq lark-ai-backend 'gptel)
+#+end_src
 
 *** With a raw HTTP endpoint
 
@@ -648,7 +653,7 @@ All options are under =M-x customize-group RET lark=.
 | =lark-im-message-limit=    | =50=           | Messages to fetch in chat history     |
 | =lark-mail-page-size=      | =20=           | Emails per page                       |
 | =lark-calendar-default-days= | =1=          | Days in agenda view                   |
-| =lark-ai-backend=          | =gptel=        | LLM backend (=gptel=, =acp=, or =http=) |
+| =lark-ai-backend=          | =acp=          | LLM backend (=acp=, =gptel=, or =http=) |
 | =lark-ai-model=            | =nil=          | Model ID (nil uses backend default)   |
 | =lark-ai-skills-directory= | =~/.agents/skills/= | Path to lark-cli SKILL.md files |
 | =lark-ai-skill-routing=    | =llm=          | Skill picker: =llm= (ask the model) or =keyword= |

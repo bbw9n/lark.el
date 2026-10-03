@@ -147,7 +147,7 @@ Expects an ISO 8601 string like \"2026-01-04T09:08:05Z\".
 Truncates to \"YYYY-MM-DD HH:MM\" for display."
   (let ((ts (alist-get 'create_time chat)))
     (if (and (stringp ts) (not (string-empty-p ts)))
-        (substring ts 0 (min 16 (length ts)))
+        (string-replace "T" " " (substring ts 0 (min 16 (length ts))))
       "")))
 
 (defun lark-im--insert-chat-field (label value)

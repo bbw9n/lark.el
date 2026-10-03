@@ -8,11 +8,12 @@
 
 ;; Backend dispatch for LLM calls.  Three backends are supported:
 ;;
-;;   `gptel' — uses the gptel package (multi-provider, streaming).
-;;   `http'  — raw `url-retrieve' against an OpenAI-compatible endpoint.
 ;;   `acp'   — a local ACP agent (Claude Code, Gemini CLI, …) via
 ;;             acp.el, the way agent-shell drives them; no API key,
-;;             reuses the agent's own login.  See `lark-ai-acp.el'.
+;;             reuses the agent's own login.  The default.  See
+;;             `lark-ai-acp.el'.
+;;   `gptel' — uses the gptel package (multi-provider, streaming).
+;;   `http'  — raw `url-retrieve' against an OpenAI-compatible endpoint.
 ;;
 ;; Public entry points (used by lark-ai-runner / lark-ai):
 ;;
@@ -65,13 +66,14 @@
 
 ;;;; Customization
 
-(defcustom lark-ai-backend 'gptel
+(defcustom lark-ai-backend 'acp
   "LLM backend for AI features.
+`acp' (the default) drives a local Agent Client Protocol agent
+\(Claude Code, Gemini CLI, …) via acp.el — no API key needed, the
+agent's own login is reused; see `lark-ai-acp-command'.
 `gptel' uses the gptel package (supports many providers).
-`http' uses `url-retrieve' against an OpenAI-compatible endpoint.
-`acp' drives a local Agent Client Protocol agent (Claude Code,
-Gemini CLI, …) via acp.el — no API key; see `lark-ai-acp-command'."
-  :type '(choice (const gptel) (const http) (const acp))
+`http' uses `url-retrieve' against an OpenAI-compatible endpoint."
+  :type '(choice (const acp) (const gptel) (const http))
   :group 'lark-ai)
 
 (defcustom lark-ai-model nil
@@ -112,7 +114,7 @@ Call CALLBACK with the response text."
 Runs `gptel-request' inside the AI buffer so `gptel-abort'
 against that buffer can find and cancel the in-flight request."
   (unless (require 'gptel nil t)
-    (user-error "gptel is not installed; install it or set `lark-ai-backend' to `http'"))
+    (user-error "gptel is not installed; install it or set `lark-ai-backend' to `acp'"))
   (with-current-buffer (lark-ai--get-buffer)
     (let ((gptel-log-level nil)
           (inhibit-message t))

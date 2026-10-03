@@ -111,7 +111,7 @@
       ;; Fields present
       (should (search-forward "group" nil t))
       (should (search-forward "Engineering chat" nil t))
-      (should (search-forward "2026-01-04T09:08" nil t))
+      (should (search-forward "2026-01-04 09:08" nil t))
       (should (search-forward "10" nil t))
       ;; Text property covers the section
       (goto-char (point-min))
