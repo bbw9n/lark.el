@@ -283,6 +283,19 @@ frequently viewed media survives).  nil disables pruning."
   :type '(choice (const :tag "Unlimited" nil) integer)
   :group 'lark-im)
 
+(defcustom lark-im-video-previews t
+  "When non-nil, show an inline first-frame thumbnail for video messages.
+Requires ffmpeg and a graphical display.  The video file is
+downloaded in the background into the media cache (so RET plays it
+instantly); non-video files keep the plain link.  Set to nil to
+avoid background downloads of potentially large files."
+  :type 'boolean
+  :group 'lark-im)
+
+(defconst lark-im--video-extensions
+  '("mp4" "mov" "m4v" "webm" "mkv" "avi" "flv")
+  "File extensions treated as video for inline thumbnails.")
+
 (defconst lark-im--image-marker-re "!\\[Image\\](\\(img_[A-Za-z0-9_-]+\\))"
   "Match an inline image marker; group 1 is the image file key.")
 
@@ -308,6 +321,45 @@ recently viewed media."
     (ignore-errors (set-file-times path))
     path))
 
+(defun lark-im--video-file-p (path)
+  "Return non-nil when PATH looks like a video file."
+  (member (downcase (or (file-name-extension path) ""))
+          lark-im--video-extensions))
+
+(defun lark-im--thumbnail-file (key)
+  "Return the thumbnail path for video KEY (may not exist yet).
+Thumbnails live in a subdirectory so `lark-im--media-cached''s
+KEY.* glob never mistakes a thumbnail for the video itself."
+  (expand-file-name (concat "thumbs/" key ".jpg")
+                    (lark-im--media-cache-dir)))
+
+(defun lark-im--thumbnail-cached (key)
+  "Return the cached thumbnail for video KEY, or nil."
+  (let ((thumb (lark-im--thumbnail-file key)))
+    (and (file-exists-p thumb) thumb)))
+
+(defun lark-im--make-video-thumb (video key callback)
+  "Extract VIDEO's first frame into KEY's cached thumbnail, async.
+Calls CALLBACK with the thumbnail path, or nil when ffmpeg fails."
+  (let ((thumb (lark-im--thumbnail-file key))
+        (default-directory (lark--safe-default-directory)))
+    (make-directory (file-name-directory thumb) t)
+    (make-process
+     :name (format "lark-im-thumb-%s" key)
+     :command (list "ffmpeg" "-y" "-loglevel" "error"
+                    "-i" video "-frames:v" "1" thumb)
+     :noquery t
+     :sentinel
+     (lambda (proc _event)
+       (when (memq (process-status proc) '(exit signal))
+         (funcall callback
+                  (and (file-exists-p thumb)
+                       (> (or (file-attribute-size
+                               (file-attributes thumb))
+                              0)
+                          0)
+                       thumb)))))))
+
 (defun lark-im--media-cache-prune ()
   "Delete least-recently-used cached media until under the size cap.
 No-op when `lark-im-media-cache-max-bytes' is nil or the cache fits."
@@ -332,8 +384,8 @@ No-op when `lark-im-media-cache-max-bytes' is nil or the cache fits."
   (interactive)
   (let ((dir (lark-im--media-cache-dir)))
     (when (yes-or-no-p (format "Delete all cached chat media in %s? " dir))
-      (dolist (f (directory-files dir t "^[^.]" t))
-        (ignore-errors (delete-file f)))
+      (delete-directory dir t)
+      (make-directory dir t)
       (message "Lark: media cache cleared"))))
 
 (defun lark-im--scan-media-markers (beg end)
@@ -375,25 +427,33 @@ download API needs it."
                'keymap lark-im--media-keymap
                'mouse-face 'highlight
                'help-echo (format "%s %s — RET/click to open" kind key)))
-        (when (eq kind 'file)
-          (put-text-property mbeg mend 'face 'link))
-        (when (and (eq kind 'image)
-                   lark-im-render-images
-                   (display-graphic-p))
-          (let ((cached (lark-im--media-cached key)))
-            (if cached
-                (lark-im--display-image mbeg mend key cached)
-              (lark-im--fetch-then-display msg-id key mbeg mend))))))))
+        (pcase kind
+          ('file
+           (put-text-property mbeg mend 'face 'link)
+           (when (and lark-im-video-previews
+                      lark-im-render-images
+                      (display-graphic-p)
+                      (executable-find "ffmpeg"))
+             (lark-im--preview-video msg-id key mbeg mend)))
+          ((and 'image (guard (and lark-im-render-images
+                                   (display-graphic-p))))
+           (let ((cached (lark-im--media-cached key)))
+             (if cached
+                 (lark-im--display-image mbeg mend key cached)
+               (lark-im--fetch-then-display msg-id key mbeg mend)))))))))
 
-(defun lark-im--display-image (beg end key path)
-  "Show the image at PATH over the marker text BEG..END for KEY."
+(defun lark-im--display-image (beg end key path &optional label)
+  "Show the image at PATH over the marker text BEG..END for KEY.
+LABEL names the underlying resource kind in the tooltip (default
+\"image\" — video thumbnails pass \"video\")."
   (let ((inhibit-read-only t))
     (add-text-properties
      beg end
      (list 'display (create-image path nil nil
                                    :max-width lark-im-image-max-size
                                    :max-height lark-im-image-max-size)
-           'help-echo (format "image %s — RET/click to open" key)))))
+           'help-echo (format "%s %s — RET/click to open"
+                              (or label "image") key)))))
 
 (defun lark-im--fetch-then-display (msg-id key beg end)
   "Download image KEY of MSG-ID, then display it over BEG..END.
@@ -414,6 +474,51 @@ buffer is detected via the `lark-media-key' property and skipped."
              (lark-im--display-image mb me key path))))
        (set-marker mb nil)
        (set-marker me nil)))))
+
+(defun lark-im--preview-video (msg-id key beg end)
+  "Asynchronously show a first-frame thumbnail for video KEY over BEG..END.
+Downloads the file into the cache when needed; files that turn out
+not to be videos keep the plain link.  Marker/property bookkeeping
+mirrors `lark-im--fetch-then-display'."
+  (if-let ((thumb (lark-im--thumbnail-cached key)))
+      (lark-im--display-image beg end key thumb "video")
+    (let ((mb (copy-marker beg))
+          (me (copy-marker end))
+          (buf (current-buffer)))
+      (lark-im--ensure-video-thumb
+       msg-id key
+       (lambda (path)
+         (when (and path (buffer-live-p buf))
+           (with-current-buffer buf
+             (when (and (marker-position mb) (marker-position me)
+                        (< mb me)
+                        (equal (get-text-property mb 'lark-media-key) key))
+               (lark-im--display-image mb me key path "video"))))
+         (set-marker mb nil)
+         (set-marker me nil))))))
+
+(defun lark-im--ensure-video-thumb (msg-id key callback)
+  "Produce a cached first-frame thumbnail for KEY of MSG-ID.
+Calls CALLBACK with the thumbnail path, or nil when the resource
+is not a video (or any step fails).  Downloads the video into the
+media cache first when it isn't there yet."
+  (if-let ((thumb (lark-im--thumbnail-cached key)))
+      (funcall callback thumb)
+    (let ((video (lark-im--media-cached key)))
+      (cond
+       ;; Cached and a video → just extract the frame.
+       ((and video (lark-im--video-file-p video))
+        (lark-im--make-video-thumb video key callback))
+       ;; Cached but not a video → nothing to preview.
+       (video (funcall callback nil))
+       ;; Not cached → download, then decide.
+       (t
+        (lark-im--download-resource
+         msg-id key "file"
+         (lambda (path)
+           (if (and path (lark-im--video-file-p path))
+               (lark-im--make-video-thumb path key callback)
+             (funcall callback nil)))))))))
 
 (defun lark-im--download-resource (msg-id key type callback)
   "Download resource KEY (image/file TYPE) of MSG-ID into the cache.

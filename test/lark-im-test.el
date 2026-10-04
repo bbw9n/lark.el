@@ -278,6 +278,68 @@ rendered thousands of pixels high."
         (should (equal 100 (plist-get (cddr seen) :max-height)))
         (should (get-text-property (point-min) 'display))))))
 
+(ert-deftest lark-im-test-video-file-p ()
+  "Video detection goes by extension, case-insensitively."
+  (should (lark-im--video-file-p "/x/clip.mp4"))
+  (should (lark-im--video-file-p "/x/clip.MOV"))
+  (should-not (lark-im--video-file-p "/x/report.pdf"))
+  (should-not (lark-im--video-file-p "/x/noext")))
+
+(ert-deftest lark-im-test-thumbnail-does-not-shadow-media-cache ()
+  "Thumbnails live apart so the KEY.* media glob never returns them."
+  (let ((lark-im-media-cache-directory
+         (make-temp-file "lark-im-thumb-test" t)))
+    (unwind-protect
+        (let ((thumb (lark-im--thumbnail-file "file_v3_k4u")))
+          (make-directory (file-name-directory thumb) t)
+          (with-temp-file thumb (insert "fake"))
+          (should (equal thumb (lark-im--thumbnail-cached "file_v3_k4u")))
+          ;; The video itself is still considered un-cached.
+          (should-not (lark-im--media-cached "file_v3_k4u")))
+      (delete-directory lark-im-media-cache-directory t))))
+
+(ert-deftest lark-im-test-video-preview-renders-thumbnail ()
+  "A video marker gets a thumbnail display; a non-video file stays a link."
+  (let ((lark-im-media-cache-directory
+         (make-temp-file "lark-im-vprev-test" t))
+        (created nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+                  ((symbol-function 'executable-find)
+                   (lambda (prog &rest _) (equal prog "ffmpeg")))
+                  ((symbol-function 'create-image)
+                   (lambda (path &rest _)
+                     (push path created) '(image :type jpeg)))
+                  ;; Download hands back a video for k5, a pdf for k6.
+                  ((symbol-function 'lark-im--download-resource)
+                   (lambda (_id key _type callback)
+                     (funcall callback
+                              (if (equal key "file_v3_k5u") "/x/k5.mp4" "/x/k6.pdf"))))
+                  ;; ffmpeg stub: write the thumbnail synchronously.
+                  ((symbol-function 'lark-im--make-video-thumb)
+                   (lambda (_video key callback)
+                     (let ((thumb (lark-im--thumbnail-file key)))
+                       (make-directory (file-name-directory thumb) t)
+                       (with-temp-file thumb (insert "fake"))
+                       (funcall callback thumb)))))
+          (with-temp-buffer
+            (lark-im--insert-message
+             '((message_id . "om_1") (msg_type . "post")
+               (create_time . "2026-10-04 10:00")
+               (sender . ((name . "alice")))
+               (content . "[Media: file_v3_k5u]\n[Media: file_v3_k6u]")))
+            ;; Video marker got the thumbnail display…
+            (goto-char (point-min))
+            (search-forward "file_v3_k5u]")
+            (should (get-text-property (match-beginning 0) 'display))
+            (should (cl-some (lambda (p) (string-match-p "thumbs/file_v3_k5u" p))
+                             created))
+            ;; …the pdf marker stayed a plain link.
+            (search-forward "file_v3_k6u]")
+            (should-not (get-text-property (match-beginning 0) 'display))
+            (should (eq 'link (get-text-property (match-beginning 0) 'face)))))
+      (delete-directory lark-im-media-cache-directory t))))
+
 (ert-deftest lark-im-test-media-cache-dir-persistent ()
   "Default media cache lives under XDG cache home, not the temp dir.
 Regression: a temp-dir cache is purged by the OS, forcing media to
