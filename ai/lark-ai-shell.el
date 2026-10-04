@@ -32,6 +32,7 @@
 
 ;; shell-maker forward declarations — soft-required in `lark-ai-shell'.
 (declare-function shell-maker-start "ext:shell-maker")
+(declare-function shell-maker-submit "ext:shell-maker")
 (declare-function shell-maker-interrupt "ext:shell-maker")
 (declare-function make-shell-maker-config "ext:shell-maker")
 
@@ -76,6 +77,18 @@ buffer and the turn sees that content."
       (unless lark-ai-shell--session
         (setq-local lark-ai-shell--session (make-lark-ai-session)))
       (local-set-key (kbd "C-c C-k") #'lark-ai-shell-abort))
+    buf))
+
+;;;###autoload
+(defun lark-ai-shell-ask (prompt)
+  "Open the Lark AI shell and submit PROMPT as a turn.
+Context is captured from the invoking buffer, exactly like
+`lark-ai-ask' — this is what `lark-ai-ask' routes to when
+`lark-ai-interface' is `shell'."
+  (interactive "sLark AI: ")
+  (let ((buf (lark-ai-shell)))
+    (with-current-buffer buf
+      (shell-maker-submit :input prompt))
     buf))
 
 ;;;; Turn execution

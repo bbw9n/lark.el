@@ -915,18 +915,27 @@ so they render chronologically with the newest at the bottom."
       p)))
 
 (defun lark-im--prepend-older (data)
-  "Insert older messages from DATA at the top of the current chat buffer."
+  "Insert older messages from DATA at the top of the current chat buffer.
+Runs from an async callback: the chat buffer may no longer be in
+the selected window, so all window-relative work (anchor point,
+`window-start', the final `recenter') goes through the window
+actually displaying the buffer — and is skipped entirely when the
+buffer isn't displayed."
   (lark-im--spinner-stop)
-  (let* ((raw (lark-im--extract-messages data))
+  (let* ((win (get-buffer-window (current-buffer) t))
+         (raw (lark-im--extract-messages data))
          (older (reverse raw))
          (has-more (lark-im--extract-has-more data))
          (page-token (lark-im--extract-page-token data))
-         (anchor (or (get-text-property (point) 'lark-message-id)
+         (anchor (or (and win
+                          (with-selected-window win
+                            (get-text-property (point) 'lark-message-id)))
                      (save-excursion
                        (goto-char (lark-im--header-end))
                        (get-text-property (point) 'lark-message-id))))
-         (window-line (and anchor
-                           (count-screen-lines (window-start) (point)))))
+         (window-line (and anchor win
+                           (with-selected-window win
+                             (count-screen-lines (window-start) (point))))))
     (setq lark-im--has-more has-more
           lark-im--page-token page-token
           lark-im--loading-older nil
@@ -953,8 +962,10 @@ so they render chronologically with the newest at the bottom."
                              (point-max))))))
         (when found
           (goto-char found)
-          (when window-line
-            (recenter window-line)))))
+          (when (and window-line (window-live-p win))
+            (with-selected-window win
+              (goto-char found)
+              (recenter window-line))))))
     (message "Lark: loaded %d older message(s)%s"
              (length older)
              (if has-more "" "; no more older messages"))))

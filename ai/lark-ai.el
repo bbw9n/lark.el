@@ -867,28 +867,59 @@ the front-end then owns history bookkeeping for its session."
     (lark-ai--scroll-to-output)))
 
 (defun lark-ai--scroll-to-output ()
-  "Scroll the AI buffer to the output fragment."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (let ((region (lark-ai-ui-find-fragment
-                     (lark-ai--frag "output"))))
-        (when region
-          (goto-char (car region))
-          (forward-line 2)
-          (recenter 0))))))
+  "Scroll the AI buffer's window to the output fragment.
+Runs from async callbacks, so the selected window may show some
+other buffer by the time we get here — `recenter' errors unless
+it operates on the window actually displaying the AI buffer.
+No-op when the buffer isn't displayed anywhere."
+  (when-let* ((buf (get-buffer lark-ai--buf-name))
+              (win (get-buffer-window buf t)))
+    (with-selected-window win
+      (when-let ((region (lark-ai-ui-find-fragment
+                          (lark-ai--frag "output"))))
+        (goto-char (car region))
+        (forward-line 2)
+        (recenter 0)))))
 
 ;;;; Entry points
 ;;
 ;; `lark-ai-history-truncate-chars' and `lark-ai--build-user-message'
 ;; live in `lark-ai-protocol.el'.
 
+(defcustom lark-ai-interface 'shell
+  "Which UI hosts the AI session for `lark-ai-ask' (and `lark-ai-act').
+- `shell'   — the comint-style shell built on shell-maker
+              \(`lark-ai-shell'); falls back to `classic'
+              automatically when shell-maker isn't installed.
+- `classic' — the fragment-based *Lark AI* buffer."
+  :type '(choice (const :tag "shell-maker shell" shell)
+                 (const :tag "Classic fragment buffer" classic))
+  :group 'lark-ai)
+
+(defun lark-ai--use-shell-p ()
+  "Return non-nil when turns should run in the shell-maker UI."
+  (and (eq lark-ai-interface 'shell)
+       (require 'shell-maker nil t)))
+
+(declare-function lark-ai-shell-ask "lark-ai-shell" (prompt))
+
 ;;;###autoload
 (defun lark-ai-ask (prompt)
   "Ask the Lark AI assistant to execute a natural-language PROMPT.
 Identifies relevant lark-cli skills (via the LLM by default — see
-`lark-ai-skill-routing'), sends to LLM, reviews the plan, executes
-it, and presents results."
+`lark-ai-skill-routing'), runs the agent loop, and presents results
+in the UI selected by `lark-ai-interface'."
   (interactive "sLark AI: ")
+  ;; Follow-ups typed inside the classic buffer stay classic, so an
+  ;; in-flight classic conversation never jumps UIs mid-stream.
+  (if (and (lark-ai--use-shell-p)
+           (not (eq (current-buffer) (get-buffer lark-ai--buf-name))))
+      (progn (require 'lark-ai-shell)
+             (lark-ai-shell-ask prompt))
+    (lark-ai--ask-classic prompt)))
+
+(defun lark-ai--ask-classic (prompt)
+  "Run PROMPT through the classic fragment-based *Lark AI* buffer."
   (let* ((ai-buf (lark-ai--get-buffer))
          (in-ai-buf (eq (current-buffer) ai-buf))
          (session (lark-ai--session))

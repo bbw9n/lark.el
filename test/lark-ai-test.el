@@ -1052,6 +1052,17 @@ conversation history, and an editable input area follows."
     ;; Under the limit → unchanged.
     (should (equal "ab" (lark-ai-context--clip "ab" 'tail)))))
 
+(ert-deftest lark-ai-test-scroll-to-output-undisplayed ()
+  "Scrolling to output is a no-op when the AI buffer is not displayed.
+Regression: `recenter' errored from async callbacks after the user
+switched windows."
+  (when (get-buffer "*Lark AI*") (kill-buffer "*Lark AI*"))
+  (with-current-buffer (get-buffer-create "*Lark AI*")
+    (insert "placeholder"))
+  (unwind-protect
+      (should-not (lark-ai--scroll-to-output))
+    (kill-buffer "*Lark AI*")))
+
 ;;;; Front-end dispatch (shell-maker session)
 
 (ert-deftest lark-ai-test-frontend-dispatch ()
@@ -1076,6 +1087,34 @@ conversation history, and an editable input area follows."
     (should (equal '("hi" . nil) presented))
     ;; Everything was routed — the classic buffer was never created.
     (should-not (get-buffer "*Lark AI*"))))
+
+(ert-deftest lark-ai-test-ask-routes-by-interface ()
+  "`lark-ai-ask' routes to the shell UI unless classic is chosen
+or the prompt comes from inside the classic buffer."
+  (require 'lark-ai-shell)  ; pre-load so the dispatch's require
+                            ; cannot overwrite the stubs below
+  (let (shell-asked classic-asked)
+    (cl-letf (((symbol-function 'lark-ai--use-shell-p) (lambda () t))
+              ((symbol-function 'lark-ai-shell-ask)
+               (lambda (p) (setq shell-asked p)))
+              ((symbol-function 'lark-ai--ask-classic)
+               (lambda (p) (setq classic-asked p))))
+      ;; Shell interface → shell.
+      (lark-ai-ask "to shell")
+      (should (equal "to shell" shell-asked))
+      (should-not classic-asked)
+      ;; From inside the classic buffer → stays classic.
+      (with-current-buffer (get-buffer-create "*Lark AI*")
+        (lark-ai-ask "follow-up"))
+      (should (equal "follow-up" classic-asked))
+      (kill-buffer "*Lark AI*"))
+    ;; Classic interface → classic.
+    (setq classic-asked nil)
+    (cl-letf (((symbol-function 'lark-ai--use-shell-p) (lambda () nil))
+              ((symbol-function 'lark-ai--ask-classic)
+               (lambda (p) (setq classic-asked p))))
+      (lark-ai-ask "to classic")
+      (should (equal "to classic" classic-asked)))))
 
 (ert-deftest lark-ai-test-shell-execute-flow ()
   "The shell executor drives the engine and owns its own session state."

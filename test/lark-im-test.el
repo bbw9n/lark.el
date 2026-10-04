@@ -455,5 +455,30 @@ re-download every session."
           (should (file-exists-p new)))
       (delete-directory lark-im-media-cache-directory t))))
 
+(ert-deftest lark-im-test-prepend-older-undisplayed-buffer ()
+  "Prepending older messages into an undisplayed buffer must not error.
+Regression: the async callback called `recenter'/`window-start'
+against the selected window, which showed a different buffer —
+\"`recenter'ing a window that does not display current-buffer\"."
+  (with-temp-buffer
+    (setq-local lark-im--chat-id "oc_1"
+                lark-im--chat-name "Demo"
+                lark-im--messages nil)
+    (lark-im--insert-message
+     '((message_id . "m1") (msg_type . "text")
+       (create_time . "2026-10-04 10:00")
+       (sender . ((name . "alice"))) (content . "newest")))
+    (goto-char (point-min))
+    ;; The temp buffer is NOT displayed in any window.
+    (lark-im--prepend-older
+     '((data . ((has_more . :false) (page_token . "")
+                (messages . (((message_id . "m0") (msg_type . "text")
+                              (create_time . "2026-10-04 09:00")
+                              (sender . ((name . "bob")))
+                              (content . "older"))))))))
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (should (string-match-p "older" text))
+      (should (string-match-p "newest" text)))))
+
 (provide 'lark-im-test)
 ;;; lark-im-test.el ends here
