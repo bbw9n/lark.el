@@ -30,13 +30,13 @@ https://github.com/user-attachments/assets/9c41c535-d00b-4c24-8ed3-70f352c40641
 Group search and message history with inline image and video
 thumbnails.
 
-https://github.com/user-attachments/assets/8f10ed7b-fc68-4422-b887-a081e63cdfd1
+https://github.com/user-attachments/assets/cd826d19-cce6-43fa-b6d7-b1bcb29ef514
 
 ** Mail
 
 mu4e-style inbox and the magit-commit-style compose/reply panel.
 
-https://github.com/user-attachments/assets/bceb4362-574e-4a52-bc88-4e2ad53a0973
+https://github.com/user-attachments/assets/d257362f-52ad-494a-9fa3-103f99d7f8ea
 
 ** Meetings
 
