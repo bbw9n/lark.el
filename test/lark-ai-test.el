@@ -1052,6 +1052,48 @@ conversation history, and an editable input area follows."
     ;; Under the limit → unchanged.
     (should (equal "ab" (lark-ai-context--clip "ab" 'tail)))))
 
+;;;; Skill routing context clipping
+
+(ert-deftest lark-ai-test-routing-context-clip ()
+  "Routing context keeps the head and marks the cut; nil limit passes through."
+  (let ((lark-ai-skill-routing-context-chars 10))
+    (should (equal "short" (lark-ai-skills-routing-context "short")))
+    (should (equal (concat (make-string 10 ?x) "…")
+                   (lark-ai-skills-routing-context (make-string 50 ?x))))
+    (should-not (lark-ai-skills-routing-context nil)))
+  (let ((lark-ai-skill-routing-context-chars nil))
+    (should (equal (make-string 50 ?x)
+                   (lark-ai-skills-routing-context (make-string 50 ?x))))))
+
+(ert-deftest lark-ai-test-routing-context-limits-keyword-overmatch ()
+  "A long document body no longer drags unrelated domain skills into routing.
+Regression: asking from a doc buffer put the whole document into the
+match text; body words like \"email\" or \"wiki\" fired nearly every
+keyword rule."
+  (let* ((lark-ai-skills--index
+          '(("lark-shared" . (:description "shared" :dir "/tmp"))
+            ("lark-doc" . (:description "docs" :dir "/tmp"))
+            ("lark-drive" . (:description "drive" :dir "/tmp"))
+            ("lark-mail" . (:description "mail" :dir "/tmp"))
+            ("lark-wiki" . (:description "wiki" :dir "/tmp"))))
+         (head "Current context: docs (doc-detail)\nViewing document GL123")
+         (body "This proposal covers email notifications, a wiki knowledge base, and task datasets.")
+         (context (concat head "\n" (make-string 700 ?-) "\n" body))
+         (lark-ai-skill-routing-context-chars 600)
+         (clipped (lark-ai-skills-routing-context context)))
+    ;; The body lies beyond the clip…
+    (should-not (string-match-p "email" clipped))
+    ;; …so the clipped text routes narrowly, while the raw text
+    ;; would have matched mail and wiki from body noise.
+    (let ((narrow (lark-ai-skills-select "Summarize what envhub is" clipped))
+          (broad (lark-ai-skills-select "Summarize what envhub is" context)))
+      (should (member "lark-mail" broad))
+      (should (member "lark-wiki" broad))
+      (should-not (member "lark-mail" narrow))
+      (should-not (member "lark-wiki" narrow))
+      ;; The doc context itself still routes to the doc skill.
+      (should (member "lark-doc" narrow)))))
+
 ;;;; ACP backend
 
 (ert-deftest lark-ai-test-acp-notification-chunk ()
@@ -1097,6 +1139,15 @@ conversation history, and an editable input area follows."
   (should-not (lark-ai-acp--reject-option-id
                [((optionId . "allow") (kind . "allow_once"))]))
   (should-not (lark-ai-acp--reject-option-id [])))
+
+(ert-deftest lark-ai-test-acp-system-prompt-placement ()
+  "`session' placement routes the system prompt to the session meta."
+  (let ((lark-ai-acp-system-prompt-placement 'session))
+    (should (equal "SYS" (lark-ai-acp--session-system-prompt "SYS")))
+    (should-not (lark-ai-acp--session-system-prompt ""))
+    (should-not (lark-ai-acp--session-system-prompt nil)))
+  (let ((lark-ai-acp-system-prompt-placement 'inline))
+    (should-not (lark-ai-acp--session-system-prompt "SYS"))))
 
 (ert-deftest lark-ai-test-acp-prompt-text ()
   "System prompt is prepended in a tagged block; empty system passes through."

@@ -883,9 +883,14 @@ it, and presents results."
                        " "
                        (or (plist-get s :description) "")))
              plan "\n")))
+         ;; Routing sees only the head of the context (header lines:
+         ;; buffer type, doc title) — a full document body here makes
+         ;; the keyword fallback over-match and bloats the LLM router
+         ;; call.  The planning/agent calls still get the full context.
          (match-text (mapconcat #'identity
                                 (delq nil (list (and (not (string-empty-p context))
-                                                     context)
+                                                     (lark-ai-skills-routing-context
+                                                      context))
                                                 last-plan-text))
                                 "\n")))
     ;; Persist originating context now (fresh ask only) so a follow-up

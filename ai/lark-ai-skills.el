@@ -44,6 +44,30 @@ Each skill lives in a subdirectory (e.g., lark-calendar/SKILL.md)."
                  (const :tag "Keyword routing" keyword))
   :group 'lark-ai)
 
+(defcustom lark-ai-skill-routing-context-chars 600
+  "Max characters of buffer context used for skill ROUTING.
+Routing (LLM router and keyword fallback alike) only needs the
+request plus a hint of where it came from — the context header
+lines (buffer type, document title).  Feeding the full context in
+bloats the router call and makes keyword routing over-match: a
+long document body incidentally mentioning tasks, docs, meetings,
+or wikis pulls in every matching domain skill.  The head is kept
+because `lark-ai-context-format' puts the discriminative lines
+first.  Only routing is clipped — the planning/agent calls still
+receive the full context.  nil disables clipping."
+  :type '(choice (const :tag "No limit" nil) integer)
+  :group 'lark-ai)
+
+(defun lark-ai-skills-routing-context (context)
+  "Return CONTEXT clipped to `lark-ai-skill-routing-context-chars'.
+Keeps the head (see the defcustom); marks a cut with a trailing
+ellipsis.  Returns CONTEXT unchanged when under the limit, the
+limit is nil, or CONTEXT is nil/empty."
+  (let ((max lark-ai-skill-routing-context-chars))
+    (if (or (null max) (null context) (<= (length context) max))
+        context
+      (concat (substring context 0 max) "…"))))
+
 (defcustom lark-ai-skills-log-lines 10
   "How many leading lines of each skill to show in the *Lark AI Debug* log.
 Display-only: the FULL skill body is always sent to the LLM; this just

@@ -21,9 +21,14 @@
 ;; session would duplicate context on the agent side.
 ;;
 ;; The agent's own agentic abilities are suppressed: file-system
-;; capabilities are not advertised at initialize time and any
-;; session/request_permission is auto-declined, so the agent answers
-;; in text rather than running its own tools.  (A future strategy
+;; capabilities are not advertised at initialize time, any
+;; session/request_permission is auto-declined, and (under the
+;; default `session' placement, see
+;; `lark-ai-acp-system-prompt-placement') lark's system prompt
+;; replaces the agent's own via the session/new `_meta'
+;; `systemPrompt' extension, so the agent answers in text rather
+;; than running its own tools or falling back to its assistant
+;; persona.  (A future strategy
 ;; that delegates the whole loop to the agent — mapping ACP tool
 ;; calls onto lark's tool-call cards and permission requests onto the
 ;; confirm-writes gate — can reuse this client plumbing.)
@@ -88,6 +93,21 @@ Any Agent Client Protocol agent works, e.g.:
   :type 'directory
   :group 'lark-ai)
 
+(defcustom lark-ai-acp-system-prompt-placement 'session
+  "Where each call's system prompt goes.
+`session' (the default) sends it in the session/new request's
+`_meta' `systemPrompt' extension, REPLACING the agent's own system
+prompt — honored by claude-code-acp, and the reliable way to make
+the agent follow lark's one-JSON-action-per-turn contract instead
+of its own assistant persona (which otherwise sometimes answers in
+prose and wastes a correction round-trip).
+`inline' prepends it to the prompt text in a <system-instructions>
+block — weaker, since to the agent it is just user content, but it
+works with agents that ignore the `_meta' extension (e.g. Gemini
+CLI); set this when `lark-ai-acp-command' is not claude-code-acp."
+  :type '(choice (const session) (const inline))
+  :group 'lark-ai)
+
 ;;;; State
 
 (defvar lark-ai-acp--client nil
@@ -126,10 +146,22 @@ prefers `reject_once' over `reject_always'."
     (or (funcall by-kind "reject_once")
         (funcall by-kind "reject_always"))))
 
+(defun lark-ai-acp--session-system-prompt (system-prompt)
+  "Return SYSTEM-PROMPT when it should ride the session/new meta, else nil.
+Non-nil only under the `session' placement (see
+`lark-ai-acp-system-prompt-placement') and when SYSTEM-PROMPT has
+content; otherwise the inline path handles it."
+  (and (eq lark-ai-acp-system-prompt-placement 'session)
+       system-prompt
+       (not (string-empty-p system-prompt))
+       system-prompt))
+
 (defun lark-ai-acp--prompt-text (system-prompt user-message)
   "Combine SYSTEM-PROMPT and USER-MESSAGE into one prompt string.
-ACP prompts have no system-message slot, so the system prompt is
-prepended in a tagged block the agent treats as instructions."
+Used by the `inline' placement (and when SYSTEM-PROMPT is nil
+because it already went out on the session): ACP prompts have no
+system-message slot, so the system prompt is prepended in a tagged
+block the agent treats as instructions."
   (if (and system-prompt (not (string-empty-p system-prompt)))
       (concat "<system-instructions>\n" system-prompt
               "\n</system-instructions>\n\n" user-message)
@@ -257,14 +289,23 @@ the dynamic extent of the call: the first request spawns the
 agent process, and spawning from a buffer whose directory was
 purged (e.g. a doc buffer's temp cache dir) fails with
 \"Setting current directory: No such file or directory\"."
-  (let ((default-directory (lark--safe-default-directory))
-        (client (lark-ai-acp--ensure-client)))
+  (let* ((default-directory (lark--safe-default-directory))
+         (client (lark-ai-acp--ensure-client))
+         ;; Under the `session' placement the system prompt rides the
+         ;; session/new meta and the prompt text carries only the user
+         ;; message; under `inline' it is nil here and prepended to the
+         ;; prompt text instead.
+         (session-sys (lark-ai-acp--session-system-prompt system-prompt))
+         (inline-sys (unless session-sys system-prompt)))
     (lark-ai-acp--with-initialized
      client
      (lambda ()
        (acp-send-request
         :client client
-        :request (acp-make-session-new-request :cwd lark-ai-acp-cwd)
+        :request (acp-make-session-new-request
+                  :cwd lark-ai-acp-cwd
+                  :meta (when session-sys
+                          `((systemPrompt . ,session-sys))))
         :on-success
         (lambda (response)
           (let ((session-id (map-elt response 'sessionId)))
@@ -272,7 +313,7 @@ purged (e.g. a doc buffer's temp cache dir) fails with
                                          :on-chunk on-chunk
                                          :callback callback))
                   lark-ai-acp--requests)
-            (lark-ai-acp--prompt client session-id system-prompt user-message)))
+            (lark-ai-acp--prompt client session-id inline-sys user-message)))
         :on-failure #'lark-ai-acp--report-failure)))))
 
 (defun lark-ai-acp--prompt (client session-id system-prompt user-message)

@@ -483,7 +483,10 @@ npm install -g @zed-industries/claude-code-acp   # Claude Code adapter
 
 ;; To use Gemini CLI instead:
 (setq lark-ai-acp-command "gemini"
-      lark-ai-acp-command-params '("--experimental-acp"))
+      lark-ai-acp-command-params '("--experimental-acp")
+      ;; Gemini ignores the session _meta systemPrompt extension, so
+      ;; send lark's system prompt inline with the user message:
+      lark-ai-acp-system-prompt-placement 'inline)
 #+end_src
 
 The agent process is started on first use and kept alive;
@@ -666,6 +669,7 @@ All options are under =M-x customize-group RET lark=.
 | =lark-ai-acp-command=      | ="claude-code-acp"= | ACP agent binary for the =acp= backend |
 | =lark-ai-acp-command-params= | =nil=        | Extra args for the ACP agent (e.g. =--experimental-acp=) |
 | =lark-ai-acp-cwd=          | ="~"=          | Working directory for ACP sessions   |
+| =lark-ai-acp-system-prompt-placement= | =session= | System prompt via session meta (=session=) or inline text (=inline=) |
 
 * Troubleshooting
 
