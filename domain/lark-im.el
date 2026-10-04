@@ -1020,8 +1020,8 @@ is among the loaded messages; a generic marker otherwise."
                        "[ \t\n]+" " "
                        (string-trim (or (lark-im--msg-content parent) ""))))
              (snippet (truncate-string-to-width content 60 nil nil t)))
-        (propertize (format "↪ %s: %s\n" sender snippet) 'face 'shadow))
-    (propertize "↪ (reply to an earlier message)\n" 'face 'shadow)))
+        (propertize (format "↳ %s: %s\n" sender snippet) 'face 'shadow))
+    (propertize "↳ (reply to an earlier message)\n" 'face 'shadow)))
 
 (defun lark-im--prefix-region (beg end depth)
   "Prefix every line in BEG..END with DEPTH dim thread gutters.

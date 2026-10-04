@@ -349,10 +349,10 @@ deleted ones dropped; each reply keeps its own message id at point."
                    (content . "an answer"))))
     (dolist (m lark-im--messages) (lark-im--insert-message m))
     (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-      (should (string-match-p "↪ alice: the original question" text))
+      (should (string-match-p "↳ alice: the original question" text))
       ;; Quote sits between bob's header and his content.
       (should (< (string-match "bob" text)
-                 (string-match "↪ alice" text)
+                 (string-match "↳ alice" text)
                  (string-match "an answer" text))))
     ;; Parent outside the loaded window → generic marker, no crash.
     (erase-buffer)
@@ -361,7 +361,7 @@ deleted ones dropped; each reply keeps its own message id at point."
                    (msg_type . "text") (sender . ((name . "bob")))
                    (content . "orphan reply"))))
     (lark-im--insert-message (car lark-im--messages))
-    (should (string-match-p "↪ (reply to an earlier message)"
+    (should (string-match-p "↳ (reply to an earlier message)"
                             (buffer-substring-no-properties
                              (point-min) (point-max))))))
 
