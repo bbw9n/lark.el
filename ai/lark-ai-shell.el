@@ -39,6 +39,20 @@
 
 (defconst lark-ai-shell--buffer-name "*Lark AI Shell*")
 
+(defcustom lark-ai-shell-display-action
+  '((display-buffer-reuse-window display-buffer-in-side-window)
+    (side . right)
+    (window-width . 0.42))
+  "`display-buffer' action for showing the Lark AI shell.
+The default opens it as a vertical side panel on the right at 42%
+of the frame width, reusing an existing window showing it.
+shell-maker's own display (`shell-maker-display-function', which
+defaults to taking over the current window) is bypassed so this
+stays local to the lark shell.  Set to nil to fall back to plain
+`pop-to-buffer' behavior."
+  :type 'sexp
+  :group 'lark-ai)
+
 (defvar-local lark-ai-shell--session nil
   "The `lark-ai-session' for this shell buffer.")
 
@@ -57,13 +71,15 @@ buffer and the turn sees that content."
   (unless (require 'shell-maker nil t)
     (user-error "lark-ai-shell needs the `shell-maker' package (install from MELPA)"))
   (let* ((context (lark-ai-context-format))
+         ;; NO-FOCUS: skip shell-maker's own display (it takes over the
+         ;; current window); we place the buffer ourselves below.
          (buf (shell-maker-start
                (make-shell-maker-config
                 :name "lark-ai"
                 :prompt "Lark AI> "
                 :prompt-regexp "^Lark AI> "
                 :execute-command #'lark-ai-shell--execute)
-               nil
+               t
                (lambda (_config)
                  (propertize
                   (format "Lark AI shell — backend: %s.  C-c C-k aborts a turn.\n"
@@ -78,6 +94,11 @@ buffer and the turn sees that content."
       (unless lark-ai-shell--session
         (setq-local lark-ai-shell--session (make-lark-ai-session)))
       (local-set-key (kbd "C-c C-k") #'lark-ai-shell-abort))
+    ;; Display as a side panel (see `lark-ai-shell-display-action').
+    ;; Batch sessions (tests) just make it current.
+    (if noninteractive
+        (set-buffer buf)
+      (pop-to-buffer buf lark-ai-shell-display-action))
     buf))
 
 ;;;###autoload
