@@ -111,12 +111,16 @@ each chat in the current response shape."
     (if count (format "%s" count) "")))
 
 (defun lark-im--chat-owner-name (chat)
-  "Resolve the owner display name from CHAT.
-Uses owner_id and owner_id_type via `lark-contact-resolve-name'."
+  "Return the owner display name from CHAT WITHOUT blocking.
+Cached name when known, else the raw owner id tagged for the
+async `lark-contact-resolve-buffer-async' pass — rendering must
+never wait on a network round-trip per chat (the old synchronous
+`lark-contact-resolve-name' froze Emacs for seconds on a fresh
+list)."
   (let ((owner-id (alist-get 'owner_id chat))
         (id-type (or (alist-get 'owner_id_type chat) "open_id")))
     (if (and owner-id (not (string-empty-p owner-id)))
-        (lark-contact-resolve-name owner-id id-type)
+        (lark-contact-annotate owner-id id-type)
       "")))
 
 (defun lark-im--extract-chats (data)
@@ -168,6 +172,8 @@ Truncates to \"YYYY-MM-DD HH:MM\" for display."
     (insert (propertize name 'face 'bold) "\n")
     (lark-im--insert-chat-field "Type" type)
     (lark-im--insert-chat-field "Mode" mode)
+    ;; Owner text may carry `lark-contact-ref' (unresolved raw id) —
+    ;; the async resolver pass patches it after display.
     (lark-im--insert-chat-field "Owner" owner)
     (lark-im--insert-chat-field "Description" desc)
     (lark-im--insert-chat-field "Created" created)
@@ -777,7 +783,10 @@ When called interactively, prompt for a search query."
       (goto-char (point-min))
       (setq header-line-format
             (format " Lark Chats — %d chat(s)" (length chats))))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf)
+    ;; Owner names resolve in the background; raw ids are patched in
+    ;; place as lookups return (rendering never blocks on the network).
+    (lark-contact-resolve-buffer-async buf)))
 
 ;;;; Chat messages
 ;; CLI: im +chat-messages-list --chat-id X [--page-size N] [--sort asc|desc]

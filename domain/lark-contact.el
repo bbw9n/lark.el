@@ -88,6 +88,83 @@ ID-TYPE defaults to \"open_id\".  Returns USER-ID as fallback."
           (error nil))
         user-id)))
 
+;;;; Non-blocking name annotation
+;;
+;; Rendering a listing must never run a synchronous network RPC per
+;; user id (that froze Emacs for seconds).  The pattern: insert the
+;; cached name, or the raw id tagged with a `lark-contact-ref' text
+;; property; after the buffer is displayed, call
+;; `lark-contact-resolve-buffer-async' — it looks up each distinct
+;; unresolved id once and patches every occurrence in place.
+
+(defun lark-contact-annotate (user-id &optional id-type)
+  "Return a display string for USER-ID without blocking.
+The cached display name when known; otherwise USER-ID itself,
+propertized with `lark-contact-ref' so a later
+`lark-contact-resolve-buffer-async' pass can patch it in place."
+  (let ((id-type (or id-type "open_id")))
+    (or (lark-contact--cache-get user-id id-type)
+        (propertize user-id 'lark-contact-ref (cons user-id id-type)))))
+
+(defun lark-contact--unresolved-refs (buf)
+  "Collect distinct `lark-contact-ref' values still shown as raw ids in BUF."
+  (let (refs)
+    (with-current-buffer buf
+      (save-excursion
+        (let ((pos (point-min)))
+          (while (setq pos (text-property-not-all
+                            pos (point-max) 'lark-contact-ref nil))
+            (let ((end (or (next-single-property-change pos 'lark-contact-ref)
+                           (point-max)))
+                  (ref (get-text-property pos 'lark-contact-ref)))
+              (when (equal (buffer-substring-no-properties pos end) (car ref))
+                (push ref refs))
+              (setq pos end))))))
+    (delete-dups (nreverse refs))))
+
+(defun lark-contact-resolve-buffer-async (buf)
+  "Resolve user ids displayed raw in BUF and patch them in place.
+One async lookup per distinct id; results land in the name cache
+so later renders resolve synchronously.  Ids whose lookup returns
+no name (restricted profiles, bots) are left as-is."
+  (dolist (ref (lark-contact--unresolved-refs buf))
+    (let ((ref ref))
+      (lark--run-command
+       (list "contact" "+get-user"
+             "--user-id" (car ref)
+             "--user-id-type" (cdr ref))
+       (lambda (data)
+         (let ((name (lark-contact--user-display-name
+                      (lark-contact--extract-user data))))
+           (when (and name (not (string-empty-p name)))
+             (lark-contact--cache-put (car ref) (cdr ref) name)
+             (lark-contact--patch-ref buf ref name))))
+       nil :no-error t))))
+
+(defun lark-contact--patch-ref (buf ref name)
+  "Replace every raw display of REF in BUF with NAME.
+The replaced text's properties are carried over so section-wide
+properties (item ids, faces) stay intact."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (save-excursion
+        (let ((inhibit-read-only t)
+              (pos (point-min)))
+          (while (setq pos (text-property-not-all
+                            pos (point-max) 'lark-contact-ref nil))
+            (let ((end (or (next-single-property-change pos 'lark-contact-ref)
+                           (point-max)))
+                  (this (get-text-property pos 'lark-contact-ref)))
+              (if (and (equal this ref)
+                       (equal (buffer-substring-no-properties pos end)
+                              (car ref)))
+                  (let ((props (text-properties-at pos)))
+                    (goto-char pos)
+                    (delete-region pos end)
+                    (insert (apply #'propertize name props))
+                    (setq pos (point)))
+                (setq pos end)))))))))
+
 ;;;; Async get-user
 
 ;;;###autoload

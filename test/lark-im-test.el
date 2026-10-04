@@ -179,6 +179,61 @@
     (let ((text (buffer-substring-no-properties (point-min) (point-max))))
       (should (string-match-p "\\[image\\]" text)))))
 
+;;;; Async owner resolution
+
+(ert-deftest lark-im-test-owner-render-never-blocks ()
+  "Chat rendering uses cache-or-raw-id; it must never fetch synchronously."
+  (let ((lark-contact--user-cache (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'lark-contact-get-user-sync)
+               (lambda (&rest _) (error "sync fetch during render"))))
+      ;; Cache miss → raw id, tagged for the async resolver.
+      (with-temp-buffer
+        (lark-im--insert-chat '((chat_id . "c1") (name . "Demo")
+                                (owner_id . "ou_abc")))
+        (goto-char (point-min))
+        (should (search-forward "ou_abc" nil t))
+        (should (equal '("ou_abc" . "open_id")
+                       (get-text-property (match-beginning 0)
+                                          'lark-contact-ref))))
+      ;; Cache hit → name shown directly.
+      (lark-contact--cache-put "ou_abc" "open_id" "Alice")
+      (with-temp-buffer
+        (lark-im--insert-chat '((chat_id . "c1") (name . "Demo")
+                                (owner_id . "ou_abc")))
+        (goto-char (point-min))
+        (should (search-forward "Alice" nil t))))))
+
+(ert-deftest lark-im-test-owner-async-patch ()
+  "The async resolver patches raw ids in place, preserving section props."
+  (let ((lark-contact--user-cache (make-hash-table :test 'equal))
+        (fetched nil))
+    (cl-letf (((symbol-function 'lark--run-command)
+               (lambda (args callback &rest _)
+                 (push args fetched)
+                 (funcall callback
+                          '((data . ((user . ((name . "Alice"))))))))))
+      (with-temp-buffer
+        ;; Two chats, same unresolved owner → ONE lookup, both patched.
+        (lark-im--insert-chat '((chat_id . "c1") (name . "One")
+                                (owner_id . "ou_abc")))
+        (lark-im--insert-chat '((chat_id . "c2") (name . "Two")
+                                (owner_id . "ou_abc")))
+        (lark-contact-resolve-buffer-async (current-buffer))
+        (should (= 1 (length fetched)))
+        (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+          (should-not (string-match-p "ou_abc" text))
+          (should (= 2 (with-temp-buffer
+                         (insert text)
+                         (count-matches "Alice" (point-min) (point-max))))))
+        ;; Section property survived the splice.
+        (goto-char (point-min))
+        (search-forward "Alice")
+        (should (equal "c1" (get-text-property (match-beginning 0)
+                                               'lark-chat-id)))
+        ;; Name landed in the cache for future renders.
+        (should (equal "Alice"
+                       (lark-contact--cache-get "ou_abc" "open_id")))))))
+
 ;;;; Inline media rendering
 
 (ert-deftest lark-im-test-scan-media-markers ()

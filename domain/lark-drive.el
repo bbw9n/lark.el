@@ -223,8 +223,10 @@ Keybindings follow dired conventions where possible.")
          (type (lark-drive--file-type file))
          (modified (lark-drive--file-modified-time file))
          (owner-id (lark-drive--file-owner-id file))
+         ;; Non-blocking: cached name or a tagged raw id that the
+         ;; post-render `lark-contact-resolve-buffer-async' pass patches.
          (owner-name (if (string-empty-p owner-id) ""
-                       (lark-contact-resolve-name owner-id "open_id")))
+                       (lark-contact-annotate owner-id "open_id")))
          (folder-p (lark-drive--folder-p file))
          (indicator (lark-drive--type-indicator type))
          (beg (point)))
@@ -296,7 +298,9 @@ Keybindings follow dired conventions where possible.")
       (setq header-line-format
             (format " Lark Drive: %s — %d item(s)"
                     (or folder-name "My Drive") (length files))))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf)
+    ;; Owner names resolve in the background — rendering never blocks.
+    (lark-contact-resolve-buffer-async buf)))
 
 ;;;; List folder / browse
 
@@ -399,7 +403,7 @@ Press RET to view document content (doc/docx/sheet).
          (type (lark-drive--file-type file))
          (owner-id (lark-drive--file-owner-id file))
          (owner-name (if (string-empty-p owner-id) ""
-                       (lark-contact-resolve-name owner-id "open_id")))
+                       (lark-contact-annotate owner-id "open_id")))
          (viewable (member type '("doc" "docx" "sheet")))
          (buf (get-buffer-create (format "*Lark Drive: %s*" name))))
     (with-current-buffer buf
@@ -417,7 +421,8 @@ Press RET to view document content (doc/docx/sheet).
       (lark-drive-detail-mode)
       (setq lark-drive--detail-file file)
       (goto-char (point-min)))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf)
+    (lark-contact-resolve-buffer-async buf)))
 
 (defun lark-drive--detail-field (label value)
   "Insert LABEL: VALUE if VALUE is non-empty."

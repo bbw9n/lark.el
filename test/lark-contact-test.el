@@ -81,5 +81,38 @@
       (should (equal (aref vec 2) "alice@example.com"))
       (should (equal (aref vec 3) "ou_1")))))
 
+(ert-deftest lark-contact-test-annotate ()
+  "Annotate returns the cached name, or a tagged raw id — never fetches."
+  (let ((lark-contact--user-cache (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'lark-contact-get-user-sync)
+               (lambda (&rest _) (error "sync fetch from annotate"))))
+      ;; Miss: raw id carrying the ref property.
+      (let ((s (lark-contact-annotate "ou_1")))
+        (should (equal "ou_1" (substring-no-properties s)))
+        (should (equal '("ou_1" . "open_id")
+                       (get-text-property 0 'lark-contact-ref s))))
+      ;; Hit: plain cached name.
+      (lark-contact--cache-put "ou_1" "open_id" "Alice")
+      (should (equal "Alice" (lark-contact-annotate "ou_1"))))))
+
+(ert-deftest lark-contact-test-resolve-buffer-async ()
+  "Buffer pass fetches each distinct raw id once and patches in place."
+  (let ((lark-contact--user-cache (make-hash-table :test 'equal))
+        (calls nil))
+    (cl-letf (((symbol-function 'lark--run-command)
+               (lambda (args callback &rest _)
+                 (push args calls)
+                 (funcall callback
+                          '((data . ((user . ((name . "Bob"))))))))))
+      (with-temp-buffer
+        (insert "Owner: " (lark-contact-annotate "ou_2") "\n"
+                "Owner: " (lark-contact-annotate "ou_2") "\n")
+        (lark-contact-resolve-buffer-async (current-buffer))
+        (should (= 1 (length calls)))
+        (should-not (string-match-p
+                     "ou_2" (buffer-substring-no-properties
+                             (point-min) (point-max))))
+        (should (equal "Bob" (lark-contact--cache-get "ou_2" "open_id")))))))
+
 (provide 'lark-contact-test)
 ;;; lark-contact-test.el ends here

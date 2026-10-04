@@ -113,7 +113,9 @@ Prefers guid (from +get-my-tasks), falls back to task_id / id."
       (lark--get-nested task 'creator 'name)
       (let ((id (lark--get-nested task 'creator 'id)))
         (when (and id (stringp id) (not (string-empty-p id)))
-          (lark-contact-resolve-name id "open_id")))
+          ;; Non-blocking: cached name or a tagged raw id that the
+          ;; post-render `lark-contact-resolve-buffer-async' pass patches.
+          (lark-contact-annotate id "open_id")))
       ""))
 
 (defun lark-tasks--task-url (task)
@@ -155,7 +157,7 @@ Prefers guid (from +get-my-tasks), falls back to task_id / id."
                  (name (or (alist-get 'display_name m)
                            (alist-get 'name m)
                            (let ((id (alist-get 'id m)))
-                             (when id (lark-contact-resolve-name id "open_id"))))))
+                             (when id (lark-contact-annotate id "open_id"))))))
              (if (equal role "assignee")
                  (or name "?")
                nil)))
@@ -319,7 +321,10 @@ With prefix argument SHOW-COMPLETED, include completed tasks."
       (goto-char (point-min))
       (setq header-line-format
             (format " Lark Tasks — %d task(s)" (length tasks))))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf)
+    ;; Creator/assignee names resolve in the background (see
+    ;; `lark-contact-annotate') — rendering never blocks on the network.
+    (lark-contact-resolve-buffer-async buf)))
 
 ;;;; Task detail
 ;; CLI: task tasks get --params '{"task_guid":"X"}'
@@ -400,7 +405,8 @@ With prefix argument SHOW-COMPLETED, include completed tasks."
                 (or task-id "") "\n"))
       (special-mode)
       (goto-char (point-min)))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf)
+    (lark-contact-resolve-buffer-async buf)))
 
 ;;;; Task creation
 ;; CLI: task +create --summary X [--description X] [--due X] [--assignee X]
