@@ -31,6 +31,7 @@
 (require 'lark-ai)   ; engine + `lark-ai--frontend' dispatch seam
 
 ;; shell-maker forward declarations — soft-required in `lark-ai-shell'.
+(declare-function shell-maker-define-major-mode "ext:shell-maker")
 (declare-function shell-maker-start "ext:shell-maker")
 (declare-function shell-maker-submit "ext:shell-maker")
 (declare-function shell-maker-interrupt "ext:shell-maker")
@@ -71,18 +72,22 @@ buffer and the turn sees that content."
   (unless (require 'shell-maker nil t)
     (user-error "lark-ai-shell needs the `shell-maker' package (install from MELPA)"))
   (let* ((context (lark-ai-context-format))
+         (config (make-shell-maker-config
+                  :name "lark-ai"
+                  :prompt "Lark AI> "
+                  :prompt-regexp "^Lark AI> "
+                  :execute-command #'lark-ai-shell--execute))
          ;; NO-FOCUS: skip shell-maker's own display (it takes over the
          ;; current window); we place the buffer ourselves below.
          (buf (shell-maker-start
-               (make-shell-maker-config
-                :name "lark-ai"
-                :prompt "Lark AI> "
-                :prompt-regexp "^Lark AI> "
-                :execute-command #'lark-ai-shell--execute)
+               ;; Defining the mode first gives it a keymap under
+               ;; `shell-maker-mode-map', where RET is remapped to
+               ;; `shell-maker-submit'; without it RET never sends.
+               (progn (shell-maker-define-major-mode config) config)
                t
                (lambda (_config)
                  (propertize
-                  (format "Lark AI shell — backend: %s.  C-c C-k aborts a turn.\n"
+                  (format "Lark AI shell — backend: %s.  /brief <topic> builds a topic brief.  C-c C-k aborts a turn.\n"
                           lark-ai-backend)
                   'font-lock-face 'shadow))
                nil lark-ai-shell--buffer-name "Lark AI")))
@@ -113,11 +118,28 @@ Context is captured from the invoking buffer, exactly like
       (shell-maker-submit :input prompt))
     buf))
 
+;;;###autoload
+(defun lark-ai-shell-brief (topic)
+  "Open the Lark AI shell and build a cross-domain brief on TOPIC.
+Shell counterpart of `lark-ai-brief-on' (which routes here when
+`lark-ai-interface' is `shell'); the turn appears in the
+transcript as \"/brief TOPIC\"."
+  (interactive "sBrief on topic: ")
+  (let ((topic (string-trim (or topic ""))))
+    (when (string-empty-p topic)
+      (user-error "Empty topic"))
+    (let ((buf (lark-ai-shell)))
+      (with-current-buffer buf
+        (shell-maker-submit :input (concat "/brief " topic)))
+      buf)))
+
 ;;;; Turn execution
 
 (defun lark-ai-shell--execute (input shell)
   "shell-maker executor: run INPUT through the lark agent loop.
-SHELL is the callback alist shell-maker hands to executors."
+SHELL is the callback alist shell-maker hands to executors.
+An input of \"/brief <topic>\" runs the cross-domain topic brief
+\(`lark-ai-brief-on') instead of the agent loop."
   (let* ((buf (map-elt shell :buffer))
          (session (with-current-buffer buf
                     (or lark-ai-shell--session
@@ -127,17 +149,65 @@ SHELL is the callback alist shell-maker hands to executors."
          ;; Snapshot BEFORE pushing the current prompt, mirroring
          ;; `lark-ai-ask' — the user message is built from prior turns.
          (history (lark-ai-session-history session)))
-    (if lark-ai--frontend
-        (progn
-          (funcall (map-elt shell :write-output)
-                   "A turn is already in flight (C-c C-k aborts it).\n")
-          (funcall (map-elt shell :finish-output) nil))
+    (cond
+     (lark-ai--frontend
+      (funcall (map-elt shell :write-output)
+               "A turn is already in flight (C-c C-k aborts it).\n")
+      (funcall (map-elt shell :finish-output) nil))
+     ;; /brief <topic> — cross-domain topic brief.
+     ((string-match "\\`/brief\\(?:[ \t]+\\(.*\\)\\)?\\'"
+                    (string-trim input))
+      (let ((topic (string-trim (or (match-string 1 (string-trim input)) ""))))
+        (if (string-empty-p topic)
+            (progn
+              (funcall (map-elt shell :write-output)
+                       "Usage: /brief <topic>\n")
+              (funcall (map-elt shell :finish-output) nil))
+          (lark-ai-shell--execute-brief topic shell session))))
+     (t
       (push (cons "user" input) (lark-ai-session-history session))
       (setq lark-ai--frontend (lark-ai-shell--make-frontend shell session))
       (lark-ai--select-skills
        input (or (lark-ai-skills-routing-context context) "")
        (lambda (skills)
-         (lark-ai-agent--run input context history session skills))))))
+         (lark-ai-agent--run input context history session skills)))))))
+
+(defun lark-ai-shell--execute-brief (topic shell session)
+  "Run the cross-domain TOPIC brief as a shell turn.
+Mirrors `lark-ai--brief-on-classic': context-graph gather, then
+one synthesis call — whose chunks stream live into the shell.
+The gathered brief lands in SESSION history, so follow-up turns
+\(\"draft a status update from this\") reuse it."
+  (let ((write (map-elt shell :write-output))
+        (finish (map-elt shell :finish-output)))
+    (push (cons "user" (format "Brief on: %s" topic))
+          (lark-ai-session-history session))
+    (setf (lark-ai-session-phase session) 'executing)
+    (setq lark-ai--frontend (lark-ai-shell--make-frontend shell session))
+    (lark-ai--progress-log "Gathering context for \"%s\"…" topic)
+    (lark-ai-context-graph-gather
+     topic
+     (lambda (context-text)
+       (if (not (eq (lark-ai-session-phase session) 'executing))
+           ;; Aborted between hops — release the turn quietly.
+           (progn (setq lark-ai--frontend nil)
+                  (funcall finish nil))
+         (lark-ai--progress-log "Gathered %d chars; calling LLM…"
+                                (length (or context-text "")))
+         (funcall write "\n")
+         (lark-ai--call-llm-stream
+          lark-ai-brief-on-prompt
+          (lark-ai--brief-user-message topic context-text)
+          (lambda (text)
+            (push (cons "assistant" text)
+                  (lark-ai-session-history session))
+            (setf (lark-ai-session-phase session) 'done)
+            (setq lark-ai--frontend nil)
+            (funcall write "\n")
+            (funcall finish t)
+            (lark-ai-shell--fontify (map-elt shell :buffer)))
+          ;; Stream synthesis chunks straight into the shell.
+          (lambda (chunk) (funcall write chunk))))))))
 
 (defun lark-ai-shell--make-frontend (shell session)
   "Build the `lark-ai--frontend' callback plist writing into SHELL.

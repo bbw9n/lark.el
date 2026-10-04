@@ -1160,6 +1160,70 @@ or the prompt comes from inside the classic buffer."
           (should (string-match-p "already in flight" written)))
       (kill-buffer shellbuf))))
 
+(ert-deftest lark-ai-test-brief-user-message ()
+  "Brief synthesis message covers both the results and no-results shapes."
+  (should (string-match-p "Retrieved snippets"
+                          (lark-ai--brief-user-message "envhub" "snippet text")))
+  (should (string-match-p "No results"
+                          (lark-ai--brief-user-message "envhub" "")))
+  (should (string-match-p "No results"
+                          (lark-ai--brief-user-message "envhub" nil))))
+
+(ert-deftest lark-ai-test-brief-routes-by-interface ()
+  "`lark-ai-brief-on' routes to the shell UI like `lark-ai-ask'."
+  (require 'lark-ai-shell)
+  (let (shell-brief classic-brief)
+    (cl-letf (((symbol-function 'lark-ai--use-shell-p) (lambda () t))
+              ((symbol-function 'lark-ai-shell-brief)
+               (lambda (topic) (setq shell-brief topic)))
+              ((symbol-function 'lark-ai--brief-on-classic)
+               (lambda (topic) (setq classic-brief topic))))
+      (lark-ai-brief-on "envhub")
+      (should (equal "envhub" shell-brief))
+      (should-not classic-brief))
+    (cl-letf (((symbol-function 'lark-ai--use-shell-p) (lambda () nil))
+              ((symbol-function 'lark-ai--brief-on-classic)
+               (lambda (topic) (setq classic-brief topic))))
+      (lark-ai-brief-on "envhub")
+      (should (equal "envhub" classic-brief)))))
+
+(ert-deftest lark-ai-test-shell-brief-command ()
+  "\"/brief <topic>\" in the shell runs gather → streamed synthesis."
+  (require 'lark-ai-shell)
+  (let* ((written "") (finished 'unset)
+         (shellbuf (generate-new-buffer " *lark-ai-shell-brief-test*"))
+         (shell (list (cons :buffer shellbuf)
+                      (cons :write-output
+                            (lambda (s &optional _f)
+                              (setq written (concat written s))))
+                      (cons :finish-output (lambda (ok) (setq finished ok)))))
+         (lark-ai--frontend nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'lark-ai-context-graph-gather)
+                   (lambda (_topic cb) (funcall cb "gathered snippets")))
+                  ((symbol-function 'lark-ai--call-llm-stream)
+                   (lambda (_sys user cb &optional chunk-handler)
+                     (should (string-match-p "gathered snippets" user))
+                     (funcall chunk-handler "BRIEF ")
+                     (funcall chunk-handler "TEXT")
+                     (funcall cb "BRIEF TEXT")))
+                  ((symbol-function 'lark-ai-shell--fontify) #'ignore))
+          (lark-ai-shell--execute "/brief envhub plans" shell)
+          (should (string-match-p "BRIEF TEXT" written))
+          (should (eq finished t))
+          (should-not lark-ai--frontend)
+          (let ((hist (lark-ai-session-history
+                       (buffer-local-value 'lark-ai-shell--session shellbuf))))
+            (should (equal '("assistant" . "BRIEF TEXT") (car hist)))
+            (should (equal '("user" . "Brief on: envhub plans") (cadr hist))))
+          ;; Bare /brief shows usage without starting a turn.
+          (setq written "" finished 'unset)
+          (lark-ai-shell--execute "/brief" shell)
+          (should (string-match-p "Usage: /brief" written))
+          (should (eq finished nil))
+          (should-not lark-ai--frontend))
+      (kill-buffer shellbuf))))
+
 ;;;; Skill routing context clipping
 
 (ert-deftest lark-ai-test-routing-context-clip ()

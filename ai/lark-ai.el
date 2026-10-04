@@ -1166,6 +1166,17 @@ re-fetching."
   (let ((topic (string-trim (or topic ""))))
     (when (string-empty-p topic)
       (user-error "Empty topic"))
+    (if (and (lark-ai--use-shell-p)
+             (not (eq (current-buffer) (get-buffer lark-ai--buf-name))))
+        (progn (require 'lark-ai-shell)
+               (lark-ai-shell-brief topic))
+      (lark-ai--brief-on-classic topic))))
+
+(declare-function lark-ai-shell-brief "lark-ai-shell" (topic))
+
+(defun lark-ai--brief-on-classic (topic)
+  "Run the TOPIC brief in the classic fragment-based AI buffer."
+  (let ((topic (string-trim (or topic ""))))
     (let ((buf (lark-ai--get-buffer))
           (session (lark-ai--session)))
       (lark-ai--show-loading
@@ -1182,25 +1193,28 @@ re-fetching."
            (when (and s (eq (lark-ai-session-phase s) 'executing))
              (lark-ai--brief-on-synthesize topic context-text))))))))
 
+(defun lark-ai--brief-user-message (topic context-text)
+  "Build the synthesis user message for a TOPIC brief over CONTEXT-TEXT.
+Shared by the classic and shell brief paths.  Empty CONTEXT-TEXT
+yields a short \"no results\" instruction rather than firing the
+LLM at nothing."
+  (if (string-empty-p (string-trim (or context-text "")))
+      (format
+       "## Topic\n%s\n\nNo results were retrieved across the\
+ enabled providers. Tell the user no relevant docs or messages were\
+ found, in one sentence, and suggest broadening the topic." topic)
+    (format
+     "## Topic\n%s\n\n## Retrieved snippets\n%s\n\nWrite the\
+ brief now."
+     topic context-text)))
+
 (defun lark-ai--brief-on-synthesize (topic context-text)
   "Stream a brief for TOPIC built from CONTEXT-TEXT.
-Empty CONTEXT-TEXT yields a short \"no results\" reply rather than
-firing the LLM at nothing; otherwise we hand the synthesis off to the
-streaming LLM path so chunks land directly in the output fragment."
+Chunks land directly in the output fragment (classic UI path)."
   (lark-ai--progress-log
    "Gathered %d chars; calling LLM…" (length (or context-text "")))
   (lark-ai--clear-waiting)
-  (let* ((empty-p (string-empty-p (string-trim (or context-text ""))))
-         (user-msg
-          (if empty-p
-              (format
-               "## Topic\n%s\n\nNo results were retrieved across the\
- enabled providers. Tell the user no relevant docs or messages were\
- found, in one sentence, and suggest broadening the topic." topic)
-            (format
-             "## Topic\n%s\n\n## Retrieved snippets\n%s\n\nWrite the\
- brief now."
-             topic context-text))))
+  (let ((user-msg (lark-ai--brief-user-message topic context-text)))
     (lark-ai--call-llm-stream
      lark-ai-brief-on-prompt user-msg
      (lambda (text)
