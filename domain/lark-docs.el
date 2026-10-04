@@ -59,11 +59,14 @@
   :group 'lark-docs)
 
 (defcustom lark-docs-cache-directory nil
-  "Directory for caching downloaded media assets.
-When nil, uses a subdirectory under `temporary-file-directory'.
-Set this to a persistent path (e.g., \"~/.cache/lark-docs/\") to
-avoid re-downloading images across sessions."
-  :type '(choice (const :tag "Temporary directory" nil)
+  "Directory for caching fetched documents and their media assets.
+When nil, uses a PERSISTENT per-user cache under XDG cache home
+\(usually ~/.cache/lark.el/lark-docs/).  Keeping it out of
+`temporary-file-directory' means images survive reboots and macOS
+temp cleanup instead of re-downloading every session — and doc
+buffers (whose `default-directory' points here so relative image
+links resolve) don't end up with a deleted working directory."
+  :type '(choice (const :tag "XDG cache (persistent)" nil)
                  directory)
   :group 'lark-docs)
 
@@ -632,6 +635,17 @@ markdown."
   "Sanitize S for use as a directory name."
   (replace-regexp-in-string "[^A-Za-z0-9._-]" "_" (or s "doc")))
 
+(defun lark-docs--cache-dir (doc-id)
+  "Return the cache directory for DOC-ID's rendered doc and assets.
+Under `lark-docs-cache-directory' when set, else the persistent
+per-user cache (see `lark--cache-dir')."
+  (expand-file-name
+   (lark-docs--safe-dirname doc-id)
+   (or (and lark-docs-cache-directory
+            (file-name-as-directory
+             (expand-file-name "lark-docs" lark-docs-cache-directory)))
+       (lark--cache-dir "lark-docs"))))
+
 (defun lark-docs--sync-org-lark-config ()
   "Sync lark.el config into org-lark variables."
   (setq org-lark-cli-program lark-cli-executable))
@@ -665,10 +679,7 @@ all happen in background processes so Emacs stays responsive."
                (doc-id (or (alist-get 'doc_id fetched) doc)))
            (if (or (null markdown) (string-empty-p markdown))
                (message "Lark: document has no content")
-             (let* ((cache-dir (expand-file-name
-                                (concat "lark-docs/" (lark-docs--safe-dirname doc-id))
-                                (or lark-docs-cache-directory
-                                    (expand-file-name "lark.el/" temporary-file-directory))))
+             (let* ((cache-dir (lark-docs--cache-dir doc-id))
                     (st (make-org-lark--state
                          :output-file (expand-file-name "doc.org" cache-dir)
                          :asset-dir (expand-file-name "assets/" cache-dir))))

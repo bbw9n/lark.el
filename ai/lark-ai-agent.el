@@ -59,7 +59,7 @@
                  (const :tag "Upfront plan" plan))
   :group 'lark-ai)
 
-(defcustom lark-ai-agent-max-steps 12
+(defcustom lark-ai-agent-max-steps 20
   "Maximum command/parse iterations before the agent loop is forced to finish.
 Bounds runaway loops and total LLM round-trips.  On hitting the cap the
 loop makes one final LLM call to write the user-facing answer."

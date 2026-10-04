@@ -209,5 +209,25 @@
       (lark-docs-fetch "my-doc-token")
       (should (equal ran-command '("docs" "+fetch" "--doc" "my-doc-token"))))))
 
+(ert-deftest lark-docs-test-cache-dir ()
+  "Doc cache resolves persistently by default and honors the custom dir.
+Regression: the temp-dir default was purged by the OS, re-downloading
+every image and leaving doc buffers with a deleted working directory."
+  ;; Custom directory wins, keeping the lark-docs/<id> layout.
+  (let ((lark-docs-cache-directory "/custom/cache"))
+    (should (equal "/custom/cache/lark-docs/GL_123"
+                   (lark-docs--cache-dir "GL:123"))))
+  ;; Default: persistent XDG cache, not the temp dir.
+  (let ((lark-docs-cache-directory nil)
+        (xdg (make-temp-file "lark-docs-xdg-test" t))
+        (old (getenv "XDG_CACHE_HOME")))
+    (unwind-protect
+        (progn
+          (setenv "XDG_CACHE_HOME" xdg)
+          (should (equal (expand-file-name "lark.el/lark-docs/GL_123" xdg)
+                         (lark-docs--cache-dir "GL:123"))))
+      (setenv "XDG_CACHE_HOME" old)
+      (delete-directory xdg t))))
+
 (provide 'lark-docs-test)
 ;;; lark-docs-test.el ends here

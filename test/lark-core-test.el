@@ -469,5 +469,27 @@ such file or directory\" unless the spawn site rebinds
           (accept-process-output nil 0.05))))
     (should done)))
 
+;;;; Persistent cache directory
+
+(ert-deftest lark-core-test-cache-dir-persistent ()
+  "`lark--cache-dir' resolves under XDG cache home, never the temp dir."
+  (let ((xdg (make-temp-file "lark-core-xdg-test" t))
+        (old (getenv "XDG_CACHE_HOME")))
+    (unwind-protect
+        (progn
+          (setenv "XDG_CACHE_HOME" xdg)
+          (let ((dir (lark--cache-dir "unit-test")))
+            (should (equal (file-name-as-directory
+                            (expand-file-name "lark.el/unit-test" xdg))
+                           dir))
+            (should (file-directory-p dir)))
+          ;; Without XDG_CACHE_HOME, fall back to ~/.cache.
+          (setenv "XDG_CACHE_HOME" nil)
+          (should (string-prefix-p
+                   (file-name-as-directory (expand-file-name "~/.cache"))
+                   (expand-file-name (lark--cache-dir "unit-test")))))
+      (setenv "XDG_CACHE_HOME" old)
+      (delete-directory xdg t))))
+
 (provide 'lark-core-test)
 ;;; lark-core-test.el ends here

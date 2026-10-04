@@ -236,6 +236,229 @@ non-text affordance and labelled.")
   "Return non-nil when MSG is marked deleted in the response."
   (eq (alist-get 'deleted msg) t))
 
+;;;; Inline media rendering
+;;
+;; lark-cli renders post/media message content as text with resource
+;; markers: images as "![Image](img_v3_…)" and files/videos as
+;; "[Media: file_v3_…]".  After a message is inserted, the region is
+;; scanned: image markers are replaced (display property) with the
+;; actual image, downloaded on demand via
+;; `im +messages-resources-download' and cached under
+;; `lark-im-media-cache-directory'; file markers become actionable
+;; links that download and open the file externally on RET/click.
+;; The CLI only accepts a RELATIVE --output path, so downloads run
+;; with `default-directory' bound to the cache dir.
+
+(defcustom lark-im-render-images t
+  "When non-nil, render image markers in chat buffers as inline images.
+Only takes effect on graphical displays; in terminals the textual
+marker is kept (still openable via RET)."
+  :type 'boolean
+  :group 'lark-im)
+
+(defcustom lark-im-image-max-width 480
+  "Maximum pixel width for inline chat images."
+  :type 'integer
+  :group 'lark-im)
+
+(defcustom lark-im-media-cache-directory nil
+  "Directory for downloaded chat media.
+When nil, uses a PERSISTENT per-user cache under XDG cache home
+\(usually ~/.cache/lark.el/im-media/).  Resource file keys are
+immutable, so cached media never goes stale — keeping the cache out
+of `temporary-file-directory' means revisiting a chat after a
+reboot or macOS temp cleanup does not re-download every image."
+  :type '(choice (const :tag "XDG cache (persistent)" nil) directory)
+  :group 'lark-im)
+
+(defcustom lark-im-media-cache-max-bytes (* 512 1024 1024)
+  "Soft cap on the media cache size, in bytes.
+After each download the cache is pruned least-recently-used-first
+until it fits (a cache hit refreshes a file's timestamp, so
+frequently viewed media survives).  nil disables pruning."
+  :type '(choice (const :tag "Unlimited" nil) integer)
+  :group 'lark-im)
+
+(defconst lark-im--image-marker-re "!\\[Image\\](\\(img_[A-Za-z0-9_-]+\\))"
+  "Match an inline image marker; group 1 is the image file key.")
+
+(defconst lark-im--media-marker-re "\\[Media: \\(file_[A-Za-z0-9_-]+\\)\\]"
+  "Match a media (file/video) marker; group 1 is the file key.")
+
+(defun lark-im--media-cache-dir ()
+  "Return the media cache directory, creating it if needed.
+Persistent by default — see `lark--cache-dir'."
+  (if lark-im-media-cache-directory
+      (let ((dir (file-name-as-directory lark-im-media-cache-directory)))
+        (make-directory dir t)
+        dir)
+    (lark--cache-dir "im-media")))
+
+(defun lark-im--media-cached (key)
+  "Return the cached file for resource KEY, or nil.
+The extension is chosen by the CLI at download time, so match any.
+A hit refreshes the file's modification time so LRU pruning keeps
+recently viewed media."
+  (when-let ((path (car (file-expand-wildcards
+                         (concat (lark-im--media-cache-dir) key ".*")))))
+    (ignore-errors (set-file-times path))
+    path))
+
+(defun lark-im--media-cache-prune ()
+  "Delete least-recently-used cached media until under the size cap.
+No-op when `lark-im-media-cache-max-bytes' is nil or the cache fits."
+  (when lark-im-media-cache-max-bytes
+    (let* ((files (directory-files-and-attributes
+                   (lark-im--media-cache-dir) t "^[^.]" t))
+           (total (apply #'+ 0 (mapcar (lambda (f)
+                                         (or (file-attribute-size (cdr f)) 0))
+                                       files))))
+      (when (> total lark-im-media-cache-max-bytes)
+        (dolist (f (sort files
+                         (lambda (a b)
+                           (time-less-p
+                            (file-attribute-modification-time (cdr a))
+                            (file-attribute-modification-time (cdr b))))))
+          (when (> total lark-im-media-cache-max-bytes)
+            (setq total (- total (or (file-attribute-size (cdr f)) 0)))
+            (ignore-errors (delete-file (car f)))))))))
+
+(defun lark-im-media-cache-clear ()
+  "Delete every file in the chat media cache."
+  (interactive)
+  (let ((dir (lark-im--media-cache-dir)))
+    (when (yes-or-no-p (format "Delete all cached chat media in %s? " dir))
+      (dolist (f (directory-files dir t "^[^.]" t))
+        (ignore-errors (delete-file f)))
+      (message "Lark: media cache cleared"))))
+
+(defun lark-im--scan-media-markers (beg end)
+  "Collect media markers between BEG and END in the current buffer.
+Returns a list of (KIND KEY MBEG MEND) where KIND is `image' or
+`file' and MBEG/MEND bound the marker text."
+  (let (found)
+    (save-excursion
+      (dolist (spec `((image . ,lark-im--image-marker-re)
+                      (file . ,lark-im--media-marker-re)))
+        (goto-char beg)
+        (while (re-search-forward (cdr spec) end t)
+          (push (list (car spec) (match-string-no-properties 1)
+                      (match-beginning 0) (match-end 0))
+                found))))
+    (nreverse found)))
+
+(defvar lark-im--media-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'lark-im-open-media-at-point)
+    (define-key map [mouse-1] #'lark-im-open-media-at-point)
+    map)
+  "Keymap active on media markers in chat buffers.")
+
+(defun lark-im--render-media (beg end msg-id)
+  "Render media markers between BEG and END of message MSG-ID.
+Images are displayed inline (asynchronously, cache-first); file
+markers become openable links.  No-op without a message id — the
+download API needs it."
+  (when msg-id
+    (let ((inhibit-read-only t))
+      (pcase-dolist (`(,kind ,key ,mbeg ,mend)
+                     (lark-im--scan-media-markers beg end))
+        (add-text-properties
+         mbeg mend
+         (list 'lark-media-key key
+               'lark-media-kind kind
+               'lark-media-msg-id msg-id
+               'keymap lark-im--media-keymap
+               'mouse-face 'highlight
+               'help-echo (format "%s %s — RET/click to open" kind key)))
+        (when (eq kind 'file)
+          (put-text-property mbeg mend 'face 'link))
+        (when (and (eq kind 'image)
+                   lark-im-render-images
+                   (display-graphic-p))
+          (let ((cached (lark-im--media-cached key)))
+            (if cached
+                (lark-im--display-image mbeg mend key cached)
+              (lark-im--fetch-then-display msg-id key mbeg mend))))))))
+
+(defun lark-im--display-image (beg end key path)
+  "Show the image at PATH over the marker text BEG..END for KEY."
+  (let ((inhibit-read-only t))
+    (add-text-properties
+     beg end
+     (list 'display (create-image path nil nil
+                                   :max-width lark-im-image-max-width)
+           'help-echo (format "image %s — RET/click to open" key)))))
+
+(defun lark-im--fetch-then-display (msg-id key beg end)
+  "Download image KEY of MSG-ID, then display it over BEG..END.
+Positions are tracked with markers so concurrent inserts (older
+pages prepended) don't shift the target; a refresh that erased the
+buffer is detected via the `lark-media-key' property and skipped."
+  (let ((mb (copy-marker beg))
+        (me (copy-marker end))
+        (buf (current-buffer)))
+    (lark-im--download-resource
+     msg-id key "image"
+     (lambda (path)
+       (when (and path (buffer-live-p buf))
+         (with-current-buffer buf
+           (when (and (marker-position mb) (marker-position me)
+                      (< mb me)
+                      (equal (get-text-property mb 'lark-media-key) key))
+             (lark-im--display-image mb me key path))))
+       (set-marker mb nil)
+       (set-marker me nil)))))
+
+(defun lark-im--download-resource (msg-id key type callback)
+  "Download resource KEY (image/file TYPE) of MSG-ID into the cache.
+Calls CALLBACK with the saved path, or nil on failure.  The CLI
+accepts only relative output paths, so the process runs inside the
+cache directory."
+  (let ((default-directory (lark-im--media-cache-dir)))
+    (lark--run-command
+     (list "im" "+messages-resources-download"
+           "--message-id" msg-id
+           "--file-key" key
+           "--type" type
+           "--output" key)
+     (lambda (result)
+       (funcall callback (lark--get-nested result 'data 'saved_path))
+       ;; Keep the persistent cache bounded; the file just written is
+       ;; the newest, so LRU pruning never evicts it.
+       (lark-im--media-cache-prune))
+     nil
+     :no-error t
+     :on-error
+     (lambda (_code errmsg)
+       (lark--log "Media download failed (%s): %s" key errmsg)
+       (message "Lark: media download failed: %s" key)
+       (funcall callback nil)))))
+
+(defun lark-im-open-media-at-point ()
+  "Download (cache-first) and open the media resource at point."
+  (interactive)
+  (let ((key (get-text-property (point) 'lark-media-key))
+        (kind (get-text-property (point) 'lark-media-kind))
+        (msg-id (get-text-property (point) 'lark-media-msg-id)))
+    (unless key
+      (user-error "No media at point"))
+    (let ((cached (lark-im--media-cached key)))
+      (if cached
+          (lark-im--open-media-file cached)
+        (message "Lark: downloading %s…" key)
+        (lark-im--download-resource
+         msg-id key (if (eq kind 'image) "image" "file")
+         (lambda (path)
+           (when path
+             (lark-im--open-media-file path))))))))
+
+(defun lark-im--open-media-file (path)
+  "Open downloaded media at PATH with the platform opener."
+  (if (eq system-type 'darwin)
+      (call-process "open" nil 0 nil path)
+    (browse-url-of-file path)))
+
 (defun lark-im--messages-container (data)
   "Return the alist that holds messages plus pagination metadata in DATA.
 Falls back to nil when DATA is not a recognized response shape."
@@ -678,7 +901,10 @@ so they render chronologically with the newest at the bottom."
                           'face 'font-lock-type-face)
               "\n")))
     (insert "\n")
-    (put-text-property beg (point) 'lark-message-id id)))
+    (put-text-property beg (point) 'lark-message-id id)
+    ;; Render image/file markers in the inserted content (inline
+    ;; images on graphical displays, openable links otherwise).
+    (lark-im--render-media beg (point) id)))
 
 ;;;; Send message
 ;; CLI: im +messages-send --chat-id X --text X

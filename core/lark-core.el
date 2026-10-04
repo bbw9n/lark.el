@@ -92,6 +92,19 @@ lark-cli already defaults to json and not all subcommands support it."
             (when format (list "--format" format))
             (when dry-run (list "--dry-run")))))
 
+(defun lark--cache-dir (subdir)
+  "Return a persistent per-user cache directory for SUBDIR, creating it.
+Lives under XDG cache home (usually ~/.cache/lark.el/SUBDIR/) so
+cached media survives reboots and OS temp-directory cleanup —
+unlike `temporary-file-directory', which macOS purges periodically,
+forcing every image to re-download."
+  (let ((dir (file-name-as-directory
+              (expand-file-name
+               (concat "lark.el/" subdir)
+               (or (getenv "XDG_CACHE_HOME") "~/.cache")))))
+    (make-directory dir t)
+    dir))
+
 (defun lark--safe-default-directory ()
   "Return `default-directory' if it still exists, else a safe fallback.
 Some lark buffers point `default-directory' at a temp cache dir

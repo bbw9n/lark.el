@@ -179,5 +179,135 @@
     (let ((text (buffer-substring-no-properties (point-min) (point-max))))
       (should (string-match-p "\\[image\\]" text)))))
 
+;;;; Inline media rendering
+
+(ert-deftest lark-im-test-scan-media-markers ()
+  "Image and file markers are extracted with their keys."
+  (with-temp-buffer
+    (insert "hello\n"
+            "![Image](img_v3_0215r_e3e90b95-6806-42dd-a9a1-ecb3e40f206h)\n"
+            "some text [Media: file_v3_0015l_2121369e-a8e0-4f17-917b-a1ffb7af03hu]\n"
+            "![Image](img_v3_0215s_9cfbd5df-f884-43ab-b7a8-54191cc64b2h)\n")
+    (let ((found (lark-im--scan-media-markers (point-min) (point-max))))
+      (should (= 3 (length found)))
+      (should (equal '(file image image) (sort (mapcar #'car found) #'string<)))
+      (should (member "img_v3_0215r_e3e90b95-6806-42dd-a9a1-ecb3e40f206h"
+                      (mapcar #'cadr found)))
+      (should (member "file_v3_0015l_2121369e-a8e0-4f17-917b-a1ffb7af03hu"
+                      (mapcar #'cadr found))))))
+
+(ert-deftest lark-im-test-insert-message-marks-media ()
+  "Inserted messages carry openable media properties on their markers."
+  (with-temp-buffer
+    (lark-im--insert-message
+     '((message_id . "om_1") (msg_type . "post") (create_time . "2026-10-04 09:00")
+       (sender . ((name . "alice")))
+       (content . "see pic\n![Image](img_v3_abc-123h)\n[Media: file_v3_def-456u]")))
+    ;; Image marker gets key/kind/msg-id and the open keymap.
+    (goto-char (point-min))
+    (search-forward "![Image]")
+    (let ((pos (match-beginning 0)))
+      (should (equal "img_v3_abc-123h" (get-text-property pos 'lark-media-key)))
+      (should (eq 'image (get-text-property pos 'lark-media-kind)))
+      (should (equal "om_1" (get-text-property pos 'lark-media-msg-id)))
+      (should (keymapp (get-text-property pos 'keymap))))
+    ;; File marker is a link.
+    (goto-char (point-min))
+    (search-forward "[Media:")
+    (let ((pos (match-beginning 0)))
+      (should (equal "file_v3_def-456u" (get-text-property pos 'lark-media-key)))
+      (should (eq 'file (get-text-property pos 'lark-media-kind)))
+      (should (eq 'link (get-text-property pos 'face))))))
+
+(ert-deftest lark-im-test-media-download-relative-output ()
+  "Resource downloads run inside the cache dir with a relative --output.
+The CLI rejects absolute output paths, so the process cwd carries
+the destination."
+  (let* ((lark-im-media-cache-directory
+          (make-temp-file "lark-im-media-test" t))
+         (seen-args nil) (seen-dir nil))
+    (cl-letf (((symbol-function 'lark--run-command)
+               (lambda (args callback &rest _)
+                 (setq seen-args args
+                       seen-dir default-directory)
+                 (funcall callback '((data . ((saved_path . "/x/img.jpg"))))))))
+      (let (got)
+        (lark-im--download-resource "om_1" "img_v3_k1h" "image"
+                                    (lambda (path) (setq got path)))
+        (should (equal "/x/img.jpg" got))
+        (should (equal (file-name-as-directory lark-im-media-cache-directory)
+                       seen-dir))
+        (should (equal '("im" "+messages-resources-download"
+                         "--message-id" "om_1"
+                         "--file-key" "img_v3_k1h"
+                         "--type" "image"
+                         "--output" "img_v3_k1h")
+                       seen-args))))
+    (delete-directory lark-im-media-cache-directory t)))
+
+(ert-deftest lark-im-test-media-cached-lookup ()
+  "Cache lookup finds a key's file regardless of extension."
+  (let ((lark-im-media-cache-directory
+         (make-temp-file "lark-im-media-test" t)))
+    (unwind-protect
+        (progn
+          (should-not (lark-im--media-cached "img_v3_k2h"))
+          (with-temp-file (expand-file-name
+                           "img_v3_k2h.png"
+                           lark-im-media-cache-directory)
+            (insert "fake"))
+          (should (string-suffix-p "img_v3_k2h.png"
+                                   (lark-im--media-cached "img_v3_k2h"))))
+      (delete-directory lark-im-media-cache-directory t))))
+
+(ert-deftest lark-im-test-media-cache-dir-persistent ()
+  "Default media cache lives under XDG cache home, not the temp dir.
+Regression: a temp-dir cache is purged by the OS, forcing media to
+re-download every session."
+  (let ((xdg (make-temp-file "lark-im-xdg-test" t))
+        (old (getenv "XDG_CACHE_HOME"))
+        (lark-im-media-cache-directory nil))
+    (unwind-protect
+        (progn
+          (setenv "XDG_CACHE_HOME" xdg)
+          ;; XDG_CACHE_HOME set → cache lives under it.
+          (let ((dir (lark-im--media-cache-dir)))
+            (should (string-prefix-p (file-name-as-directory xdg) dir))
+            (should (file-directory-p dir)))
+          ;; No XDG_CACHE_HOME → falls back to ~/.cache, never the
+          ;; OS temp dir.
+          (setenv "XDG_CACHE_HOME" nil)
+          (should (string-prefix-p
+                   (file-name-as-directory (expand-file-name "~/.cache"))
+                   (expand-file-name (lark-im--media-cache-dir)))))
+      (setenv "XDG_CACHE_HOME" old)
+      (delete-directory xdg t))))
+
+(ert-deftest lark-im-test-media-cache-prune-lru ()
+  "Pruning deletes the oldest files first and keeps the cache under cap."
+  (let ((lark-im-media-cache-directory
+         (make-temp-file "lark-im-prune-test" t)))
+    (unwind-protect
+        (let ((old (expand-file-name "img_old.jpg" lark-im-media-cache-directory))
+              (mid (expand-file-name "img_mid.jpg" lark-im-media-cache-directory))
+              (new (expand-file-name "img_new.jpg" lark-im-media-cache-directory)))
+          (dolist (spec `((,old . 10) (,mid . 10) (,new . 10)))
+            (with-temp-file (car spec)
+              (insert (make-string (cdr spec) ?x))))
+          ;; Age the files: old < mid < new.
+          (set-file-times old (time-subtract (current-time) 200))
+          (set-file-times mid (time-subtract (current-time) 100))
+          ;; Cap at 20 bytes → the 10-byte oldest file must go.
+          (let ((lark-im-media-cache-max-bytes 20))
+            (lark-im--media-cache-prune))
+          (should-not (file-exists-p old))
+          (should (file-exists-p mid))
+          (should (file-exists-p new))
+          ;; nil cap → no pruning.
+          (let ((lark-im-media-cache-max-bytes nil))
+            (lark-im--media-cache-prune))
+          (should (file-exists-p new)))
+      (delete-directory lark-im-media-cache-directory t))))
+
 (provide 'lark-im-test)
 ;;; lark-im-test.el ends here
