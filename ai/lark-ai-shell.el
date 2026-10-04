@@ -35,6 +35,7 @@
 (declare-function shell-maker-submit "ext:shell-maker")
 (declare-function shell-maker-interrupt "ext:shell-maker")
 (declare-function make-shell-maker-config "ext:shell-maker")
+(declare-function markdown-overlays-put "ext:markdown-overlays")
 
 (defconst lark-ai-shell--buffer-name "*Lark AI Shell*")
 
@@ -158,7 +159,19 @@ SESSION receives the history bookkeeping the classic UI would do."
        (setf (lark-ai-session-phase session) 'done)
        (setq lark-ai--frontend nil)
        (funcall write (concat "\n" content "\n"))
-       (funcall finish t)))))
+       (funcall finish t)
+       (lark-ai-shell--fontify (map-elt shell :buffer))))))
+
+(defun lark-ai-shell--fontify (buf)
+  "Render markdown markup in BUF via overlays, when available.
+`markdown-overlays' ships with shell-maker (the same renderer
+agent-shell/chatgpt-shell use): headers, bold, code fences and
+tables display styled, with the raw markup hidden.  Silently a
+no-op when the library is missing."
+  (when (and (buffer-live-p buf)
+             (require 'markdown-overlays nil t))
+    (with-current-buffer buf
+      (markdown-overlays-put))))
 
 ;;;; Abort
 
