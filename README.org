@@ -6,6 +6,50 @@ An Emacs package that wraps [[https://github.com/larksuite/cli][lark-cli]] to br
 Transient menus for command dispatch, mu4e-style mail, dired-like drive
 browsing, org-table spreadsheets, and async execution throughout.
 
+* Demos
+
+Short screen recordings of each domain in action.
+
+** AI shell
+
+Natural-language prompts drive the agent loop — skills routing,
+lark-cli tool calls, streamed markdown answers — via a local ACP
+agent (Claude Code), no API key.
+
+https://github.com/user-attachments/assets/6697adcf-70fe-4992-8898-221a0bfb6e8c
+
+** Docs
+
+Fetching a Lark doc as org-mode, images rendered from the
+persistent cache.
+
+https://github.com/user-attachments/assets/9c41c535-d00b-4c24-8ed3-70f352c40641
+
+** Messenger
+
+Group search and message history with inline image and video
+thumbnails.
+
+https://github.com/user-attachments/assets/8f10ed7b-fc68-4422-b887-a081e63cdfd1
+
+** Mail
+
+mu4e-style inbox and the magit-commit-style compose/reply panel.
+
+https://github.com/user-attachments/assets/bceb4362-574e-4a52-bc88-4e2ad53a0973
+
+** Meetings
+
+Meeting search with notes and transcript rendering.
+
+https://github.com/user-attachments/assets/3af1e7fd-895c-4e7c-aef5-3e2d49ff32e6
+
+** Tasks
+
+Task lists and the org-agenda–style due-date view.
+
+https://github.com/user-attachments/assets/77c2778d-4327-4c7b-a523-e89ab43f6aea
+
 * Prerequisites
 
 - Emacs 28.1+ (for built-in =transient=)
@@ -748,6 +792,11 @@ ai/
 
 test/
   lark-*-test.el                ERT tests for each module
+
+demo/
+  lark-native-ui-demo.el        Runnable magit-section / tabulated-list UI preview
+  lark-*.mp4                    Domain screen-recording sources (hosted copies
+                                are embedded in the Demos section)
 #+end_example
 
 All CLI calls funnel through =lark--run-command= (async) or
