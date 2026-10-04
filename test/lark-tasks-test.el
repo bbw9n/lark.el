@@ -196,5 +196,32 @@
   (should (equal (lark-tasks--format-date nil) ""))
   (should (equal (lark-tasks--format-date "not a date") "not a date")))
 
+(ert-deftest lark-tasks-test-extract-null-items ()
+  "\"items\": null (no open tasks) extracts to nil, not `:null'.
+Regression: the agenda crashed with \"Wrong type argument: listp,
+:null\" when the user had no incomplete tasks."
+  (should-not (lark-tasks--extract-tasks
+               '((ok . t)
+                 (data . ((has_more . :false)
+                          (items . :null)
+                          (page_token . "")))))))
+
+(ert-deftest lark-tasks-test-agenda-render-empty ()
+  "The agenda renders (not crashes) on the empty-tasks envelope."
+  (cl-letf (((symbol-function 'pop-to-buffer)
+             (lambda (buf &rest _) (set-buffer buf))))
+    (lark-tasks-agenda--render
+     '((ok . t)
+       (data . ((has_more . :false) (items . :null) (page_token . "")))))
+    (with-current-buffer "*Lark Task Agenda*"
+      (should (string-match-p "nothing due today"
+                              (buffer-substring-no-properties
+                               (point-min) (point-max)))))))
+
+(ert-deftest lark-tasks-test-members-null ()
+  "A task with \"members\": null renders an empty assignee string."
+  (should (equal "" (lark-tasks--task-members-string
+                     '((summary . "t") (members . :null))))))
+
 (provide 'lark-tasks-test)
 ;;; lark-tasks-test.el ends here

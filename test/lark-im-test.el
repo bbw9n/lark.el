@@ -14,6 +14,10 @@
 
 (require 'lark-im)
 
+;; Keep tests hermetic: never touch the on-disk name cache.
+(setq lark-contact-cache-file nil
+      lark-contact--cache-loaded t)
+
 ;;;; Chat parsing
 
 (ert-deftest lark-im-test-chat-id ()
@@ -45,6 +49,13 @@
 
 (ert-deftest lark-im-test-extract-chats-empty ()
   (should (null (lark-im--extract-chats nil))))
+
+(ert-deftest lark-im-test-extract-null-collections ()
+  "Null chats/messages collections extract to nil, not `:null'."
+  (should-not (lark-im--extract-chats
+               '((data . ((chats . :null))))))
+  (should-not (lark-im--extract-messages
+               '((data . ((has_more . :false) (messages . :null)))))))
 
 ;;;; Message parsing
 

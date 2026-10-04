@@ -491,5 +491,19 @@ such file or directory\" unless the spawn site rebinds
       (setenv "XDG_CACHE_HOME" old)
       (delete-directory xdg t))))
 
+(ert-deftest lark-core-test-get-nested-null-leaf ()
+  "A JSON null leaf returns nil, never the truthy `:null' sentinel."
+  (should-not (lark--get-nested '((data . ((items . :null)))) 'data 'items))
+  (should-not (lark--get-nested '((a . :null)) 'a))
+  (should (equal "x" (lark--get-nested '((a . ((b . "x")))) 'a 'b))))
+
+(ert-deftest lark-core-test-list-field ()
+  "`lark--list-field' yields real lists only."
+  (should (equal '(1 2) (lark--list-field '((items . (1 2))) 'items)))
+  (should-not (lark--list-field '((items . :null)) 'items))
+  (should-not (lark--list-field '((items . "str")) 'items))
+  (should-not (lark--list-field :null 'items))
+  (should-not (lark--list-field nil 'items)))
+
 (provide 'lark-core-test)
 ;;; lark-core-test.el ends here

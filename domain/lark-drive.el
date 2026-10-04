@@ -119,9 +119,9 @@
 (defun lark-drive--extract-files (data)
   "Extract the file list from lark-cli response DATA."
   (or (lark--get-nested data 'data 'files)
-      (alist-get 'files data)
+      (lark--list-field data 'files)
       (lark--get-nested data 'data 'items)
-      (alist-get 'items data)))
+      (lark--list-field data 'items)))
 
 ;;;; Dired-like mode
 

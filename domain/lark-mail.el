@@ -111,21 +111,19 @@
      (t nil))))
 
 (defun lark-mail--extract-mails (data)
-  "Extract mail list from lark-cli response DATA."
+  "Extract mail list from lark-cli response DATA.
+Null-safe: empty collections arrive as JSON null (`:null')."
   (cond
-   ((and (listp data) (alist-get 'items data))
-    (alist-get 'items data))
-   ((and (listp data) (alist-get 'mails data))
-    (alist-get 'mails data))
-   ((and (listp data) (alist-get 'messages data))
-    (alist-get 'messages data))
-   ((and (listp data) (alist-get 'data data))
-    (let ((inner (alist-get 'data data)))
-      (or (alist-get 'items inner)
-          (alist-get 'mails inner)
-          (alist-get 'messages inner)
-          (and (listp inner) inner))))
-   ((and (listp data) (listp (car data))
+   ((lark--list-field data 'items))
+   ((lark--list-field data 'mails))
+   ((lark--list-field data 'messages))
+   ((lark--list-field data 'data)
+    (let ((inner (lark--list-field data 'data)))
+      (or (lark--list-field inner 'items)
+          (lark--list-field inner 'mails)
+          (lark--list-field inner 'messages)
+          (and (lark--record-list-p inner) inner))))
+   ((and (lark--record-list-p data)
          (or (alist-get 'mail_id (car data))
              (alist-get 'message_id (car data))
              (alist-get 'subject (car data))))
@@ -224,8 +222,8 @@
             "  "
             (propertize (format "%-16s" date) 'face 'font-lock-comment-face)
             "  "
-            (propertize (format "%-20s"
-                                (truncate-string-to-width from 20 nil nil t))
+            (propertize (format "%-40s"
+                                (truncate-string-to-width from 40 nil nil t))
                         'face face)
             "  "
             (propertize subject 'face face)

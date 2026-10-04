@@ -148,8 +148,8 @@ Prefers guid (from +get-my-tasks), falls back to task_id / id."
 
 (defun lark-tasks--task-members-string (task)
   "Extract a string of assignee names from TASK members."
-  (let ((members (or (alist-get 'members task)
-                     (alist-get 'assignees task))))
+  (let ((members (or (lark--list-field task 'members)
+                     (lark--list-field task 'assignees))))
     (if members
         (mapconcat
          (lambda (m)
@@ -165,27 +165,24 @@ Prefers guid (from +get-my-tasks), falls back to task_id / id."
       "")))
 
 (defun lark-tasks--extract-tasks (data)
-  "Extract the task list from lark-cli response DATA."
-  (cond
-   ((and (listp data) (alist-get 'items data))
-    (alist-get 'items data))
-   ((and (listp data) (alist-get 'tasks data))
-    (alist-get 'tasks data))
-   ((and (listp data) (alist-get 'data data))
-    (let ((inner (alist-get 'data data)))
-      (or (alist-get 'items inner)
-          (alist-get 'tasks inner)
-          (and (listp inner) (listp (car inner))
-               (or (alist-get 'task_id (car inner))
-                   (alist-get 'guid (car inner))
-                   (alist-get 'summary (car inner)))
-               inner))))
-   ((and (listp data) (listp (car data))
-         (or (alist-get 'task_id (car data))
-             (alist-get 'guid (car data))
-             (alist-get 'summary (car data))))
-    data)
-   (t nil)))
+  "Extract the task list from lark-cli response DATA.
+Null-safe: an empty collection comes back as \"items\": null (the
+`:null' sentinel), which must yield nil, not a truthy non-list."
+  (or (lark--list-field data 'items)
+      (lark--list-field data 'tasks)
+      (let ((inner (lark--list-field data 'data)))
+        (or (lark--list-field inner 'items)
+            (lark--list-field inner 'tasks)
+            (and (lark--record-list-p inner)
+                 (or (alist-get 'task_id (car inner))
+                     (alist-get 'guid (car inner))
+                     (alist-get 'summary (car inner)))
+                 inner)))
+      (and (lark--record-list-p data)
+           (or (alist-get 'task_id (car data))
+               (alist-get 'guid (car data))
+               (alist-get 'summary (car data)))
+           data)))
 
 ;;;; Multi-line task list view
 

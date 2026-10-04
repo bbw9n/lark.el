@@ -436,7 +436,10 @@ internally with --page-all)."
 
 (defun lark--get-nested (alist &rest keys)
   "Access a nested value in ALIST by following KEYS.
-Example: (lark--get-nested data \\='items 0 \\='name)"
+Example: (lark--get-nested data \\='items 0 \\='name)
+A JSON null leaf (the `:null' sentinel) is returned as nil — JSON
+null means absent, and the truthy sentinel crashes list/string
+operations downstream."
   (let ((current alist))
     (dolist (key keys)
       (setq current
@@ -446,7 +449,27 @@ Example: (lark--get-nested data \\='items 0 \\='name)"
              ((listp current)
               (alist-get key current))
              (t nil))))
-    current))
+    (if (eq current :null) nil current)))
+
+(defun lark--record-list-p (v)
+  "Non-nil when V looks like a list of records (alists), not one alist.
+A parsed JSON array of objects is a list whose first element is
+itself an alist — i.e. its car's car is a cons.  A response
+envelope like ((has_more . :false) (items . :null)) fails this:
+its first element's car is a bare symbol."
+  (and (listp v)
+       (consp (car-safe v))
+       (consp (car-safe (car-safe v)))))
+
+(defun lark--list-field (alist key)
+  "Return ALIST's value for KEY when it is a real list, else nil.
+lark-cli encodes empty collections as JSON null, which parses to
+the truthy `:null' sentinel and is fatal to list operations
+\(\"items\": null → seq-filter over `:null' → wrong-type-argument).
+Use this instead of `alist-get' wherever a list is expected."
+  (and (listp alist)
+       (let ((v (alist-get key alist)))
+         (and (listp v) v))))
 
 (defun lark--format-timestamp (timestamp)
   "Format a Unix TIMESTAMP (string or number) to a human-readable string."

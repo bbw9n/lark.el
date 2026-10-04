@@ -14,6 +14,10 @@
 
 (require 'lark-contact)
 
+;; Keep tests hermetic: never touch the on-disk name cache.
+(setq lark-contact-cache-file nil
+      lark-contact--cache-loaded t)
+
 ;;;; User extraction
 
 (ert-deftest lark-contact-test-extract-user-nested ()
@@ -113,6 +117,46 @@
                      "ou_2" (buffer-substring-no-properties
                              (point-min) (point-max))))
         (should (equal "Bob" (lark-contact--cache-get "ou_2" "open_id")))))))
+
+(ert-deftest lark-contact-test-cache-persistence-roundtrip ()
+  "Names persist to disk and come back in a fresh session."
+  (let* ((file (make-temp-file "lark-contact-cache" nil ".eld"))
+         (lark-contact-cache-file file))
+    (unwind-protect
+        (progn
+          ;; Session 1: resolve and flush.
+          (let ((lark-contact--user-cache (make-hash-table :test 'equal))
+                (lark-contact--cache-loaded t)
+                (lark-contact--cache-save-timer nil))
+            (lark-contact--cache-put "ou_p1" "open_id" "Alice")
+            (lark-contact--cache-save))
+          ;; Session 2: fresh memory, loaded lazily from disk.
+          (let ((lark-contact--user-cache (make-hash-table :test 'equal))
+                (lark-contact--cache-loaded nil))
+            (should (equal "Alice"
+                           (lark-contact--cache-get "ou_p1" "open_id")))))
+      (delete-file file))))
+
+(ert-deftest lark-contact-test-cache-persistence-ttl ()
+  "Stale persisted names are dropped at load so they re-resolve."
+  (let* ((file (make-temp-file "lark-contact-cache" nil ".eld"))
+         (lark-contact-cache-file file))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert ";; test\n")
+            (prin1 (list (cons "ou_old:open_id"
+                               (cons "Oldname" (- (float-time) 1000)))
+                         (cons "ou_new:open_id"
+                               (cons "Newname" (float-time))))
+                   (current-buffer)))
+          (let ((lark-contact--user-cache (make-hash-table :test 'equal))
+                (lark-contact--cache-loaded nil)
+                (lark-contact-cache-ttl 500))
+            (should-not (lark-contact--cache-get "ou_old" "open_id"))
+            (should (equal "Newname"
+                           (lark-contact--cache-get "ou_new" "open_id")))))
+      (delete-file file))))
 
 (provide 'lark-contact-test)
 ;;; lark-contact-test.el ends here

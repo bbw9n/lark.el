@@ -28,25 +28,104 @@
   :prefix "lark-contact-")
 
 ;;;; User cache
+;;
+;; Resolved names (open_id → display name) are kept in memory AND
+;; persisted to disk, so a fresh Emacs session doesn't re-resolve the
+;; same people over the network.  Entries carry a timestamp; stale
+;; ones (people do get renamed) are dropped at load time and
+;; re-resolve transparently on next use.
+
+(defcustom lark-contact-cache-file
+  (expand-file-name "lark.el/contact-names.eld"
+                    (or (getenv "XDG_CACHE_HOME") "~/.cache"))
+  "File persisting resolved contact names across sessions.
+Set to nil to keep names in memory only."
+  :type '(choice (const :tag "In-memory only" nil) file)
+  :group 'lark-contact)
+
+(defcustom lark-contact-cache-ttl (* 30 24 60 60)
+  "Seconds before a persisted contact name is considered stale.
+Stale entries are dropped when the cache file is loaded, so the
+name re-resolves on next use.  nil = entries never expire."
+  :type '(choice (const :tag "Never expires" nil) integer)
+  :group 'lark-contact)
 
 (defvar lark-contact--user-cache (make-hash-table :test 'equal)
-  "Hash table mapping \"user_id:id_type\" to display name strings.
-Populated lazily by `lark-contact-get-user' and
-`lark-contact-resolve-name'.")
+  "Hash table mapping \"user_id:id_type\" to (NAME . TIMESTAMP).
+Populated lazily by resolution and from `lark-contact-cache-file'.")
+
+(defvar lark-contact--cache-loaded nil
+  "Non-nil once the persisted cache has been read this session.")
+
+(defvar lark-contact--cache-save-timer nil
+  "Pending idle-timer that flushes the cache to disk, or nil.")
 
 (defun lark-contact--cache-key (user-id id-type)
   "Build a cache key from USER-ID and ID-TYPE."
   (format "%s:%s" user-id (or id-type "open_id")))
 
+(defun lark-contact--cache-load ()
+  "Populate the in-memory cache from disk, once per session.
+Entries older than `lark-contact-cache-ttl' are skipped."
+  (unless lark-contact--cache-loaded
+    (setq lark-contact--cache-loaded t)
+    (when (and lark-contact-cache-file
+               (file-readable-p lark-contact-cache-file))
+      (condition-case nil
+          (let ((now (float-time)))
+            (dolist (entry (with-temp-buffer
+                             (insert-file-contents lark-contact-cache-file)
+                             (read (current-buffer))))
+              (pcase entry
+                (`(,key ,name . ,time)
+                 (when (and (stringp key) (stringp name) (numberp time)
+                            (or (null lark-contact-cache-ttl)
+                                (< (- now time) lark-contact-cache-ttl))
+                            ;; In-session resolutions win over disk.
+                            (not (gethash key lark-contact--user-cache)))
+                   (puthash key (cons name time)
+                            lark-contact--user-cache))))))
+        (error nil)))))
+
 (defun lark-contact--cache-get (user-id id-type)
   "Return cached display name for USER-ID / ID-TYPE, or nil."
-  (gethash (lark-contact--cache-key user-id id-type)
-           lark-contact--user-cache))
+  (lark-contact--cache-load)
+  (let ((v (gethash (lark-contact--cache-key user-id id-type)
+                    lark-contact--user-cache)))
+    (if (consp v) (car v) v)))
 
 (defun lark-contact--cache-put (user-id id-type name)
-  "Store NAME in cache for USER-ID / ID-TYPE."
-  (puthash (lark-contact--cache-key user-id id-type) name
-           lark-contact--user-cache))
+  "Store NAME in cache for USER-ID / ID-TYPE and schedule a disk flush."
+  (lark-contact--cache-load)
+  (puthash (lark-contact--cache-key user-id id-type)
+           (cons name (float-time))
+           lark-contact--user-cache)
+  (lark-contact--cache-schedule-save)
+  name)
+
+(defun lark-contact--cache-schedule-save ()
+  "Flush the cache to disk on the next idle moment (debounced)."
+  (when (and lark-contact-cache-file
+             (null lark-contact--cache-save-timer))
+    (setq lark-contact--cache-save-timer
+          (run-with-idle-timer 2 nil #'lark-contact--cache-save))))
+
+(defun lark-contact--cache-save ()
+  "Write the in-memory name cache to `lark-contact-cache-file'."
+  (setq lark-contact--cache-save-timer nil)
+  (when lark-contact-cache-file
+    (condition-case nil
+        (let (entries)
+          (maphash (lambda (k v)
+                     (push (cons k (if (consp v) v (cons v (float-time))))
+                           entries))
+                   lark-contact--user-cache)
+          (make-directory (file-name-directory lark-contact-cache-file) t)
+          (with-temp-file lark-contact-cache-file
+            (insert ";; lark.el contact name cache — safe to delete.\n")
+            (prin1 entries (current-buffer))
+            (insert "\n")))
+      (error nil))))
 
 ;;;; Core: get-user (sync, used as fundamental utility)
 

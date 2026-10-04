@@ -124,22 +124,18 @@ list)."
       "")))
 
 (defun lark-im--extract-chats (data)
-  "Extract chat list from lark-cli response DATA."
-  (cond
-   ((and (listp data) (alist-get 'items data))
-    (alist-get 'items data))
-   ((and (listp data) (alist-get 'chats data))
-    (alist-get 'chats data))
-   ((and (listp data) (alist-get 'data data))
-    (let ((inner (alist-get 'data data)))
-      (or (alist-get 'items inner)
-          (alist-get 'chats inner)
-          (and (listp inner) inner))))
-   ((and (listp data) (listp (car data))
-         (or (alist-get 'chat_id (car data))
-             (alist-get 'name (car data))))
-    data)
-   (t nil)))
+  "Extract chat list from lark-cli response DATA.
+Null-safe: empty collections arrive as JSON null (`:null')."
+  (or (lark--list-field data 'items)
+      (lark--list-field data 'chats)
+      (let ((inner (lark--list-field data 'data)))
+        (or (lark--list-field inner 'items)
+            (lark--list-field inner 'chats)
+            (and (lark--record-list-p inner) inner)))
+      (and (lark--record-list-p data)
+           (or (alist-get 'chat_id (car data))
+               (alist-get 'name (car data)))
+           data)))
 
 (defun lark-im--chat-description (chat)
   "Extract description from CHAT."
@@ -596,8 +592,8 @@ Filters out messages marked `deleted: true' (which the new
 as empty/stale entries."
   (let* ((c (lark-im--messages-container data))
          (raw (cond
-               ((and c (alist-get 'items c)) (alist-get 'items c))
-               ((and c (alist-get 'messages c)) (alist-get 'messages c))
+               ((lark--list-field c 'items))
+               ((lark--list-field c 'messages))
                ((and (listp data) (listp (car-safe data))
                      (or (alist-get 'message_id (car data))
                          (alist-get 'sender_name (car data))))

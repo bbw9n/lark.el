@@ -98,13 +98,13 @@ Uses the first line of display_info, falling back to description."
 (defun lark-meetings--extract-meetings (data)
   "Extract meeting list from lark-cli search response DATA."
   (or (lark--get-nested data 'data 'items)
-      (alist-get 'items data)
+      (lark--list-field data 'items)
       (lark--get-nested data 'data 'meetings)))
 
 (defun lark-meetings--extract-notes (data)
   "Extract notes list from lark-cli notes response DATA."
   (or (lark--get-nested data 'data 'notes)
-      (alist-get 'notes data)))
+      (lark--list-field data 'notes)))
 
 ;;;; Meeting list mode (multi-line sections)
 

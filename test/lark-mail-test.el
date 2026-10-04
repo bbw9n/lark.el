@@ -121,6 +121,12 @@
                   '(((name . "Alice")) ((address . "bob@x.com"))))
                  "Alice, bob@x.com")))
 
+(ert-deftest lark-mail-test-extract-null-items ()
+  "A null mail collection extracts to nil, not `:null'."
+  (should-not (lark-mail--extract-mails
+               '((data . ((items . :null))))))
+  (should-not (lark-mail--extract-mails '((items . :null)))))
+
 ;;;; Compose buffer
 
 (defmacro lark-mail-test--with-compose (kind id headers &rest body)
