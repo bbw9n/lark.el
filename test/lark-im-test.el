@@ -300,6 +300,71 @@
         (should (equal "+messages-reply" (cadr sent-args)))
         (should (= 2 (length lark-im--messages)))))))
 
+(ert-deftest lark-im-test-thread-replies-render-as-tree ()
+  "THREAD-chat replies render nested under their root, oldest first,
+deleted ones dropped; each reply keeps its own message id at point."
+  (with-temp-buffer
+    (lark-im--insert-message
+     '((message_id . "root1") (msg_type . "text")
+       (create_time . "2026-10-04 10:00")
+       (sender . ((name . "alice")))
+       (content . "root question")
+       (thread_replies
+        . (((message_id . "r2") (msg_type . "text")
+            (create_time . "2026-10-04 10:20")
+            (sender . ((name . "carol"))) (content . "second reply"))
+           ((message_id . "rdel") (msg_type . "text") (deleted . t)
+            (create_time . "2026-10-04 10:10")
+            (sender . ((name . "x"))) (content . "deleted reply"))
+           ((message_id . "r1") (msg_type . "text")
+            (create_time . "2026-10-04 10:05")
+            (sender . ((name . "bob"))) (content . "first reply"))))))
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      ;; Both live replies present, behind the gutter, in time order.
+      (should (string-match-p "│ .*first reply" text))
+      (should (string-match-p "│ .*second reply" text))
+      (should-not (string-match-p "deleted reply" text))
+      (should (< (string-match "first reply" text)
+                 (string-match "second reply" text)))
+      ;; Root content is NOT indented.
+      (should (string-match-p "^root question" text)))
+    ;; Reply-at-point targets the reply, not the root.
+    (goto-char (point-min))
+    (search-forward "first reply")
+    (should (equal "r1" (get-text-property (point) 'lark-message-id)))
+    (goto-char (point-min))
+    (search-forward "root question")
+    (should (equal "root1" (get-text-property (point) 'lark-message-id)))))
+
+(ert-deftest lark-im-test-reply-to-quote ()
+  "DEFAULT-chat replies show a dim quote of their parent message."
+  (with-temp-buffer
+    (setq-local lark-im--messages
+                '(((message_id . "m1") (msg_type . "text")
+                   (sender . ((name . "alice")))
+                   (content . "the original question about envhub"))
+                  ((message_id . "m2") (msg_type . "text")
+                   (reply_to . "m1")
+                   (sender . ((name . "bob")))
+                   (content . "an answer"))))
+    (dolist (m lark-im--messages) (lark-im--insert-message m))
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (should (string-match-p "↪ alice: the original question" text))
+      ;; Quote sits between bob's header and his content.
+      (should (< (string-match "bob" text)
+                 (string-match "↪ alice" text)
+                 (string-match "an answer" text))))
+    ;; Parent outside the loaded window → generic marker, no crash.
+    (erase-buffer)
+    (setq-local lark-im--messages
+                '(((message_id . "m3") (reply_to . "gone")
+                   (msg_type . "text") (sender . ((name . "bob")))
+                   (content . "orphan reply"))))
+    (lark-im--insert-message (car lark-im--messages))
+    (should (string-match-p "↪ (reply to an earlier message)"
+                            (buffer-substring-no-properties
+                             (point-min) (point-max))))))
+
 ;;;; Inline media rendering
 
 (ert-deftest lark-im-test-scan-media-markers ()

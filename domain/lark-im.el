@@ -999,18 +999,68 @@ buffer isn't displayed."
                (lark-im--prepend-older data))
            (message "Lark: chat buffer was closed"))))))))
 
-(defun lark-im--insert-message (msg)
-  "Insert a formatted MSG into the current buffer."
+(defun lark-im--find-message (id)
+  "Return the loaded message alist with message id ID, or nil.
+Searches the buffer's root messages and their thread replies."
+  (when (and (stringp id) (not (string-empty-p id)))
+    (catch 'hit
+      (dolist (m lark-im--messages)
+        (when (equal (lark-im--msg-id m) id) (throw 'hit m))
+        (dolist (r (lark--list-field m 'thread_replies))
+          (when (equal (lark-im--msg-id r) id) (throw 'hit r))))
+      nil)))
+
+(defun lark-im--quote-line (parent-id)
+  "Build the dim quote line for a reply to PARENT-ID.
+Shows the parent's sender and a one-line snippet when the parent
+is among the loaded messages; a generic marker otherwise."
+  (if-let ((parent (lark-im--find-message parent-id)))
+      (let* ((sender (lark-im--msg-sender parent))
+             (content (replace-regexp-in-string
+                       "[ \t\n]+" " "
+                       (string-trim (or (lark-im--msg-content parent) ""))))
+             (snippet (truncate-string-to-width content 60 nil nil t)))
+        (propertize (format "↪ %s: %s\n" sender snippet) 'face 'shadow))
+    (propertize "↪ (reply to an earlier message)\n" 'face 'shadow)))
+
+(defun lark-im--prefix-region (beg end depth)
+  "Prefix every line in BEG..END with DEPTH dim thread gutters.
+Leaves point after the (now longer) region."
+  (let ((gutter (propertize (apply #'concat (make-list depth "  │ "))
+                            'face 'shadow))
+        (end-marker (copy-marker end)))
+    (goto-char beg)
+    (while (< (point) end-marker)
+      (insert gutter)
+      (forward-line 1))
+    (goto-char end-marker)
+    (set-marker end-marker nil)))
+
+(defun lark-im--insert-message (msg &optional depth)
+  "Insert a formatted MSG into the current buffer.
+DEPTH > 0 renders it as a thread reply, indented under its root
+behind a dim gutter.  Thread replies embedded in MSG (the
+`thread_replies' field of THREAD-mode chats) are rendered
+recursively beneath it, oldest first."
   (let ((sender (lark-im--msg-sender msg))
         (time (lark-im--msg-time msg))
         (content (or (lark-im--msg-content msg) ""))
         (type (lark-im--msg-type msg))
         (id (lark-im--msg-id msg))
+        (depth (or depth 0))
         (beg (point)))
     (insert (propertize sender 'face 'bold)
             "  "
             (propertize time 'face 'font-lock-comment-face)
             "\n")
+    ;; DEFAULT-mode chats mark replies with `reply_to' — show a quote
+    ;; of the parent.  Thread replies (depth > 0) already show their
+    ;; structure, so no quote there.
+    (let ((parent-id (alist-get 'reply_to msg)))
+      (when (and (zerop depth)
+                 (stringp parent-id)
+                 (not (string-empty-p parent-id)))
+        (insert (lark-im--quote-line parent-id))))
     (cond
      ;; Textual types (text / post / markdown) come back from lark-cli as
      ;; readable text — render the content directly so the buffer doesn't
@@ -1027,36 +1077,49 @@ buffer isn't displayed."
                           'face 'font-lock-type-face)
               "\n")))
     (insert "\n")
+    (when (> depth 0)
+      (lark-im--prefix-region beg (point) depth))
     (put-text-property beg (point) 'lark-message-id id)
     ;; Render image/file markers in the inserted content (inline
     ;; images on graphical displays, openable links otherwise).
-    (lark-im--render-media beg (point) id)))
+    (lark-im--render-media beg (point) id)
+    ;; THREAD-mode chats nest replies inside the root message —
+    ;; render them as a tree instead of dropping them.
+    (dolist (reply (sort (seq-remove #'lark-im--msg-deleted-p
+                                     (lark--list-field msg 'thread_replies))
+                         (lambda (a b)
+                           (string< (format "%s" (alist-get 'create_time a))
+                                    (format "%s" (alist-get 'create_time b))))))
+      (lark-im--insert-message reply (1+ depth)))))
 
 ;;;; Send message
 ;; CLI: im +messages-send --chat-id X --text X
 
-(defun lark-im--sent-message (text data)
+(defun lark-im--sent-message (text data &optional reply-to)
   "Build a message alist locally echoing TEXT that was just sent.
 DATA is the lark-cli response; its message id is carried over when
 present so reply-at-point works on the echoed entry without a
-refresh."
+refresh.  REPLY-TO, when non-nil, marks the echo as a reply so the
+quote line renders."
   `((message_id . ,(or (lark--get-nested data 'data 'message_id)
                        (alist-get 'message_id data)
                        ""))
     (msg_type . "text")
     (sender_name . "Me")
     (create_time . ,(format-time-string "%Y-%m-%d %H:%M"))
+    ,@(when reply-to `((reply_to . ,reply-to)))
     (content . ,text)))
 
-(defun lark-im--append-sent-message (buf text data)
+(defun lark-im--append-sent-message (buf text data &optional reply-to)
   "Append locally-echoed TEXT to chat buffer BUF without reloading.
 Replaces the old post-send `lark-im-chat-refresh': re-fetching and
 erasing the whole buffer flashed visibly and reset the user's
 place.  The window showing BUF, if any, is moved to the new
-message; `g' still does a full sync when wanted."
+message; `g' still does a full sync when wanted.  REPLY-TO marks
+the echo as a reply to that message id."
   (when (buffer-live-p buf)
     (with-current-buffer buf
-      (let ((msg (lark-im--sent-message text data))
+      (let ((msg (lark-im--sent-message text data reply-to))
             (inhibit-read-only t))
         (setq lark-im--messages (append lark-im--messages (list msg)))
         (save-excursion
@@ -1116,7 +1179,7 @@ Prompts for message ID if not determinable from point."
      (list "im" "+messages-reply" "--message-id" msg-id "--text" text)
      (lambda (data)
        (message "Lark: reply sent")
-       (lark-im--append-sent-message chat-buf text data)))))
+       (lark-im--append-sent-message chat-buf text data msg-id)))))
 
 ;;;; Reactions
 ;; CLI: im reactions create --params '{"message_id":"X"}' --data '{"reaction_type":{"emoji_type":"X"}}'
