@@ -227,12 +227,7 @@ find and cancel the in-flight stream."
                         "STREAM CHUNK"
                         "#%d (%d chars): %s"
                         chunks (length response) response)
-                       (when-let ((buf (get-buffer lark-ai--buf-name)))
-                         (with-current-buffer buf
-                           (if chunk-handler
-                               (funcall chunk-handler response)
-                             (lark-ai-ui-append-fragment
-                              (lark-ai--frag "output") response)))))
+                       (lark-ai--route-chunk response chunk-handler))
                       ((eq response t)
                        (lark-ai--debug-log
                         "STREAM DONE"
@@ -261,13 +256,19 @@ with one, the handler receives each chunk instead."
    (lark-ai-skills-abbreviate-for-log system-prompt) user-message)
   (lark-ai-acp-call
    system-prompt user-message callback
-   (lambda (chunk)
-     (when-let ((buf (get-buffer lark-ai--buf-name)))
-       (with-current-buffer buf
-         (if chunk-handler
-             (funcall chunk-handler chunk)
-           (lark-ai-ui-append-fragment
-            (lark-ai--frag "output") chunk)))))))
+   (lambda (chunk) (lark-ai--route-chunk chunk chunk-handler))))
+
+(defun lark-ai--route-chunk (chunk chunk-handler)
+  "Send a streamed CHUNK to CHUNK-HANDLER, or else the output fragment.
+CHUNK-HANDLER runs even without a `*Lark AI*' buffer: the AI shell
+streams briefs through it and never creates that buffer."
+  (let ((buf (get-buffer lark-ai--buf-name)))
+    (cond (chunk-handler
+           (with-current-buffer (or buf (current-buffer))
+             (funcall chunk-handler chunk)))
+          (buf
+           (with-current-buffer buf
+             (lark-ai-ui-append-fragment (lark-ai--frag "output") chunk))))))
 
 (provide 'lark-ai-llm)
 ;;; lark-ai-llm.el ends here

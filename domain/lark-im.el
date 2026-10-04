@@ -1035,6 +1035,36 @@ buffer isn't displayed."
 ;;;; Send message
 ;; CLI: im +messages-send --chat-id X --text X
 
+(defun lark-im--sent-message (text data)
+  "Build a message alist locally echoing TEXT that was just sent.
+DATA is the lark-cli response; its message id is carried over when
+present so reply-at-point works on the echoed entry without a
+refresh."
+  `((message_id . ,(or (lark--get-nested data 'data 'message_id)
+                       (alist-get 'message_id data)
+                       ""))
+    (msg_type . "text")
+    (sender_name . "Me")
+    (create_time . ,(format-time-string "%Y-%m-%d %H:%M"))
+    (content . ,text)))
+
+(defun lark-im--append-sent-message (buf text data)
+  "Append locally-echoed TEXT to chat buffer BUF without reloading.
+Replaces the old post-send `lark-im-chat-refresh': re-fetching and
+erasing the whole buffer flashed visibly and reset the user's
+place.  The window showing BUF, if any, is moved to the new
+message; `g' still does a full sync when wanted."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (let ((msg (lark-im--sent-message text data))
+            (inhibit-read-only t))
+        (setq lark-im--messages (append lark-im--messages (list msg)))
+        (save-excursion
+          (goto-char (point-max))
+          (lark-im--insert-message msg))
+        (when-let ((win (get-buffer-window buf t)))
+          (set-window-point win (point-max)))))))
+
 
 ;;;###autoload
 (defun lark-im-send (&optional chat-id)
@@ -1044,16 +1074,20 @@ buffer isn't displayed."
                 (read-string "Chat ID: "))))
     (when (string-empty-p id)
       (user-error "No chat ID specified"))
-    (let ((text (read-string "Message: ")))
+    (let ((text (read-string "Message: "))
+          ;; Echo locally only when sending into the chat buffer we
+          ;; are looking at (not from the chat list).
+          (chat-buf (and lark-im--chat-id
+                         (equal lark-im--chat-id id)
+                         (current-buffer))))
       (when (string-empty-p text)
         (user-error "Empty message"))
       (message "Lark: sending message...")
       (lark--run-command
        (list "im" "+messages-send" "--chat-id" id "--text" text)
-       (lambda (_data)
+       (lambda (data)
          (message "Lark: message sent")
-         (when lark-im--chat-id
-           (lark-im-chat-refresh)))))))
+         (lark-im--append-sent-message chat-buf text data))))))
 
 (defun lark-im-send-to-chat ()
   "Send a message to the chat at point."
@@ -1073,15 +1107,16 @@ Prompts for message ID if not determinable from point."
     (user-error "Not in a chat buffer"))
   (let* ((msg-id (or (get-text-property (point) 'lark-message-id)
                      (read-string "Reply to message ID: ")))
-         (text (read-string "Reply: ")))
+         (text (read-string "Reply: "))
+         (chat-buf (current-buffer)))
     (when (string-empty-p text)
       (user-error "Empty reply"))
     (message "Lark: sending reply...")
     (lark--run-command
      (list "im" "+messages-reply" "--message-id" msg-id "--text" text)
-     (lambda (_data)
+     (lambda (data)
        (message "Lark: reply sent")
-       (lark-im-chat-refresh)))))
+       (lark-im--append-sent-message chat-buf text data)))))
 
 ;;;; Reactions
 ;; CLI: im reactions create --params '{"message_id":"X"}' --data '{"reaction_type":{"emoji_type":"X"}}'

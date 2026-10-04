@@ -1356,6 +1356,22 @@ keyword rule."
           (should (equal "USER2" user))
           (should (functionp on-chunk)))))))
 
+(ert-deftest lark-ai-test-acp-stream-chunks-without-ai-buffer ()
+  "A chunk handler gets streamed chunks even with no `*Lark AI*' buffer.
+The AI shell streams briefs this way and never creates that buffer."
+  (let ((lark-ai-backend 'acp)
+        chunks)
+    (when (get-buffer lark-ai--buf-name)
+      (kill-buffer lark-ai--buf-name))
+    (cl-letf (((symbol-function 'lark-ai-acp-call)
+               (lambda (_system _user callback &optional on-chunk)
+                 (funcall on-chunk "Brief ")
+                 (funcall on-chunk "text")
+                 (funcall callback "Brief text"))))
+      (lark-ai--call-llm-stream "SYS" "USER" #'ignore
+                                (lambda (chunk) (push chunk chunks))))
+    (should (equal '("Brief " "text") (reverse chunks)))))
+
 (ert-deftest lark-ai-test-acp-finish-and-abort ()
   "Accumulate → finish invokes the callback; abort drops it; cancel is silent."
   (let ((lark-ai-acp--requests nil)

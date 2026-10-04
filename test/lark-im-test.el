@@ -245,6 +245,61 @@
         (should (equal "Alice"
                        (lark-contact--cache-get "ou_abc" "open_id")))))))
 
+(ert-deftest lark-im-test-append-sent-message ()
+  "A sent message is appended in place — no erase, no refetch."
+  (with-temp-buffer
+    (setq-local lark-im--chat-id "oc_1"
+                lark-im--chat-name "Demo"
+                lark-im--messages nil)
+    (lark-im--insert-message
+     '((message_id . "m1") (msg_type . "text")
+       (create_time . "2026-10-04 10:00")
+       (sender . ((name . "alice"))) (content . "existing message")))
+    (setq-local lark-im--messages '(((message_id . "m1"))))
+    (let ((before (buffer-substring-no-properties (point-min) (point-max))))
+      (lark-im--append-sent-message
+       (current-buffer) "my new reply"
+       '((data . ((message_id . "om_new")))))
+      (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+        ;; Old content intact (prefix preserved → nothing was erased).
+        (should (string-prefix-p before text))
+        (should (string-match-p "my new reply" text))
+        (should (string-match-p "Me" text)))
+      (should (= 2 (length lark-im--messages)))
+      ;; Echoed entry carries the server message id for reply-at-point.
+      (goto-char (point-max))
+      (search-backward "my new reply")
+      (should (equal "om_new"
+                     (get-text-property (point) 'lark-message-id))))))
+
+(ert-deftest lark-im-test-send-appends-instead-of-refreshing ()
+  "Send and reply callbacks echo locally; the old full refresh is gone."
+  (let (sent-args)
+    (cl-letf (((symbol-function 'read-string)
+               (lambda (&rest _) "hello there"))
+              ((symbol-function 'lark-im-chat-refresh)
+               (lambda (&rest _) (error "full refresh must not run")))
+              ((symbol-function 'lark--run-command)
+               (lambda (args callback &rest _)
+                 (setq sent-args args)
+                 (funcall callback '((data . ((message_id . "om_1"))))))))
+      (with-temp-buffer
+        (setq-local lark-im--chat-id "oc_1"
+                    lark-im--chat-name "Demo"
+                    lark-im--messages nil)
+        (lark-im-send "oc_1")
+        (should (equal '("im" "+messages-send" "--chat-id" "oc_1"
+                         "--text" "hello there")
+                       sent-args))
+        (should (string-match-p "hello there"
+                                (buffer-substring-no-properties
+                                 (point-min) (point-max))))
+        ;; Reply path too.
+        (goto-char (point-min))
+        (lark-im-reply)
+        (should (equal "+messages-reply" (cadr sent-args)))
+        (should (= 2 (length lark-im--messages)))))))
+
 ;;;; Inline media rendering
 
 (ert-deftest lark-im-test-scan-media-markers ()
