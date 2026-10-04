@@ -256,8 +256,12 @@ marker is kept (still openable via RET)."
   :type 'boolean
   :group 'lark-im)
 
-(defcustom lark-im-image-max-width 480
-  "Maximum pixel width for inline chat images."
+(defcustom lark-im-image-max-size 200
+  "Pixel cap applied to an inline chat image's LONGER side.
+The image is scaled with its aspect ratio preserved so that
+neither width nor height exceeds this — a tall phone screenshot
+gets height-capped, a wide one width-capped, so no image can
+dominate the buffer.  RET/click still opens the full-size file."
   :type 'integer
   :group 'lark-im)
 
@@ -387,7 +391,8 @@ download API needs it."
     (add-text-properties
      beg end
      (list 'display (create-image path nil nil
-                                   :max-width lark-im-image-max-width)
+                                   :max-width lark-im-image-max-size
+                                   :max-height lark-im-image-max-size)
            'help-echo (format "image %s — RET/click to open" key)))))
 
 (defun lark-im--fetch-then-display (msg-id key beg end)

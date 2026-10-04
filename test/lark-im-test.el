@@ -260,6 +260,24 @@ the destination."
                                    (lark-im--media-cached "img_v3_k2h"))))
       (delete-directory lark-im-media-cache-directory t))))
 
+(ert-deftest lark-im-test-display-image-caps-longer-side ()
+  "Inline images are fitted to a square box so the longer side is capped.
+Regression: only width was capped, so a tall phone screenshot
+rendered thousands of pixels high."
+  (let ((lark-im-image-max-size 100)
+        (seen nil))
+    (cl-letf (((symbol-function 'create-image)
+               (lambda (_path &rest args)
+                 (setq seen args)
+                 '(image :type jpeg))))
+      (with-temp-buffer
+        (insert "![Image](img_v3_k3h)")
+        (lark-im--display-image (point-min) (point-max)
+                                "img_v3_k3h" "/x/img.jpg")
+        (should (equal 100 (plist-get (cddr seen) :max-width)))
+        (should (equal 100 (plist-get (cddr seen) :max-height)))
+        (should (get-text-property (point-min) 'display))))))
+
 (ert-deftest lark-im-test-media-cache-dir-persistent ()
   "Default media cache lives under XDG cache home, not the temp dir.
 Regression: a temp-dir cache is purged by the OS, forcing media to
