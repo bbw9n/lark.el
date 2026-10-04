@@ -639,11 +639,11 @@ Shows incomplete tasks sorted by due date."
                 (lark-ui-separator 60) "\n")
         ;; Overdue
         (when overdue
-          (insert "\n" (propertize "Overdue" 'face '(:foreground "red" :weight bold)) "\n")
+          (insert "\n" (propertize "Overdue" 'face '(bold error)) "\n")
           (dolist (task overdue)
             (lark-tasks-agenda--insert-entry task 'overdue)))
         ;; Today
-        (insert "\n" (propertize "Today" 'face '(:foreground "blue" :weight bold)) "\n")
+        (insert "\n" (propertize "Today" 'face '(bold warning)) "\n")
         (if due-today
             (dolist (task due-today)
               (lark-tasks-agenda--insert-entry task 'today))

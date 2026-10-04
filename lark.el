@@ -104,6 +104,7 @@ Either \"user\" or \"bot\"."
 (autoload 'lark-drive-dispatch "lark-drive" nil t)
 (autoload 'lark-drive-list "lark-drive" nil t)
 (autoload 'lark-ai-ask "lark-ai" nil t)
+(autoload 'lark-ai-shell "lark-ai-shell" nil t)
 (autoload 'lark-ai-act "lark-ai" nil t)
 (autoload 'lark-ai-brief-on "lark-ai" nil t)
 

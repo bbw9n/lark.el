@@ -1052,6 +1052,75 @@ conversation history, and an editable input area follows."
     ;; Under the limit → unchanged.
     (should (equal "ab" (lark-ai-context--clip "ab" 'tail)))))
 
+;;;; Front-end dispatch (shell-maker session)
+
+(ert-deftest lark-ai-test-frontend-dispatch ()
+  "UI helpers route to an installed front-end instead of the classic buffer."
+  (when (get-buffer "*Lark AI*") (kill-buffer "*Lark AI*"))
+  (let (logged presented cleared tools)
+    (let ((lark-ai--frontend
+           (list :progress-log (lambda (fmt &rest args)
+                                 (push (apply #'format fmt args) logged))
+                 :render-tool-call (lambda (i c s) (push (list i c s) tools))
+                 :stream-preview (lambda () #'ignore)
+                 :clear-waiting (lambda () (setq cleared t))
+                 :present (lambda (c sk) (setq presented (cons c sk))))))
+      (lark-ai--progress-log "step %d" 1)
+      (lark-ai--render-tool-call 0 '("docs" "+fetch") 'done)
+      (should (functionp (lark-ai--stream-preview-handler)))
+      (lark-ai--clear-waiting)
+      (lark-ai--present "hi" nil))
+    (should (equal '("step 1") logged))
+    (should (equal '((0 ("docs" "+fetch") done)) tools))
+    (should cleared)
+    (should (equal '("hi" . nil) presented))
+    ;; Everything was routed — the classic buffer was never created.
+    (should-not (get-buffer "*Lark AI*"))))
+
+(ert-deftest lark-ai-test-shell-execute-flow ()
+  "The shell executor drives the engine and owns its own session state."
+  (require 'lark-ai-shell)
+  (let* ((written "") (finished 'unset)
+         (shellbuf (generate-new-buffer " *lark-ai-shell-test*"))
+         (shell (list (cons :buffer shellbuf)
+                      (cons :write-output
+                            (lambda (s &optional _force)
+                              (setq written (concat written s))))
+                      (cons :finish-output (lambda (ok) (setq finished ok)))))
+         (lark-ai--frontend nil)
+         ran)
+    (unwind-protect
+        (cl-letf (((symbol-function 'lark-ai--select-skills)
+                   (lambda (_prompt _ctx cb) (funcall cb '("lark-shared"))))
+                  ((symbol-function 'lark-ai-agent--run)
+                   (lambda (prompt _ctx history _session skills)
+                     (setq ran (list prompt history skills))
+                     ;; The engine ends a turn through the dispatch seam.
+                     (lark-ai--progress-log "Agent loop complete.")
+                     (lark-ai--render-tool-call
+                      0 '("docs" "+fetch" "--doc" "d1") 'done)
+                     (lark-ai--present "ANSWER" nil))))
+          (lark-ai-shell--execute "do it" shell)
+          (should (equal "do it" (car ran)))
+          ;; First turn: prior history is empty.
+          (should (null (cadr ran)))
+          ;; Session history now holds user + assistant.
+          (let ((hist (lark-ai-session-history
+                       (buffer-local-value 'lark-ai-shell--session shellbuf))))
+            (should (equal '("assistant" . "ANSWER") (car hist)))
+            (should (equal '("user" . "do it") (cadr hist))))
+          ;; Output written into the shell; turn finished; seam released.
+          (should (string-match-p "ANSWER" written))
+          (should (string-match-p "✓ lark-cli docs \\+fetch" written))
+          (should (string-match-p "Agent loop complete" written))
+          (should (eq finished t))
+          (should-not lark-ai--frontend)
+          ;; Busy guard: a second submit while a turn is in flight.
+          (setq lark-ai--frontend '(:present ignore))
+          (lark-ai-shell--execute "again" shell)
+          (should (string-match-p "already in flight" written)))
+      (kill-buffer shellbuf))))
+
 ;;;; Skill routing context clipping
 
 (ert-deftest lark-ai-test-routing-context-clip ()

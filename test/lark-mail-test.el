@@ -121,5 +121,75 @@
                   '(((name . "Alice")) ((address . "bob@x.com"))))
                  "Alice, bob@x.com")))
 
+;;;; Compose buffer
+
+(defmacro lark-mail-test--with-compose (kind id headers &rest body)
+  "Open a compose buffer for KIND/ID/HEADERS without touching windows."
+  (declare (indent 3))
+  `(cl-letf (((symbol-function 'pop-to-buffer)
+              (lambda (buf &rest _) (set-buffer buf))))
+     (unwind-protect
+         (progn
+           (lark-mail-compose--open ,kind ,id ,headers "test")
+           (with-current-buffer lark-mail-compose--buffer-name
+             ,@body))
+       (when-let ((b (get-buffer lark-mail-compose--buffer-name)))
+         (with-current-buffer b (set-buffer-modified-p nil))
+         (kill-buffer b)))))
+
+(ert-deftest lark-mail-test-compose-parse ()
+  "Headers and body split at the separator; reply buffers are body-only."
+  (cl-letf (((symbol-function 'pop-to-buffer)
+             (lambda (buf &rest _) (set-buffer buf))))
+    ;; New-mail shape.
+    (lark-mail-test--with-compose 'new nil
+        '(("To" . "a@x.com") ("Cc" . "") ("Subject" . ""))
+      (goto-char (point-max))
+      (insert "Hello\nthere")
+      (goto-char (point-min))
+      (search-forward "Subject:")
+      (end-of-line) (insert " Greetings")
+      (let* ((p (lark-mail-compose--parse))
+             (h (plist-get p :headers)))
+        (should (equal "a@x.com" (lark-mail-compose--header h "to")))
+        (should (equal "Greetings" (lark-mail-compose--header h "subject")))
+        (should-not (lark-mail-compose--header h "cc"))
+        (should (equal "Hello\nthere" (plist-get p :body)))))
+    ;; Reply shape: no headers, whole buffer is body.
+    (lark-mail-test--with-compose 'reply "msg1" nil
+      (insert "Sounds good!")
+      (let ((p (lark-mail-compose--parse)))
+        (should-not (plist-get p :headers))
+        (should (equal "Sounds good!" (plist-get p :body)))))))
+
+(ert-deftest lark-mail-test-compose-send-reply ()
+  "C-c C-c on a reply fires mail +reply with the composed body."
+  (let (sent)
+    (cl-letf (((symbol-function 'lark--run-command)
+               (lambda (args &rest _) (setq sent args)))
+              ((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
+      (lark-mail-test--with-compose 'reply "om_9" nil
+        (insert "The print works gets my vote")
+        (lark-mail-compose-send)))
+    (should (equal '("mail" "+reply" "--message-id" "om_9"
+                     "--body" "The print works gets my vote"
+                     "--confirm-send")
+                   sent))
+    ;; Panel closed after send.
+    (should-not (get-buffer lark-mail-compose--buffer-name))))
+
+(ert-deftest lark-mail-test-compose-send-new-validates ()
+  "New mail requires To and Subject before anything is sent."
+  (let (sent)
+    (cl-letf (((symbol-function 'lark--run-command)
+               (lambda (args &rest _) (setq sent args)))
+              ((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
+      (lark-mail-test--with-compose 'new nil
+          '(("To" . "") ("Cc" . "") ("Subject" . ""))
+        (goto-char (point-max))
+        (insert "body text")
+        (should-error (lark-mail-compose-send) :type 'user-error)
+        (should-not sent)))))
+
 (provide 'lark-mail-test)
 ;;; lark-mail-test.el ends here

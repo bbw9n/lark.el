@@ -457,84 +457,204 @@ to plain text."
      recipients ", "))
    (t (format "%s" recipients))))
 
-;;;; Compose / Send
+;;;; Compose buffer — a dedicated panel, magit-commit style.
 ;; CLI: mail +send --to X --subject X --body X [--cc X] [--confirm-send]
+;;      mail +reply --message-id X --body X [--confirm-send]
+;;      mail +forward --message-id X --to X [--body X] [--confirm-send]
+;;
+;; New mail, reply and forward all open *Lark Mail Compose* in a
+;; window below the current one.  Editable headers sit above a
+;; separator line (message-mode convention), the body below it.
+;; C-c C-c sends, C-c C-d saves a draft (new mail), C-c C-k aborts;
+;; the prior window configuration is restored afterwards.
 
+(defconst lark-mail-compose--buffer-name "*Lark Mail Compose*")
 
-;;;###autoload (autoload 'lark-mail-compose "lark-mail" nil t)
-(transient-define-prefix lark-mail-compose ()
-  "Compose a new Lark mail."
-  ["Headers"
-   ("t" "To"      "--to=" :prompt "To (email addresses, comma-separated): ")
-   ("c" "Cc"      "--cc=" :prompt "Cc: ")
-   ("s" "Subject" "--subject=" :prompt "Subject: ")]
-  ["Body"
-   ("b" "Body"    "--body=" :prompt "Body text: ")]
-  ["Actions"
-   ("RET" "Send"        lark-mail--do-send)
-   ("d"   "Save draft"  lark-mail--do-save-draft)
-   ("q"   "Cancel"      transient-quit-all)])
+(defconst lark-mail-compose--separator "--text follows this line--"
+  "Line separating editable headers from the mail body.")
 
-(defun lark-mail--do-send (&rest _args)
-  "Execute mail send with transient arguments."
+(defvar-local lark-mail-compose--kind nil
+  "What this compose buffer produces: `new', `reply' or `forward'.")
+
+(defvar-local lark-mail-compose--message-id nil
+  "Message id being replied to / forwarded, when applicable.")
+
+(defvar-local lark-mail-compose--window-config nil
+  "Window configuration to restore after send/abort.")
+
+(defvar lark-mail-compose-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'lark-mail-compose-send)
+    (define-key map (kbd "C-c C-d") #'lark-mail-compose-save-draft)
+    (define-key map (kbd "C-c C-k") #'lark-mail-compose-abort)
+    map)
+  "Keymap for `lark-mail-compose-mode'.")
+
+(define-derived-mode lark-mail-compose-mode text-mode "Lark Compose"
+  "Major mode for composing Lark mail in a dedicated buffer.
+
+\\{lark-mail-compose-mode-map}")
+
+(defun lark-mail-compose--open (kind message-id headers banner)
+  "Open the compose panel for KIND (`new'/`reply'/`forward').
+MESSAGE-ID is the message acted on (nil for new mail), HEADERS an
+alist of editable (NAME . INITIAL-VALUE) header lines, BANNER the
+header-line description."
+  (let ((config (current-window-configuration))
+        (buf (get-buffer-create lark-mail-compose--buffer-name)))
+    (when (and (buffer-modified-p buf)
+               (not (y-or-n-p "Discard the unsent mail being composed? ")))
+      (user-error "Kept the existing compose buffer"))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t)) (erase-buffer))
+      (lark-mail-compose-mode)
+      (setq lark-mail-compose--kind kind
+            lark-mail-compose--message-id message-id
+            lark-mail-compose--window-config config)
+      (setq header-line-format
+            (format " %s — C-c C-c send%s · C-c C-k abort"
+                    banner
+                    (if (eq kind 'new) " · C-c C-d save draft" "")))
+      (dolist (h headers)
+        (insert (propertize (concat (car h) ":")
+                            'face 'font-lock-keyword-face)
+                " " (or (cdr h) "") "\n"))
+      (when headers
+        (insert (propertize lark-mail-compose--separator
+                            'face 'font-lock-comment-face)
+                "\n"))
+      ;; Point: end of the first header's value, or the body.
+      (goto-char (point-min))
+      (when headers (end-of-line))
+      (set-buffer-modified-p nil))
+    (pop-to-buffer buf '((display-buffer-below-selected)
+                         (window-height . 0.4)))
+    buf))
+
+(defun lark-mail-compose--parse ()
+  "Parse the compose buffer into (:headers ALIST :body STRING).
+Header names are downcased; the body is everything after the
+separator (or the whole buffer when there are no headers)."
+  (let* ((text (buffer-substring-no-properties (point-min) (point-max)))
+         (sep-re (concat "^" (regexp-quote lark-mail-compose--separator) "\n?"))
+         (head (when (string-match sep-re text)
+                 (substring text 0 (match-beginning 0))))
+         (body (if head (substring text (match-end 0)) text))
+         (headers
+          (when head
+            (delq nil
+                  (mapcar (lambda (line)
+                            (when (string-match
+                                   "^\\([A-Za-z-]+\\):[ \t]*\\(.*\\)$" line)
+                              (cons (downcase (match-string 1 line))
+                                    (string-trim (match-string 2 line)))))
+                          (split-string head "\n" t))))))
+    (list :headers headers :body (string-trim body))))
+
+(defun lark-mail-compose--header (headers name)
+  "Return non-empty header NAME from HEADERS, or nil."
+  (let ((v (alist-get name headers nil nil #'equal)))
+    (and v (not (string-empty-p v)) v)))
+
+(defun lark-mail-compose--finish (args success-msg)
+  "Fire the CLI call for ARGS, close the panel, report SUCCESS-MSG."
+  (let ((buf (current-buffer))
+        (config lark-mail-compose--window-config))
+    (message "Lark: sending...")
+    (lark--run-command args (lambda (_data) (message "Lark: %s" success-msg)))
+    (set-buffer-modified-p nil)
+    (kill-buffer buf)
+    (when config (set-window-configuration config))))
+
+(defun lark-mail-compose-send ()
+  "Send the mail being composed (C-c C-c)."
   (interactive)
-  (let ((args (transient-args 'lark-mail-compose)))
-    (unless args (user-error "No mail details provided"))
-    (when (yes-or-no-p "Send this email? ")
-      (message "Lark: sending mail...")
-      (lark--run-command
-       (append '("mail" "+send" "--confirm-send") args)
-       (lambda (_data)
-         (message "Lark: mail sent"))))))
+  (let* ((parsed (lark-mail-compose--parse))
+         (headers (plist-get parsed :headers))
+         (body (plist-get parsed :body)))
+    (pcase lark-mail-compose--kind
+      ('reply
+       (when (string-empty-p body) (user-error "Empty reply"))
+       (when (y-or-n-p "Send this reply? ")
+         (lark-mail-compose--finish
+          (list "mail" "+reply" "--message-id" lark-mail-compose--message-id
+                "--body" body "--confirm-send")
+          "reply sent")))
+      ('forward
+       (let ((to (or (lark-mail-compose--header headers "to")
+                     (user-error "Forward needs a To: address"))))
+         (when (y-or-n-p (format "Forward to %s? " to))
+           (lark-mail-compose--finish
+            (append (list "mail" "+forward"
+                          "--message-id" lark-mail-compose--message-id
+                          "--to" to "--confirm-send")
+                    (unless (string-empty-p body) (list "--body" body)))
+            "mail forwarded"))))
+      ('new
+       (let ((to (or (lark-mail-compose--header headers "to")
+                     (user-error "Mail needs a To: address")))
+             (subject (or (lark-mail-compose--header headers "subject")
+                          (user-error "Mail needs a Subject:")))
+             (cc (lark-mail-compose--header headers "cc")))
+         (when (string-empty-p body) (user-error "Empty body"))
+         (when (y-or-n-p (format "Send to %s? " to))
+           (lark-mail-compose--finish
+            (append (list "mail" "+send" "--to" to "--subject" subject
+                          "--body" body "--confirm-send")
+                    (when cc (list "--cc" cc)))
+            "mail sent"))))
+      (_ (user-error "Not a Lark compose buffer")))))
 
-(defun lark-mail--do-save-draft (&rest _args)
-  "Save mail as draft with transient arguments."
+(defun lark-mail-compose-save-draft ()
+  "Save the mail being composed as a draft (new mail only)."
   (interactive)
-  (let ((args (transient-args 'lark-mail-compose)))
-    (unless args (user-error "No mail details provided"))
-    (message "Lark: saving draft...")
-    (lark--run-command
-     (append '("mail" "+draft-create") args)
-     (lambda (_data)
-       (message "Lark: draft saved")))))
+  (unless (eq lark-mail-compose--kind 'new)
+    (user-error "Drafts are only supported for new mail"))
+  (let* ((parsed (lark-mail-compose--parse))
+         (headers (plist-get parsed :headers))
+         (body (plist-get parsed :body))
+         (to (lark-mail-compose--header headers "to"))
+         (subject (lark-mail-compose--header headers "subject")))
+    (lark-mail-compose--finish
+     (append '("mail" "+draft-create")
+             (when to (list "--to" to))
+             (when subject (list "--subject" subject))
+             (unless (string-empty-p body) (list "--body" body)))
+     "draft saved")))
 
-;;;; Reply
-;; CLI: mail +reply --message-id X --body X [--confirm-send]
+(defun lark-mail-compose-abort ()
+  "Abort composing: kill the panel and restore the windows (C-c C-k)."
+  (interactive)
+  (when (or (not (buffer-modified-p))
+            (y-or-n-p "Discard this unsent mail? "))
+    (let ((config lark-mail-compose--window-config))
+      (set-buffer-modified-p nil)
+      (kill-buffer)
+      (when config (set-window-configuration config)))))
+
+;;;; Compose / Reply / Forward entry points
+
+;;;###autoload
+(defun lark-mail-compose ()
+  "Compose a new Lark mail in a dedicated panel."
+  (interactive)
+  (lark-mail-compose--open
+   'new nil '(("To" . "") ("Cc" . "") ("Subject" . "")) "New mail"))
 
 (defun lark-mail-reply ()
-  "Reply to the mail at point or in the current detail buffer."
+  "Reply to the mail at point in a dedicated compose panel."
   (interactive)
   (let ((id (or (lark-mail--id-at-point) lark-mail--mail-id)))
     (unless id (user-error "No mail selected"))
-    (let ((body (read-string "Reply: ")))
-      (when (string-empty-p body)
-        (user-error "Empty reply"))
-      (when (yes-or-no-p "Send this reply? ")
-        (message "Lark: sending reply...")
-        (lark--run-command
-         (list "mail" "+reply" "--message-id" id
-               "--body" body "--confirm-send")
-         (lambda (_data)
-           (message "Lark: reply sent")))))))
-
-;;;; Forward
-;; CLI: mail +forward --message-id X --to X [--body X] [--confirm-send]
+    (lark-mail-compose--open 'reply id nil "Reply")))
 
 (defun lark-mail-forward ()
-  "Forward the mail at point."
+  "Forward the mail at point via a dedicated compose panel.
+The body, if any, is sent as the forward note."
   (interactive)
   (let ((id (or (lark-mail--id-at-point) lark-mail--mail-id)))
     (unless id (user-error "No mail selected"))
-    (let ((to (read-string "Forward to (email): ")))
-      (when (string-empty-p to)
-        (user-error "No recipient specified"))
-      (when (yes-or-no-p (format "Forward to %s? " to))
-        (message "Lark: forwarding mail...")
-        (lark--run-command
-         (list "mail" "+forward" "--message-id" id
-               "--to" to "--confirm-send")
-         (lambda (_data)
-           (message "Lark: mail forwarded")))))))
+    (lark-mail-compose--open 'forward id '(("To" . "")) "Forward")))
 
 ;;;; Delete
 ;; CLI: mail user_mailbox.messages delete --params '{"user_mailbox_id":"me","message_id":"X"}'

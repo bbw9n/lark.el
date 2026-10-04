@@ -53,6 +53,19 @@
 (defvar-local lark-ai--session nil
   "The `lark-ai-session' for this AI buffer.")
 
+(defvar lark-ai--frontend nil
+  "UI callbacks overriding the classic *Lark AI* buffer for a turn.
+nil means the classic fragment-based UI.  An alternative front-end
+\(e.g. `lark-ai-shell') sets this for the duration of its turn to a
+plist of functions:
+  :progress-log     (FMT &rest ARGS)
+  :render-tool-call (ITER CMD STATUS)
+  :stream-preview   () → chunk handler (or nil)
+  :clear-waiting    ()
+  :present          (CONTENT SKIP-HISTORY)
+Only one turn can be in flight at a time, which the owning
+front-end is responsible for enforcing.")
+
 (defun lark-ai--session ()
   "Return the session for the AI buffer, creating it on first use.
 Always operates against the AI buffer, not the current buffer, so
@@ -129,14 +142,18 @@ plain typing in the follow-up input area below isn't intercepted.")
 ;;; Progress log — appends to the current turn's log fragment
 
 (defun lark-ai--progress-log (fmt &rest args)
-  "Add a timestamped entry to the log fragment."
-  (let ((entry (format "[%s] %s\n"
-                       (format-time-string "%H:%M:%S")
-                       (apply #'format fmt args))))
-    (when-let ((buf (get-buffer lark-ai--buf-name)))
-      (with-current-buffer buf
-        (lark-ai-ui-append-fragment
-         (lark-ai--frag "log") entry)))))
+  "Add a timestamped entry to the log fragment.
+Routed to the active alternative front-end when one is installed
+\(see `lark-ai--frontend')."
+  (if-let ((fn (plist-get lark-ai--frontend :progress-log)))
+      (apply fn fmt args)
+    (let ((entry (format "[%s] %s\n"
+                         (format-time-string "%H:%M:%S")
+                         (apply #'format fmt args))))
+      (when-let ((buf (get-buffer lark-ai--buf-name)))
+        (with-current-buffer buf
+          (lark-ai-ui-append-fragment
+           (lark-ai--frag "log") entry))))))
 
 ;;; Header progress bar
 ;;
@@ -410,26 +427,31 @@ The returned closure accumulates chunks and updates the plan fragment
 to \"Waiting for LLM response…\" plus a rolling tail of the last
 `lark-ai-stream-tail-lines' lines.  Use it as the CHUNK-HANDLER arg of
 `lark-ai--call-llm-stream'."
-  (let ((acc ""))
-    (lambda (chunk)
-      (setq acc (concat acc chunk))
-      (when-let ((buf (get-buffer lark-ai--buf-name)))
-        (with-current-buffer buf
-          (when (lark-ai-ui-find-fragment (lark-ai--frag "plan"))
-            (let ((tail (lark-ai--stream-tail acc lark-ai-stream-tail-lines)))
-              (lark-ai-ui-update-fragment
-               (lark-ai--frag "plan") nil
-               (concat
-                (propertize "Waiting for LLM response…\n"
-                            'face 'font-lock-comment-face)
-                (and tail (propertize tail 'face 'shadow)))))))))))
+  (if lark-ai--frontend
+      (when-let ((fn (plist-get lark-ai--frontend :stream-preview)))
+        (funcall fn))
+    (let ((acc ""))
+      (lambda (chunk)
+        (setq acc (concat acc chunk))
+        (when-let ((buf (get-buffer lark-ai--buf-name)))
+          (with-current-buffer buf
+            (when (lark-ai-ui-find-fragment (lark-ai--frag "plan"))
+              (let ((tail (lark-ai--stream-tail acc lark-ai-stream-tail-lines)))
+                (lark-ai-ui-update-fragment
+                 (lark-ai--frag "plan") nil
+                 (concat
+                  (propertize "Waiting for LLM response…\n"
+                              'face 'font-lock-comment-face)
+                  (and tail (propertize tail 'face 'shadow))))))))))))
 
 (defun lark-ai--clear-waiting ()
   "Clear the loading preview in the current turn's plan fragment."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (when (lark-ai-ui-find-fragment (lark-ai--frag "plan"))
-        (lark-ai-ui-update-fragment (lark-ai--frag "plan") nil "")))))
+  (if-let ((fn (plist-get lark-ai--frontend :clear-waiting)))
+      (funcall fn)
+    (when-let ((buf (get-buffer lark-ai--buf-name)))
+      (with-current-buffer buf
+        (when (lark-ai-ui-find-fragment (lark-ai--frag "plan"))
+          (lark-ai-ui-update-fragment (lark-ai--frag "plan") nil ""))))))
 
 ;;; Tool-call cards — per-action panes in the agent loop.
 ;;
@@ -515,22 +537,25 @@ still receives the original, unabbreviated command."
 On first call (STATUS=`running'), inserts a fragment just above the
 plan fragment containing the sh-fontified command body.  On subsequent
 calls, updates only the label — so a user-folded body stays folded
-across the running → done/error transition."
-  (when-let ((buf (get-buffer lark-ai--buf-name)))
-    (with-current-buffer buf
-      (let ((id (lark-ai--frag (format "tool-%d" iter)))
-            (label (lark-ai--tool-call-label cmd status)))
-        (cond
-         ((lark-ai-ui-find-fragment id)
-          (lark-ai-ui-update-label id label))
-         (t
-          (let ((plan-region (lark-ai-ui-find-fragment
-                              (lark-ai--frag "plan"))))
-            (save-excursion
-              (goto-char (if plan-region (car plan-region) (point-max)))
-              (lark-ai-ui-insert-fragment
-               id 'tool-call label
-               (lark-ai--format-cmd-body cmd))))))))))
+across the running → done/error transition.
+Routed to the active alternative front-end when one is installed."
+  (if-let ((fn (plist-get lark-ai--frontend :render-tool-call)))
+      (funcall fn iter cmd status)
+    (when-let ((buf (get-buffer lark-ai--buf-name)))
+      (with-current-buffer buf
+        (let ((id (lark-ai--frag (format "tool-%d" iter)))
+              (label (lark-ai--tool-call-label cmd status)))
+          (cond
+           ((lark-ai-ui-find-fragment id)
+            (lark-ai-ui-update-label id label))
+           (t
+            (let ((plan-region (lark-ai-ui-find-fragment
+                                (lark-ai--frag "plan"))))
+              (save-excursion
+                (goto-char (if plan-region (car plan-region) (point-max)))
+                (lark-ai-ui-insert-fragment
+                 id 'tool-call label
+                 (lark-ai--format-cmd-body cmd)))))))))))
 
 ;;; Plan display — update the plan fragment
 
@@ -820,7 +845,15 @@ in the context, not in a CLI result."
 When SKIP-HISTORY is non-nil, do not push CONTENT into the
 conversation history — used for error fallbacks like
 parse-plan failure where the raw text would otherwise pollute
-future turns."
+future turns.
+Routed to the active alternative front-end when one is installed —
+the front-end then owns history bookkeeping for its session."
+  (if-let ((fn (plist-get lark-ai--frontend :present)))
+      (funcall fn content skip-history)
+    (lark-ai--present-classic content skip-history)))
+
+(defun lark-ai--present-classic (content skip-history)
+  "Classic *Lark AI* buffer implementation of `lark-ai--present'."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
       (lark-ai--ensure-output-fragment)
