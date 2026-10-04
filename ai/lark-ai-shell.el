@@ -162,15 +162,31 @@ SESSION receives the history bookkeeping the classic UI would do."
        (funcall finish t)
        (lark-ai-shell--fontify (map-elt shell :buffer))))))
 
+(defface lark-ai-shell-table-zebra
+  '((t :inherit hl-line :extend t))
+  "Face for alternating markdown-table rows in the Lark AI shell.
+Inherits the theme's subtle current-line background instead of
+markdown-overlays' default `lazy-highlight', which is loud in
+most themes."
+  :group 'lark-ai)
+
+(defvar markdown-overlays--table-zebra-face)
+
 (defun lark-ai-shell--fontify (buf)
   "Render markdown markup in BUF via overlays, when available.
 `markdown-overlays' ships with shell-maker (the same renderer
 agent-shell/chatgpt-shell use): headers, bold, code fences and
 tables display styled, with the raw markup hidden.  Silently a
-no-op when the library is missing."
+no-op when the library is missing.
+The table zebra face is softened buffer-locally (see
+`lark-ai-shell-table-zebra') so other shell-maker shells keep
+their own styling."
   (when (and (buffer-live-p buf)
              (require 'markdown-overlays nil t))
     (with-current-buffer buf
+      (when (boundp 'markdown-overlays--table-zebra-face)
+        (setq-local markdown-overlays--table-zebra-face
+                    'lark-ai-shell-table-zebra))
       (markdown-overlays-put))))
 
 ;;;; Abort
