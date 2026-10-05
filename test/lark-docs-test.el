@@ -176,6 +176,20 @@
     (when-let ((buf (get-buffer "*Lark Doc: Test*")))
       (kill-buffer buf))))
 
+;; Visiting doc.org is what lets gptel-rewrite edits be pushed back
+;; via `org-lark-publish-buffer' (which needs a file buffer).
+(ert-deftest lark-docs-test-org-buffer-visits-cache-file ()
+  "With BASE-DIR, the org buffer visits BASE-DIR/doc.org and is saved."
+  (let ((dir (make-temp-file "lark-docs-test" t)))
+    (lark-docs--display-org-buffer "#+lark_doc_id: tok\n\n* H\n" "FileT" "tok" dir)
+    (unwind-protect
+        (with-current-buffer "*Lark Doc: FileT*"
+          (should (equal buffer-file-name (expand-file-name "doc.org" dir)))
+          (should-not (buffer-modified-p))
+          (should (file-exists-p buffer-file-name)))
+      (when-let ((buf (get-buffer "*Lark Doc: FileT*"))) (kill-buffer buf))
+      (delete-directory dir t))))
+
 (ert-deftest lark-docs-test-fetch-routes-to-org ()
   "lark-docs-fetch delegates to fetch-as-org when org mode and org-lark present."
   (let ((lark-docs-render-mode 'org)

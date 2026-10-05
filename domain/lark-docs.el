@@ -695,18 +695,35 @@ all happen in background processes so Emacs stays responsive."
 (defun lark-docs--display-org-buffer (org-content title token &optional base-dir)
   "Display ORG-CONTENT in an org-mode buffer named after TITLE.
 TOKEN is stored as the doc token.  BASE-DIR, when non-nil, is set
-as `default-directory' so relative file links (images) resolve."
-  (let ((buf (get-buffer-create (format "*Lark Doc: %s*" title))))
+as `default-directory' so relative file links (images) resolve,
+and the buffer visits BASE-DIR/doc.org — so it can be edited in
+place (by hand or with `gptel-rewrite') and pushed back with
+`org-lark-publish-buffer' (the #+lark_doc_id header targets the
+same remote doc)."
+  (let* ((file (and base-dir (expand-file-name "doc.org" base-dir)))
+         (name (format "*Lark Doc: %s*" title))
+         (buf (if file (find-file-noselect file) (get-buffer-create name))))
     (with-current-buffer buf
+      ;; Re-fetching must not silently discard unpublished edits.
+      (when (and file (buffer-modified-p)
+                 (not (yes-or-no-p
+                       (format "%s has unsaved edits; discard them? " name))))
+        (user-error "Lark: re-fetch cancelled; local edits kept"))
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert org-content))
+      (when file
+        (make-directory base-dir t)
+        (save-buffer)
+        (rename-buffer name t))
       (org-mode)
       (when base-dir
         (setq-local default-directory (file-name-as-directory base-dir)))
       (setq-local lark-docs--doc-token token)
       (goto-char (point-min))
-      (setq header-line-format (format " Lark Doc (org): %s" title))
+      (setq header-line-format
+            (format " Lark Doc (org): %s%s" title
+                    (if file "  —  M-x org-lark-publish-buffer to push edits" "")))
       ;; Display inline images if any were downloaded
       (when (fboundp 'org-display-inline-images)
         (org-display-inline-images)))
