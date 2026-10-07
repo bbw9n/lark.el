@@ -3,6 +3,7 @@
 ;; Copyright (C) 2026 bbw9n
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 
 ;;; Code:
 
