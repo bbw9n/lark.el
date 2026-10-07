@@ -3,6 +3,7 @@
 ;; Copyright (C) 2026 bbw9n
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
+;; Assisted-by: Claude:claude-opus-5
 ;; URL: https://github.com/bbw9n/lark.el
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1") (org-lark "0.2"))
