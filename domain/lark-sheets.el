@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -79,7 +80,7 @@ Returns a list of lists (rows of cells)."
 ;;;; Org-table conversion
 
 (defun lark-sheets--values-to-org-table (values)
-  "Convert a 2D VALUES list to an org-mode table string.
+  "Convert a 2D VALUES list to an Org table string.
 First row is treated as the header."
   (when values
     (let ((lines nil)
@@ -100,7 +101,7 @@ First row is treated as the header."
       (mapconcat #'identity (nreverse lines) "\n"))))
 
 (defun lark-sheets--org-table-to-values ()
-  "Parse the org-mode table at point into a 2D list of strings.
+  "Parse the Org table at point into a 2D list of strings.
 Point must be inside an org table."
   (unless (org-at-table-p)
     (user-error "Not inside an org table"))
@@ -234,7 +235,7 @@ Fetches the first 100 rows from the sheet under the cursor."
 (define-derived-mode lark-sheets-mode org-mode
   "Lark Sheet"
   "Major mode for viewing/editing Lark spreadsheet data as org tables.
-The buffer content is an org-mode table that can be edited normally.
+The buffer content is an Org table that can be edited normally.
 Use \\[lark-sheets-write-table] to push changes back, or
 \\[lark-sheets-append-table] to append new rows."
   (setq-local buffer-read-only nil))

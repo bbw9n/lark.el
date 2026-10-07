@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -178,7 +179,7 @@ ID-TYPE defaults to \"open_id\".  Returns USER-ID as fallback."
 ;; unresolved id once and patches every occurrence in place.
 
 (defun lark-contact-annotate (user-id &optional id-type)
-  "Return a display string for USER-ID without blocking.
+  "Return a display string for USER-ID of ID-TYPE without blocking.
 The cached display name when known; otherwise USER-ID itself,
 propertized with `lark-contact-ref' so a later
 `lark-contact-resolve-buffer-async' pass can patch it in place."

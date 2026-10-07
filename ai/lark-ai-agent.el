@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -247,7 +248,8 @@ selects the skills whose docs are included in the system prompt."
   (lark-ai-agent--step prompt context history session 0))
 
 (defun lark-ai-agent--step (prompt context history session iter)
-  "Run iteration ITER: ask the model for the next action, then dispatch it."
+  "Run iteration ITER: ask the model for the next action, then dispatch it.
+PROMPT, CONTEXT, HISTORY and SESSION are the turn's loop state."
   (cond
    ;; Aborted/cancelled between hops — stop quietly.
    ((not (eq (lark-ai-session-phase session) 'executing)) nil)
@@ -273,6 +275,7 @@ selects the skills whose docs are included in the system prompt."
 
 (defun lark-ai-agent--handle-response (response prompt context history session iter)
   "Dispatch the model's RESPONSE for iteration ITER.
+PROMPT, CONTEXT, HISTORY and SESSION are the turn's loop state.
 The \"Waiting…/stream tail\" preview is left in place: the next step's
 stream overwrites it, and the loop's terminal `lark-ai-agent--finish' /
 `lark-ai-agent--force-final' clear it.  Clearing it here (mid-loop)
@@ -298,6 +301,7 @@ update would create a duplicate."
 
 (defun lark-ai-agent--dispatch-command (action prompt context history session iter)
   "Validate and run the \"command\" ACTION, then continue the loop.
+PROMPT, CONTEXT, HISTORY, SESSION and ITER are the loop state.
 Renders a tool-call card per dispatched command — inserted in the
 running state before the CLI fires, then updated with the terminal
 status (`done', `error', or `skipped') so the user has a visible,
@@ -357,14 +361,15 @@ passed through so the tool-call card can mark each step accurately."
                      (cons 'exit_code exit-code)))))))
 
 (defun lark-ai-agent--finish (session answer)
-  "End the loop and present ANSWER to the user."
+  "End SESSION's loop and present ANSWER to the user."
   (setf (lark-ai-session-phase session) 'done)
   (lark-ai--clear-waiting)
   (lark-ai--progress-log "Agent loop complete.")
   (lark-ai--present answer))
 
 (defun lark-ai-agent--force-final (prompt context history session)
-  "Make a final, non-looping LLM call to answer after the step cap is hit."
+  "Make a final, non-looping LLM call to answer after the step cap is hit.
+PROMPT, CONTEXT, HISTORY and SESSION are the turn's loop state."
   (let ((system (lark-ai-skills-build-synthesis-prompt
                  (lark-ai-session-skills session)))
         (user (concat

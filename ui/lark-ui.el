@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -153,7 +154,7 @@ engine is shared with the loading spinner.  Filled cells use the
 (defun lark-ui-insert-field (label value &optional width indent)
   "Insert a \"LABEL: VALUE\" line at point when VALUE is a non-empty string.
 The label, with a trailing colon, is left-padded to WIDTH columns
-(default 14) and shown in `font-lock-keyword-face'.  INDENT is leading
+\(default 14) and shown in `font-lock-keyword-face'.  INDENT is leading
 whitespace before the label (default two spaces).  VALUE may span
 multiple lines; continuation lines are aligned under the first line's
 value column.  Does nothing when VALUE is nil, not a string, or empty."

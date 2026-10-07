@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -107,7 +108,7 @@ about whether it's prose or markup)."
    (t s)))
 
 (defun lark-ai-context-graph--squish-whitespace (s)
-  "Collapse runs of internal whitespace in S to a single space.
+  "Collapse each stretch of internal whitespace in S to one space.
 Lark messages can carry embedded newlines and tab runs (card layouts,
 multi-line text); for a brief snippet a one-line, single-spaced form
 reads much better.  Multi-line breaks become `· ' bullets, and any
@@ -183,6 +184,7 @@ nothing to the output (the brief still ships)."
 
 (defun lark-ai-context-graph--docs-provider (topic budget done-fn)
   "Search Lark docs/wiki/sheets for TOPIC; format markdown, call DONE-FN.
+BUDGET caps the formatted output size.
 Backed by `lark-cli docs +search --query …'.  On CLI failure (timeout,
 non-zero exit, or unparseable JSON), DONE-FN is called with nil so the
 gatherer skips this section."
@@ -258,6 +260,7 @@ RESULT carries no usable items so the section is skipped entirely."
 
 (defun lark-ai-context-graph--im-provider (topic budget done-fn)
   "Search messages for TOPIC; format markdown, call DONE-FN.
+BUDGET caps the formatted output size.
 Backed by `lark-cli im +messages-search --query … --no-reactions'.
 On CLI failure DONE-FN is called with nil so the gatherer skips this
 section instead of poisoning the brief."

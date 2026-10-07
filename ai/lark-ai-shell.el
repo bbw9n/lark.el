@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -71,7 +72,7 @@ exactly like `lark-ai-ask' — open the shell from a doc or chat
 buffer and the turn sees that content."
   (interactive)
   (unless (require 'shell-maker nil t)
-    (user-error "lark-ai-shell needs the `shell-maker' package (install from MELPA)"))
+    (user-error "The lark-ai-shell command needs the `shell-maker' package (install from MELPA)"))
   (let* ((context (lark-ai-context-format))
          (config (make-shell-maker-config
                   :name "lark-ai"
@@ -137,7 +138,7 @@ transcript as \"/brief TOPIC\"."
 ;;;; Turn execution
 
 (defun lark-ai-shell--execute (input shell)
-  "shell-maker executor: run INPUT through the lark agent loop.
+  "Run INPUT through the lark agent loop (shell-maker executor).
 SHELL is the callback alist shell-maker hands to executors.
 An input of \"/brief <topic>\" runs the cross-domain topic brief
 \(`lark-ai-brief-on') instead of the agent loop."
@@ -174,7 +175,7 @@ An input of \"/brief <topic>\" runs the cross-domain topic brief
          (lark-ai-agent--run input context history session skills)))))))
 
 (defun lark-ai-shell--execute-brief (topic shell session)
-  "Run the cross-domain TOPIC brief as a shell turn.
+  "Run the cross-domain TOPIC brief as a turn in SHELL.
 Mirrors `lark-ai--brief-on-classic': context-graph gather, then
 one synthesis call — whose chunks stream live into the shell.
 The gathered brief lands in SESSION history, so follow-up turns

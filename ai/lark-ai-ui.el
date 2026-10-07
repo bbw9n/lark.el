@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -145,7 +146,7 @@ header text, BODY is the content string."
 
 (defun lark-ai-ui--insert-tool-call-body (body)
   "Insert a tool-call BODY as a sh-fontified, block-bg-tinted pane.
-BODY is the rendered shell-command text.  The pane inherits the user's
+BODY is the rendered shell command text.  The pane inherits the user's
 theme via `lark-ui-block-bg-face' — so a code-block-like surface
 appears even in a `fundamental-mode'-derived chat buffer — and
 `sh-mode' supplies the syntax highlighting on top."

@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -93,14 +94,15 @@ CMD is a list of lark-cli argument strings.  Matched against
 ;;;; Execution
 
 (defun lark-ai--execute-plan (steps callback)
-  "Execute STEPS sequentially/in-parallel, then call CALLBACK with all results.
+  "Execute a plan, then call CALLBACK with all results.
+The plan's STEPS run sequentially or in parallel.
 Results is an alist of (index . parsed-json-or-string)."
   (setf (lark-ai-session-step-results (lark-ai--session)) nil)
   (let ((remaining (copy-sequence steps)))
     (lark-ai--execute-next remaining callback)))
 
 (defun lark-ai--execute-next (remaining callback)
-  "Execute the next batch of REMAINING steps, then call CALLBACK."
+  "Execute the next batch from REMAINING, then call CALLBACK."
   (if (null remaining)
       ;; All done
       (funcall callback

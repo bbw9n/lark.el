@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -63,7 +64,7 @@
   "Directory for caching fetched documents and their media assets.
 When nil, uses a PERSISTENT per-user cache under XDG cache home
 \(usually ~/.cache/lark.el/lark-docs/).  Keeping it out of
-`temporary-file-directory' means images survive reboots and macOS
+variable `temporary-file-directory' means images survive reboots and macOS
 temp cleanup instead of re-downloading every session — and doc
 buffers (whose `default-directory' points here so relative image
 links resolve) don't end up with a deleted working directory."
@@ -76,7 +77,7 @@ links resolve) don't end up with a deleted working directory."
 `org' renders via the optional org-lark package (Lark tags, code
 blocks, tables converted).  When org-lark is not installed, `org'
 transparently falls back to markdown.
-`markdown' displays raw markdown in markdown-mode or special-mode."
+`markdown' displays raw markdown in `markdown-mode' or `special-mode'."
   :type '(choice (const :tag "Org (via org-lark, falls back to markdown)" org)
                  (const :tag "Markdown" markdown))
   :group 'lark-docs)
@@ -653,7 +654,7 @@ per-user cache (see `lark--cache-dir')."
 
 ;;;###autoload
 (defun lark-docs-fetch-as-org (doc)
-  "Fetch a Lark document DOC and display it in org-mode.
+  "Fetch a Lark document DOC and display it in `org-mode'.
 Runs asynchronously: fetch, pandoc conversion and media downloads
 all happen in background processes so Emacs stays responsive."
   (interactive "sDocument URL or token: ")
@@ -694,7 +695,7 @@ all happen in background processes so Emacs stays responsive."
                        org-content title doc-id cache-dir))))))))))))))
 
 (defun lark-docs--display-org-buffer (org-content title token &optional base-dir)
-  "Display ORG-CONTENT in an org-mode buffer named after TITLE.
+  "Display ORG-CONTENT in an `org-mode' buffer named after TITLE.
 TOKEN is stored as the doc token.  BASE-DIR, when non-nil, is set
 as `default-directory' so relative file links (images) resolve,
 and the buffer visits BASE-DIR/doc.org — so it can be edited in

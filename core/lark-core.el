@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -97,7 +98,7 @@ lark-cli already defaults to json and not all subcommands support it."
   "Return a persistent per-user cache directory for SUBDIR, creating it.
 Lives under XDG cache home (usually ~/.cache/lark.el/SUBDIR/) so
 cached media survives reboots and OS temp-directory cleanup —
-unlike `temporary-file-directory', which macOS purges periodically,
+unlike variable `temporary-file-directory', which macOS purges periodically,
 forcing every image to re-download."
   (let ((dir (file-name-as-directory
               (expand-file-name
@@ -109,7 +110,7 @@ forcing every image to re-download."
 (defun lark--safe-default-directory ()
   "Return `default-directory' if it still exists, else a safe fallback.
 Some lark buffers point `default-directory' at a temp cache dir
-\(e.g. a doc buffer's image dir under `temporary-file-directory')
+\(e.g. a doc buffer's image dir under variable `temporary-file-directory')
 that the OS may purge.  Spawning a process from such a buffer
 fails with \"Setting current directory: No such file or
 directory\", so every spawn site binds `default-directory' to
@@ -121,7 +122,8 @@ this value first."
 ;;;; Logging
 
 (defun lark--log (format-string &rest args)
-  "Append a verbose trace line to `*lark-log*' when `lark--debug' is on.
+  "Append a trace line to `*lark-log*' when `lark--debug' is on.
+The line is FORMAT-STRING formatted with ARGS.
 Plain timestamped lines; for the always-on labelled activity log
 \(CLI requests/responses, auth events) see `lark--cli-log'."
   (when lark--debug
@@ -453,7 +455,7 @@ operations downstream."
     (if (eq current :null) nil current)))
 
 (defun lark--record-list-p (v)
-  "Non-nil when V looks like a list of records (alists), not one alist.
+  "Return non-nil when V is a list of records (alists), not one alist.
 A parsed JSON array of objects is a list whose first element is
 itself an alist — i.e. its car's car is a cons.  A response
 envelope like ((has_more . :false) (items . :null)) fails this:

@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -97,10 +98,10 @@ don't have to switch first."
     (define-key map (kbd "C-c C-l") #'lark-ai-reset)
     map)
   "Keymap for the Lark AI buffer.
-Intentionally minimal — only the C-c prefix bindings live here
+Intentionally minimal — only the prefix-key bindings live here
 so that plain typing in the follow-up input area below isn't
 shadowed.  TAB → toggle-section is on `lark-ai-ui-fragment-map'
-(applied as a text property to each fragment), and the plan-review
+\(applied as a text property to each fragment), and the plan-review
 keys (RET/q/x) are on `lark-ai-plan-keys-map' (applied to the plan
 fragment only).")
 
@@ -111,9 +112,10 @@ fragment only).")
     (define-key map (kbd "q")   #'lark-ai-plan-cancel)
     (define-key map (kbd "x")   #'lark-ai-plan-remove-step)
     map)
-  "Plan-review bindings, attached as a `keymap' text property to
-the plan fragment by `lark-ai--refresh-plan-fragment'.  Inherits
-TAB from `lark-ai-ui-fragment-map' so toggling still works on the
+  "Plan-review bindings for the plan fragment.
+Attached as a `keymap' text property by
+`lark-ai--refresh-plan-fragment'.  Inherits TAB from
+`lark-ai-ui-fragment-map' so toggling still works on the
 plan, and adds RET/q/x for review actions.  Scoped to the plan so
 plain typing in the follow-up input area below isn't intercepted.")
 
@@ -143,7 +145,7 @@ plain typing in the follow-up input area below isn't intercepted.")
 ;;; Progress log — appends to the current turn's log fragment
 
 (defun lark-ai--progress-log (fmt &rest args)
-  "Add a timestamped entry to the log fragment.
+  "Add a timestamped entry, FMT formatted with ARGS, to the log fragment.
 Routed to the active alternative front-end when one is installed
 \(see `lark-ai--frontend')."
   (if-let ((fn (plist-get lark-ai--frontend :progress-log)))
@@ -245,7 +247,7 @@ reality.  Bound to \\[lark-ai-abort] in `lark-ai-plan-mode-map'."
 (defun lark-ai-reset ()
   "Clear the AI buffer and start a fresh conversation.
 Aborts any in-flight request and discards all session state
-(history, context, skills, plan)."
+\(history, context, skills, plan)."
   (interactive)
   (when-let ((buf (get-buffer lark-ai--buf-name)))
     (when (fboundp 'gptel-abort)
@@ -280,7 +282,7 @@ Aborts any in-flight request and discards all session state
   "Insert the editable follow-up area at the bottom of the AI buffer.
 Records two markers on the session: `input-region-start' (start of
 the separator, used to delete the whole region) and `input-start'
-(start of editable text, used by `get-input-text')."
+\(start of editable text, used by `get-input-text')."
   (let* ((buf (lark-ai--get-buffer))
          (session (lark-ai--session)))
     (with-current-buffer buf
@@ -332,7 +334,7 @@ the separator, used to delete the whole region) and `input-start'
 ;;; Build a new turn's layout
 
 (defun lark-ai--show-loading (prompt skill-names)
-  "Start a new turn in the AI buffer."
+  "Start a new turn for PROMPT in the AI buffer, listing SKILL-NAMES."
   (let* ((buf (lark-ai--get-buffer))
          (session (lark-ai--session)))
     (with-current-buffer buf
@@ -480,7 +482,7 @@ CMD is the lark-cli argument list; STATUS is `running', `done',
                         'face 'font-lock-function-name-face))))
 
 (defun lark-ai--shell-quote (arg)
-  "Return ARG with minimal display-time shell quoting.
+  "Return ARG with minimal shell quoting for display.
 Args that consist only of typical lark-cli token characters
 \(alphanumerics plus . / + - _ : = , @ % # *) pass through verbatim
 — so flags like `+chats-list' or `--page-size=20' read naturally —
@@ -534,7 +536,7 @@ still receives the original, unabbreviated command."
         head-line))))
 
 (defun lark-ai--render-tool-call (iter cmd status)
-  "Insert or update the tool-call card for agent iteration ITER.
+  "Insert or update the tool-call card for CMD at agent iteration ITER.
 On first call (STATUS=`running'), inserts a fragment just above the
 plan fragment containing the sh-fontified command body.  On subsequent
 calls, updates only the label — so a user-folded body stays folded
@@ -561,7 +563,8 @@ Routed to the active alternative front-end when one is installed."
 ;;; Plan display — update the plan fragment
 
 (defun lark-ai--display-plan (steps callback)
-  "Show STEPS for review.  CALLBACK called with confirmed steps."
+  "Show a plan for review.
+The plan is STEPS; CALLBACK is called with the confirmed steps."
   (let* ((buf (lark-ai--get-buffer))
          (session (lark-ai--session)))
     (with-current-buffer buf
@@ -599,7 +602,7 @@ Routed to the active alternative front-end when one is installed."
     (_          "Plan")))
 
 (defun lark-ai--format-plan-body ()
-  "Format the plan steps as a string for the plan fragment.
+  "Format the plan as a string for the plan fragment.
 Each step's line carries a `lark-ai-step-index' text property so
 `lark-ai-plan-remove-step' can pick the step under point without
 relying on line-number arithmetic."
@@ -755,7 +758,7 @@ are JSON-encoded.  Steps are ordered by index."
    "\n"))
 
 (defun lark-ai--synthesis-instruction (results plan)
-  "Choose the instruction for the terminal (final-answer) synthesis.
+  "Choose the instruction for the terminal (final-answer) synthesis of PLAN.
 Prefer a synthesis step that is still deferred — its result in RESULTS
 is the `:synthesize' sentinel.  A synthesis step already consumed inline
 as a producer (its result is real text) should NOT drive the final
@@ -783,7 +786,7 @@ instead of the prose answer.  CALLBACK receives the synthesis text."
     (lark-ai--call-llm system-prompt user-msg callback)))
 
 (defun lark-ai--synthesize-stream (results plan system-prompt)
-  "Like `lark-ai--synthesize' but streams the output.
+  "Like `lark-ai--synthesize' but streams the output for RESULTS of PLAN.
 SYSTEM-PROMPT must be the synthesis prompt (no JSON mandate)."
   (let* ((instruction (lark-ai--synthesis-instruction results plan))
          (results-text (lark-ai--results-text results plan))
@@ -854,7 +857,8 @@ the front-end then owns history bookkeeping for its session."
     (lark-ai--present-classic content skip-history)))
 
 (defun lark-ai--present-classic (content skip-history)
-  "Classic *Lark AI* buffer implementation of `lark-ai--present'."
+  "Classic *Lark AI* buffer implementation of `lark-ai--present'.
+Show CONTENT; record it in history unless SKIP-HISTORY."
   (let ((buf (lark-ai--get-buffer)))
     (with-current-buffer buf
       (lark-ai--ensure-output-fragment)
@@ -898,7 +902,7 @@ No-op when the buffer isn't displayed anywhere."
   :group 'lark-ai)
 
 (defun lark-ai--use-shell-p ()
-  "Return non-nil when turns should run in the shell-maker UI."
+  "Return non-nil when the shell-maker UI should host each turn."
   (and (eq lark-ai-interface 'shell)
        (require 'shell-maker nil t)))
 
@@ -1029,7 +1033,8 @@ loop instead of the upfront-plan executor."
     (lark-ai--run-planning-1 prompt context history session skill-names)))
 
 (defun lark-ai--run-planning-1 (prompt context history session skill-names)
-  "Upfront-plan strategy: plan via the LLM, review, execute, synthesize."
+  "Upfront-plan strategy: plan via the LLM, review, execute, synthesize.
+PROMPT, CONTEXT, HISTORY, SESSION and SKILL-NAMES are the turn state."
   (let* ((system-prompt (lark-ai-skills-build-system-prompt skill-names))
          ;; Synthesis pass uses a different system prompt (no JSON
          ;; mandate) so the model produces prose.  Built once here

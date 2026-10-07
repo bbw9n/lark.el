@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -179,7 +180,7 @@ block the agent treats as instructions."
 (defun lark-ai-acp--ensure-client ()
   "Return a live ACP client, creating and subscribing it if needed."
   (unless (require 'acp nil t)
-    (user-error "acp.el is not installed (MELPA: `acp'); install it or set `lark-ai-backend' to `gptel'"))
+    (user-error "Package acp.el is not installed (MELPA: `acp'); install it or set `lark-ai-backend' to `gptel'"))
   ;; A dead agent process invalidates the whole client state.
   (when-let ((proc (and lark-ai-acp--client
                         (map-elt lark-ai-acp--client :process))))

@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 ;; URL: https://github.com/bbw9n/lark.el
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1") (org-lark "0.2"))
@@ -13,6 +14,14 @@
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation; either version 3, or (at your option)
 ;; any later version.
+;;
+;; This file is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+;;
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ;;; Commentary:
 
@@ -124,11 +133,13 @@ Either \"user\" or \"bot\"."
     (define-key map (kbd ".") #'lark-ai-act)
     (define-key map (kbd "b") #'lark-ai-brief-on)
     map)
-  "Keymap for Lark commands, intended to be bound under a prefix like C-c l.")
+  "Keymap for Lark commands, intended to be bound under a prefix key.
+See `lark-setup-prefix-key'.")
 
 ;;;###autoload
 (defun lark-setup-prefix-key (&optional key)
-  "Bind `lark-prefix-map' to KEY (default \"C-c l\") in `global-map'."
+  "Bind `lark-prefix-map' to KEY in `global-map'.
+KEY defaults to `C-c l'."
   (interactive)
   (global-set-key (kbd (or key "C-c l")) lark-prefix-map))
 

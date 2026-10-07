@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -27,8 +28,8 @@
 ;;;; Debug logging
 
 (defcustom lark-ai-debug nil
-  "When non-nil, log LLM requests, responses, and plan parsing to
-the `*Lark AI Debug*' buffer.  Toggle interactively with
+  "When non-nil, log LLM requests, responses, and plan parsing.
+Entries go to the `*Lark AI Debug*' buffer.  Toggle interactively with
 `lark-ai-toggle-debug'."
   :type 'boolean
   :group 'lark-ai)
@@ -242,7 +243,8 @@ PATH examples: \"field\", \"a.b\", \"items[0].id\",
 ;;;; Step-reference detection
 
 (defun lark-ai--step-referenced-p (idx steps)
-  "Return non-nil when any step in STEPS interpolates $step-IDX.
+  "Return non-nil when some plan step interpolates $step-IDX.
+STEPS is the plan's step list.
 Scans each step's `:command' args for a $step-IDX reference.  Used to
 decide whether a synthesis step must produce its text inline (because a
 later step consumes it) or can be deferred to the final answer pass.
@@ -308,15 +310,15 @@ Returns list of (field NAME), (index N), or (wildcard REST)."
 ;;;; User message assembly
 
 (defcustom lark-ai-history-truncate-chars 800
-  "Maximum characters retained per prior assistant message in the
-follow-up prompt.  Long plan JSON or full document dumps from
+  "Maximum characters retained per prior assistant message.
+Applies to the follow-up prompt.  Long plan JSON or full document dumps from
 earlier turns are clipped to this length so they don't flood the
 LLM and bias it into re-running the previous plan."
   :type 'integer
   :group 'lark-ai)
 
 (defun lark-ai--build-user-message (prompt context history)
-  "Build the LLM user message for PROMPT.
+  "Build the LLM user message for PROMPT with originating CONTEXT.
 Uses a labelled, sectioned structure so the new question is the
 focus — prior turns and originating-buffer context are framed as
 background.  HISTORY is the session history (newest first); long

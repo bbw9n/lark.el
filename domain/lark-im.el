@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -273,7 +274,7 @@ dominate the buffer.  RET/click still opens the full-size file."
 When nil, uses a PERSISTENT per-user cache under XDG cache home
 \(usually ~/.cache/lark.el/im-media/).  Resource file keys are
 immutable, so cached media never goes stale — keeping the cache out
-of `temporary-file-directory' means revisiting a chat after a
+of variable `temporary-file-directory' means revisiting a chat after a
 reboot or macOS temp cleanup does not re-download every image."
   :type '(choice (const :tag "XDG cache (persistent)" nil) directory)
   :group 'lark-im)
@@ -325,7 +326,7 @@ recently viewed media."
     path))
 
 (defun lark-im--video-file-p (path)
-  "Return non-nil when PATH looks like a video file."
+  "Return non-nil when PATH has a video file extension."
   (member (downcase (or (file-name-extension path) ""))
           lark-im--video-extensions))
 
@@ -480,6 +481,7 @@ buffer is detected via the `lark-media-key' property and skipped."
 
 (defun lark-im--preview-video (msg-id key beg end)
   "Asynchronously show a first-frame thumbnail for video KEY over BEG..END.
+MSG-ID is the message carrying the video.
 Downloads the file into the cache when needed; files that turn out
 not to be videos keep the plain link.  Marker/property bookkeeping
 mirrors `lark-im--fetch-then-display'."
@@ -573,7 +575,7 @@ cache directory."
     (browse-url-of-file path)))
 
 (defun lark-im--messages-container (data)
-  "Return the alist that holds messages plus pagination metadata in DATA.
+  "Return the alist of messages plus pagination metadata in DATA.
 Falls back to nil when DATA is not a recognized response shape."
   (cond
    ((and (listp data) (or (alist-get 'items data)
@@ -745,7 +747,7 @@ the CLI."
 
 ;;;###autoload
 (defun lark-im-chats (&optional query)
-  "List Lark chats. With QUERY, search by keyword.
+  "List Lark chats.  With QUERY, search by keyword.
 When called interactively, prompt for a search query."
   (interactive
    (list (read-string "Search chats (keyword): ")))
@@ -1301,7 +1303,7 @@ Starts a long-running process that receives NDJSON events."
   (message "Lark: event subscription started"))
 
 (defun lark-im--event-filter (_proc output)
-  "Process filter for real-time events.  Parses NDJSON OUTPUT lines."
+  "Process filter for real-time events: parse NDJSON OUTPUT lines."
   (dolist (event (lark--parse-ndjson output))
     (lark-im--handle-event event)))
 
@@ -1326,7 +1328,7 @@ Dispatches to appropriate handler based on event type."
     (when chat-id
       (dolist (buf (buffer-list))
         (with-current-buffer buf
-          (when (and (eq major-mode 'lark-im-chat-mode)
+          (when (and (derived-mode-p 'lark-im-chat-mode)
                      (equal lark-im--chat-id chat-id))
             (lark-im-chat-refresh)))))))
 

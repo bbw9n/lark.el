@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -146,11 +147,11 @@
     (define-key map (kbd "?")   #'lark-drive-dispatch)
     map)
   "Keymap for `lark-drive-mode'.
-Keybindings follow dired conventions where possible.")
+Keybindings follow Dired conventions where possible.")
 
 (define-derived-mode lark-drive-mode special-mode
   "Lark Drive"
-  "Major mode for browsing Lark Drive, modelled after dired.
+  "Major mode for browsing Lark Drive, modelled after Dired.
 
 \\{lark-drive-mode-map}")
 
@@ -219,7 +220,7 @@ Keybindings follow dired conventions where possible.")
 ;;;; Rendering
 
 (defun lark-drive--insert-file-entry (file)
-  "Insert a single-line entry for FILE, like a dired listing."
+  "Insert a single-line entry for FILE, like a Dired listing."
   (let* ((name (lark-drive--file-name file))
          (type (lark-drive--file-type file))
          (modified (lark-drive--file-modified-time file))
@@ -537,7 +538,7 @@ Uses the file URL to dispatch to `lark-docs-fetch' or `lark-sheets-info'."
        (let ((token (or (lark--get-nested data 'data 'file_token)
                         (alist-get 'file_token data))))
          (message "Lark: uploaded%s" (if token (format " (token: %s)" token) ""))
-         (when (eq major-mode 'lark-drive-mode)
+         (when (derived-mode-p 'lark-drive-mode)
            (lark-drive-refresh)))))))
 
 ;;;; Download
@@ -580,7 +581,7 @@ Uses the file URL to dispatch to `lark-docs-fetch' or `lark-sheets-info'."
      args
      (lambda (_data)
        (message "Lark: import complete")
-       (when (eq major-mode 'lark-drive-mode)
+       (when (derived-mode-p 'lark-drive-mode)
          (lark-drive-refresh))))))
 
 ;;;; Export cloud doc to local

@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -188,7 +189,7 @@ Opens the authorization URL in a browser and polls for completion."
      :literal t :no-error t)))
 
 (defun lark-auth--log (fmt &rest args)
-  "Append a labelled auth entry to `*lark-log*'.
+  "Append a labelled auth entry, FMT formatted with ARGS, to `*lark-log*'.
 Always on (auth runs rarely and silent failures are hard to diagnose
 without a trace).  Lands in the same focused activity log as the CLI
 REQUEST/RESPONSE entries, labelled \"AUTH\" so it's easy to scan."
@@ -213,7 +214,7 @@ fully pinned down, so this errs on the side of recognising more."
   (setq lark-auth--polling-timer nil))
 
 (defun lark-auth--finish-login (result)
-  "Mark login complete, stop polling, and notify the user.
+  "Mark login complete with RESULT, stop polling, and notify the user.
 Idempotent — extra polling responses arriving after success are no-ops."
   (when lark-auth--polling-timer
     (lark-auth--stop-polling)
@@ -237,7 +238,7 @@ source, so consulting it covers any CLI response we don't recognise."
    nil :literal t :no-error t))
 
 (defun lark-auth--poll-once (device-code)
-  "Run one device-code poll iteration."
+  "Run one poll iteration for DEVICE-CODE."
   (lark--run-command
    (list "auth" "login" "--device-code" device-code "--json")
    (lambda (result)

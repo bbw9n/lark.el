@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -111,11 +112,12 @@ Call CALLBACK with the response text."
     (_      (user-error "Unknown lark-ai-backend: %s" lark-ai-backend))))
 
 (defun lark-ai--call-gptel (system-prompt user-message callback)
-  "Call the LLM via gptel.
+  "Call the LLM via gptel with SYSTEM-PROMPT and USER-MESSAGE.
+CALLBACK receives the response text.
 Runs `gptel-request' inside the AI buffer so `gptel-abort'
 against that buffer can find and cancel the in-flight request."
   (unless (require 'gptel nil t)
-    (user-error "gptel is not installed; install it or set `lark-ai-backend' to `acp'"))
+    (user-error "Package gptel is not installed; install it or set `lark-ai-backend' to `acp'"))
   (with-current-buffer (lark-ai--get-buffer)
     (let ((gptel-log-level nil)
           (inhibit-message t))
@@ -135,7 +137,8 @@ against that buffer can find and cancel the in-flight request."
                                     "LLM error: %S" info))))))))
 
 (defun lark-ai--call-http (system-prompt user-message callback)
-  "Call the LLM via raw HTTP to an OpenAI-compatible endpoint."
+  "Call the LLM via raw HTTP to an OpenAI-compatible endpoint.
+Send SYSTEM-PROMPT and USER-MESSAGE; CALLBACK receives the response text."
   (let* ((url (or lark-ai-http-endpoint
                   (user-error "Set `lark-ai-http-endpoint' for the http backend")))
          (key (or lark-ai-http-api-key
@@ -174,6 +177,7 @@ against that buffer can find and cancel the in-flight request."
 (defun lark-ai--call-llm-stream (system-prompt user-message callback
                                                 &optional chunk-handler)
   "Send to LLM with streaming, calling CALLBACK with full text when done.
+SYSTEM-PROMPT and USER-MESSAGE form the request.
 If CHUNK-HANDLER is non-nil, it is called as (CHUNK-HANDLER CHUNK)
 on each streamed chunk and the default behaviour of appending
 chunks to the output fragment is skipped — used by the planning
@@ -194,6 +198,8 @@ non-streaming call (CHUNK-HANDLER is not invoked)."
 (defun lark-ai--call-gptel-stream (system-prompt user-message callback
                                                   &optional chunk-handler)
   "Call LLM via gptel with streaming.
+SYSTEM-PROMPT and USER-MESSAGE form the request; CALLBACK receives
+the full text when done.
 When CHUNK-HANDLER is nil, chunks are appended to the output
 fragment (synthesis path).  When non-nil, CHUNK-HANDLER is
 invoked with each chunk and the output fragment is left
@@ -202,7 +208,7 @@ the log fragment.
 Runs `gptel-request' inside the AI buffer so `gptel-abort' can
 find and cancel the in-flight stream."
   (unless (require 'gptel nil t)
-    (user-error "gptel is not installed"))
+    (user-error "Package gptel is not installed"))
   ;; Only create the output fragment for the default (synthesis) path.
   (unless chunk-handler
     (lark-ai--ensure-output-fragment))
@@ -247,6 +253,8 @@ find and cancel the in-flight stream."
 (defun lark-ai--call-acp-stream (system-prompt user-message callback
                                                 &optional chunk-handler)
   "Call the LLM via a local ACP agent with streaming.
+SYSTEM-PROMPT and USER-MESSAGE form the request; CALLBACK receives
+the full text when done.
 Same chunk-destination rules as `lark-ai--call-gptel-stream':
 without CHUNK-HANDLER, chunks append to the output fragment;
 with one, the handler receives each chunk instead."

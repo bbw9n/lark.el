@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -589,7 +590,7 @@ With prefix argument SHOW-COMPLETED, include completed tasks."
 
 (define-derived-mode lark-tasks-agenda-mode special-mode
   "Lark Agenda"
-  "Major mode for the Lark Tasks org-agenda–style view.")
+  "Major mode for the Lark Tasks agenda-style view.")
 
 (put 'lark-tasks-agenda-mode 'lark-ai-context-provider
      #'lark-tasks--ai-context)
@@ -599,7 +600,7 @@ With prefix argument SHOW-COMPLETED, include completed tasks."
 
 ;;;###autoload
 (defun lark-tasks-agenda ()
-  "Display Lark tasks in an org-agenda–style view.
+  "Display Lark tasks in an agenda-style view.
 Shows incomplete tasks sorted by due date."
   (interactive)
   (message "Lark: building task agenda...")
@@ -613,7 +614,7 @@ Shows incomplete tasks sorted by due date."
   (lark-tasks-agenda))
 
 (defun lark-tasks-agenda--render (data)
-  "Render the org-agenda–style view from DATA."
+  "Render the agenda-style view from DATA."
   (let* ((tasks (lark-tasks--extract-tasks data))
          (today (format-time-string "%Y-%m-%d"))
          ;; Partition into overdue, today, upcoming (has due), and no-due

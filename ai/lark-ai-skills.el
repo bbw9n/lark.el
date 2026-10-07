@@ -4,6 +4,7 @@
 
 ;; Author: bbw9n <bbw9nio@gmail.com>
 ;; Assisted-by: Claude:claude-opus-5
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 
@@ -203,7 +204,7 @@ Used to select relevant skills based on user prompt keywords.")
 CONTEXT is optional extra text (originating buffer summary, last
 plan commands, etc.) appended to the prompt before matching, so
 follow-ups stay on-topic when the new prompt itself is non-specific
-(\"tell me more\", \"summarize that\").
+\(\"tell me more\", \"summarize that\").
 Always includes lark-shared.  Never falls back to loading every
 domain skill — if no rule matches, only lark-shared is returned;
 callers that want continuity (e.g. follow-ups) should union the
@@ -275,7 +276,7 @@ or misspelled) dropped.  Returns nil when nothing valid remains."
 ;;;; System prompt assembly
 
 (defun lark-ai-skills--identity-preamble ()
-  "Identity, time, and persona shared by planning and synthesis prompts.
+  "Return the identity, time, and persona shared by both prompt passes.
 Excludes any output-format rules so it is safe to reuse on the
 synthesis pass, where the model must produce prose, not JSON."
   (format "You are a Lark/Feishu assistant integrated into Emacs.
